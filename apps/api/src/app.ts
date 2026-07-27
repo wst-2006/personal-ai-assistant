@@ -3,10 +3,10 @@ import Fastify from "fastify";
 import { aiRoutes } from "./ai/routes.js";
 import type { TaskParser } from "./ai/task-parser.js";
 import { taskRoutes } from "./task-routes.js";
-import type { TaskRepository } from "./task-repository.js";
+import type { TaskService } from "./task-service.js";
 
 type AppOptions = {
-  taskRepository?: TaskRepository;
+  taskService?: TaskService;
   taskParser?: TaskParser;
 };
 
@@ -22,10 +22,10 @@ export function buildApp(options: AppOptions = {}) {
     service: "personal-ai-api"
   }));
 
-  if (options.taskRepository) {
+  if (options.taskService) {
     app.register(taskRoutes, {
       prefix: "/api/v1",
-      taskRepository: options.taskRepository
+      taskService: options.taskService
     });
   }
 
