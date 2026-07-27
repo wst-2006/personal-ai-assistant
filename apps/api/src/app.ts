@@ -1,6 +1,8 @@
 import cors from "@fastify/cors";
 import Fastify from "fastify";
 import { aiRoutes } from "./ai/routes.js";
+import { inboxRoutes } from "./inbox-routes.js";
+import type { AppDatabase } from "@personal-ai/db/client";
 import type { TaskParser } from "./ai/task-parser.js";
 import { taskRoutes } from "./task-routes.js";
 import type { TaskService } from "./task-service.js";
@@ -8,6 +10,7 @@ import type { TaskService } from "./task-service.js";
 type AppOptions = {
   taskService?: TaskService;
   taskParser?: TaskParser;
+  database?: AppDatabase;
 };
 
 export function buildApp(options: AppOptions = {}) {
@@ -28,6 +31,8 @@ export function buildApp(options: AppOptions = {}) {
       taskService: options.taskService
     });
   }
+
+  if (options.database) app.register(inboxRoutes, { prefix: "/api/v1", database: options.database });
 
   if (options.taskParser) {
     app.register(aiRoutes, {

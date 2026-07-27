@@ -26,10 +26,9 @@ describe("task endpoints", () => {
       url: "/api/v1/tasks",
       payload: {
         title: "整理本周计划",
-        entryType: "task",
         scheduleKind: "none",
         localDate: "2026-07-27",
-        estimatedMinutes: 30
+        plannedEffortMinutes: 30
       }
     });
     expect(create.statusCode).toBe(201);
@@ -44,7 +43,7 @@ describe("task endpoints", () => {
     const response = await app.inject({
       method: "POST",
       url: "/api/v1/tasks",
-      payload: { title: "", entryType: "task", scheduleKind: "none" }
+      payload: { title: "", scheduleKind: "none" }
     });
     expect(response.statusCode).toBe(400);
   });

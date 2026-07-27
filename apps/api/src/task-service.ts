@@ -49,6 +49,12 @@ export class TaskVersionConflictError extends Error {
   }
 }
 
+export class TaskScheduleRevisionConflictError extends Error {
+  constructor(readonly currentTask: StoredTask) {
+    super("Task schedule revision does not match the current database record.");
+  }
+}
+
 export class InvalidTaskTransitionError extends Error {
   constructor(readonly currentStatus: string, readonly operation: string) {
     super(`Cannot ${operation} a task in ${currentStatus} state.`);
@@ -140,6 +146,9 @@ export class TaskService {
   async update(id: string, patch: TaskPatch): Promise<{ task: StoredTask; historicalOverlaps: TaskConflict[] }> {
     return this.store.runSerializable(async (transaction) => {
       const current = await this.requireCurrentVersion(transaction, id, patch.expectedVersion);
+      if (hasSchedulePatchField(patch) && patch.expectedScheduleRevision !== current.scheduleRevision) {
+        throw new TaskScheduleRevisionConflictError(current);
+      }
       this.assertEditable(current, patch);
       const normalized = mergeAndValidate(current, patch);
       const scheduleChanged = hasScheduleSemanticChange(current, normalized);
@@ -423,7 +432,7 @@ function toNewTaskRecord(input: TaskInput): NewTaskRecord {
     startAt,
     endAt,
     timeZone: input.timeZone,
-    plannedEffortMinutes: input.estimatedMinutes ?? null,
+    plannedEffortMinutes: input.plannedEffortMinutes ?? null,
     difficulty: input.difficulty ?? null,
     taskType: input.taskType ?? null,
     requiresContinuousFocus: input.requiresContinuousFocus ?? null,
@@ -436,14 +445,13 @@ function toNewTaskRecord(input: TaskInput): NewTaskRecord {
 function mergeAndValidate(current: StoredTask, patch: TaskPatch): NewTaskRecord {
   const candidate = {
     title: patch.title ?? current.title,
-    entryType: patch.entryType ?? "task",
     scheduleKind: patch.scheduleKind ?? current.scheduleKind,
     localDate: patch.localDate !== undefined ? patch.localDate : current.localDate,
     daypart: patch.daypart !== undefined ? patch.daypart : current.daypart,
     startAt: patch.startAt !== undefined ? patch.startAt : current.startAt?.toISOString() ?? null,
     endAt: patch.endAt !== undefined ? patch.endAt : current.endAt?.toISOString() ?? null,
     timeZone: patch.timeZone ?? current.timeZone,
-    estimatedMinutes: patch.estimatedMinutes !== undefined ? patch.estimatedMinutes : current.plannedEffortMinutes,
+    plannedEffortMinutes: patch.plannedEffortMinutes !== undefined ? patch.plannedEffortMinutes : current.plannedEffortMinutes,
     difficulty: patch.difficulty !== undefined ? patch.difficulty : current.difficulty,
     taskType: patch.taskType !== undefined ? patch.taskType : current.taskType,
     requiresContinuousFocus: patch.requiresContinuousFocus !== undefined
@@ -457,6 +465,11 @@ function mergeAndValidate(current: StoredTask, patch: TaskPatch): NewTaskRecord 
   const parsed = taskInputSchema.safeParse(candidate);
   if (!parsed.success) throw parsed.error;
   return { ...toNewTaskRecord(parsed.data), id: current.id };
+}
+
+function hasSchedulePatchField(patch: TaskPatch): boolean {
+  return ["scheduleKind", "localDate", "daypart", "startAt", "endAt", "timeZone"]
+    .some((field) => patch[field as keyof TaskPatch] !== undefined);
 }
 
 function toTaskUpdateRecord(record: NewTaskRecord): Omit<NewTaskRecord, "id"> {

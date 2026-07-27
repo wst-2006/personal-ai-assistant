@@ -16,14 +16,13 @@ export const ianaTimeZoneSchema = z.string().trim().min(1).max(64).refine(isVali
 
 const taskFields = {
   title: z.string().trim().min(1).max(200),
-  entryType: taskEntryTypeSchema.default("task"),
   scheduleKind: taskScheduleKindSchema.default("none"),
   localDate: z.string().date().nullable().optional(),
   daypart: taskDaypartSchema.nullable().optional(),
   startAt: z.string().datetime({ offset: true }).nullable().optional(),
   endAt: z.string().datetime({ offset: true }).nullable().optional(),
   timeZone: ianaTimeZoneSchema.default("Asia/Shanghai"),
-  estimatedMinutes: z.number().int().positive().max(1440).nullable().optional(),
+  plannedEffortMinutes: z.number().int().positive().max(1440).nullable().optional(),
   difficulty: taskDifficultySchema.nullable().optional(),
   taskType: z.string().trim().max(80).nullable().optional(),
   requiresContinuousFocus: z.boolean().nullable().optional(),
@@ -41,22 +40,31 @@ export const taskInputSchema = z.object({
 
 export const taskPatchSchema = z.object({
   expectedVersion: z.number().int().positive(),
+  expectedScheduleRevision: z.number().int().positive().optional(),
   title: taskFields.title.optional(),
-  entryType: taskEntryTypeSchema.optional(),
   scheduleKind: taskScheduleKindSchema.optional(),
   localDate: z.string().date().nullable().optional(),
   daypart: taskDaypartSchema.nullable().optional(),
   startAt: z.string().datetime({ offset: true }).nullable().optional(),
   endAt: z.string().datetime({ offset: true }).nullable().optional(),
   timeZone: ianaTimeZoneSchema.optional(),
-  estimatedMinutes: taskFields.estimatedMinutes,
+  plannedEffortMinutes: taskFields.plannedEffortMinutes,
   difficulty: taskFields.difficulty,
   taskType: taskFields.taskType,
   requiresContinuousFocus: taskFields.requiresContinuousFocus,
   notes: taskFields.notes,
   conflictDecision: conflictDecisionSchema.default("reject"),
   expectedConflictFingerprint: z.string().min(1).max(128).optional()
-}).strict().superRefine(validateConflictDecision);
+}).strict().superRefine((input, context) => {
+  validateConflictDecision(input, context);
+  if (hasSchedulePatchField(input) && !input.expectedScheduleRevision) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["expectedScheduleRevision"],
+      message: "Schedule changes require expectedScheduleRevision"
+    });
+  }
+});
 
 export const taskVersionActionSchema = z.object({
   expectedVersion: z.number().int().positive(),
@@ -122,7 +130,6 @@ export const naturalLanguageTaskCandidateSchema = z.object({
 });
 
 type ScheduleShape = {
-  entryType: z.infer<typeof taskEntryTypeSchema>;
   scheduleKind: z.infer<typeof taskScheduleKindSchema>;
   localDate?: string | null;
   daypart?: z.infer<typeof taskDaypartSchema> | null;
@@ -162,9 +169,6 @@ export function validateTaskSchedule(input: ScheduleShape, context: z.Refinement
   const hasEnd = Boolean(input.endAt);
 
   if (input.scheduleKind === "exact") {
-    if (input.entryType !== "task") {
-      context.addIssue({ code: z.ZodIssueCode.custom, path: ["entryType"], message: "Only tasks can use exact scheduling" });
-    }
     if (!hasStart || !hasEnd) {
       context.addIssue({ code: z.ZodIssueCode.custom, path: ["startAt"], message: "Exact scheduling requires startAt and endAt" });
       return;
@@ -180,8 +184,8 @@ export function validateTaskSchedule(input: ScheduleShape, context: z.Refinement
     if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || !isValidIanaTimeZone(input.timeZone)) {
       return;
     }
-    if (end.getTime() <= start.getTime()) {
-      context.addIssue({ code: z.ZodIssueCode.custom, path: ["endAt"], message: "endAt must be after startAt" });
+    if (end.getTime() - start.getTime() < 5 * 60 * 1000) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ["endAt"], message: "Exact tasks must be at least five minutes" });
       return;
     }
     if (localDateAtTimeZone(start, input.timeZone) !== localDateAtTimeZone(end, input.timeZone)) {
@@ -203,6 +207,11 @@ export function validateTaskSchedule(input: ScheduleShape, context: z.Refinement
   } else if (input.daypart != null) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ["daypart"], message: "Schedule kind none cannot include daypart" });
   }
+}
+
+function hasSchedulePatchField(input: Record<string, unknown>): boolean {
+  return ["scheduleKind", "localDate", "daypart", "startAt", "endAt", "timeZone"]
+    .some((field) => input[field] !== undefined);
 }
 
 function validateConflictDecision(input: ConflictShape, context: z.RefinementCtx): void {

@@ -13,7 +13,6 @@ import { MemoryTaskStore } from "./testing/memory-task-store.js";
 function unscheduled(title = "Task") {
   return taskInputSchema.parse({
     title,
-    entryType: "task",
     scheduleKind: "none",
     localDate: "2026-07-27"
   });
@@ -22,7 +21,6 @@ function unscheduled(title = "Task") {
 function exact(title: string, start: string, end: string, conflict?: { decision: "keep"; fingerprint: string }) {
   return taskInputSchema.parse({
     title,
-    entryType: "task",
     scheduleKind: "exact",
     startAt: `2026-07-27T${start}:00+08:00`,
     endAt: `2026-07-27T${end}:00+08:00`,
@@ -57,6 +55,7 @@ describe("TaskService lifecycle and revisions", () => {
 
     const scheduled = (await service.update(created.id, taskPatchSchema.parse({
       expectedVersion: renamed.version,
+      expectedScheduleRevision: renamed.scheduleRevision,
       scheduleKind: "daypart",
       localDate: "2026-07-28",
       daypart: "morning"

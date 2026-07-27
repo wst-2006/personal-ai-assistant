@@ -3,7 +3,6 @@ import { taskInputSchema, taskOutcomeInputSchema } from "./task.js";
 
 const exactTask = {
   title: "Deep work",
-  entryType: "task" as const,
   scheduleKind: "exact" as const,
   startAt: "2026-07-27T09:00:00+08:00",
   endAt: "2026-07-27T10:00:00+08:00",
@@ -30,7 +29,7 @@ describe("task scheduling validation", () => {
     expect(result.success).toBe(false);
   });
 
-  it("rejects exact scheduling for ideas and questions", () => {
+  it("rejects task entry types because ideas and questions use the inbox API", () => {
     expect(taskInputSchema.safeParse({ ...exactTask, entryType: "idea" }).success).toBe(false);
     expect(taskInputSchema.safeParse({ ...exactTask, entryType: "question" }).success).toBe(false);
   });
@@ -38,14 +37,12 @@ describe("task scheduling validation", () => {
   it("validates daypart and unscheduled shapes independently", () => {
     expect(taskInputSchema.safeParse({
       title: "Read",
-      entryType: "task",
       scheduleKind: "daypart",
       localDate: "2026-07-27",
       daypart: "morning"
     }).success).toBe(true);
     expect(taskInputSchema.safeParse({
       title: "Read",
-      entryType: "task",
       scheduleKind: "none",
       daypart: "morning"
     }).success).toBe(false);

@@ -295,15 +295,19 @@ export function App() {
     setSaving(true);
     setError(null);
     try {
-      const task = await createTask({
-        title: trimmedTitle,
-        entryType,
-        scheduleKind: "none",
-        localDate: today,
-        timeZone: "Asia/Shanghai",
-        ...(entryType === "task" ? { estimatedMinutes: Number(duration), difficulty: "medium" } : {})
-      });
-      setItems((current) => [...current, task]);
+      if (entryType === "task") {
+        const task = await createTask({
+          title: trimmedTitle,
+          scheduleKind: "none",
+          localDate: today,
+          timeZone: "Asia/Shanghai",
+          plannedEffortMinutes: Number(duration),
+          difficulty: "medium"
+        });
+        setItems((current) => [...current, task]);
+      } else {
+        await requestJson("/api/v1/inbox-entries", "POST", { entryKind: entryType, content: trimmedTitle });
+      }
       setTitle("");
     } catch {
       setError("保存失败，内容没有丢失。请检查 API 后重试。");
@@ -399,6 +403,7 @@ export function App() {
     try {
       await requestWithConflictConfirmation(`/api/v1/tasks/${editingTask.id}`, "PATCH", {
         expectedVersion: editingTask.version,
+        expectedScheduleRevision: editingTask.scheduleRevision,
         title: editTitle.trim(),
         ...schedule
       });
