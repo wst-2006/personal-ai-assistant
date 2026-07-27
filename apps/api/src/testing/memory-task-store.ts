@@ -4,6 +4,7 @@ import type {
   LifecycleEventRecord,
   NewTaskRecord,
   StoredTask,
+  StoredInboxEntry,
   StoredTaskOutcome,
   TaskOutcomeRecord,
   TaskStore,
@@ -16,6 +17,7 @@ export class MemoryTaskStore implements TaskStore, TaskStoreTransaction {
   outcomes: StoredTaskOutcome[] = [];
   lifecycleEvents: LifecycleEventRecord[] = [];
   acceptances: ConflictAcceptanceRecord[] = [];
+  inboxEntries: StoredInboxEntry[] = [];
   transactionAttempts = 0;
   serializationFailuresRemaining = 0;
 
@@ -27,7 +29,8 @@ export class MemoryTaskStore implements TaskStore, TaskStoreTransaction {
         tasks: this.tasks,
         outcomes: this.outcomes,
         lifecycleEvents: this.lifecycleEvents,
-        acceptances: this.acceptances
+        acceptances: this.acceptances,
+        inboxEntries: this.inboxEntries
       });
       try {
         const result = await operation(this);
@@ -43,6 +46,7 @@ export class MemoryTaskStore implements TaskStore, TaskStoreTransaction {
         this.outcomes = snapshot.outcomes;
         this.lifecycleEvents = snapshot.lifecycleEvents;
         this.acceptances = snapshot.acceptances;
+        this.inboxEntries = snapshot.inboxEntries;
         if (!isSerializationFailure(error) || attempt === maxAttempts) throw error;
       }
     }
@@ -54,6 +58,29 @@ export class MemoryTaskStore implements TaskStore, TaskStoreTransaction {
     const task: StoredTask = { ...record, deletedAt: null, createdAt: now, updatedAt: now };
     this.tasks.push(task);
     return task;
+  }
+
+  async insertInboxEntry(record: Parameters<TaskStoreTransaction["insertInboxEntry"]>[0]): Promise<StoredInboxEntry> {
+    const now = new Date();
+    const entry = { ...record, convertedAt: null, deletedAt: null, createdAt: now, updatedAt: now } as StoredInboxEntry;
+    this.inboxEntries.push(entry);
+    return entry;
+  }
+
+  async getInboxEntry(id: string): Promise<StoredInboxEntry | null> {
+    return this.inboxEntries.find((entry) => entry.id === id && !entry.deletedAt) ?? null;
+  }
+
+  async markInboxConverted(id: string, expectedVersion: number, convertedAt: Date): Promise<StoredInboxEntry | null> {
+    const index = this.inboxEntries.findIndex((entry) => entry.id === id && entry.version === expectedVersion && !entry.convertedAt);
+    if (index < 0) return null;
+    const entry = { ...this.inboxEntries[index]!, convertedAt, updatedAt: convertedAt, version: expectedVersion + 1 };
+    this.inboxEntries[index] = entry;
+    return entry;
+  }
+
+  async listInboxEntries(): Promise<StoredInboxEntry[]> {
+    return this.inboxEntries.filter((entry) => !entry.deletedAt && !entry.convertedAt);
   }
 
   async getTask(id: string, includeDeleted = false): Promise<StoredTask | null> {

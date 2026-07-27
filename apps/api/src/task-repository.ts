@@ -1,5 +1,6 @@
 import type { AppDatabase } from "@personal-ai/db/client";
 import {
+  inboxEntries,
   taskConflictAcceptances,
   taskLifecycleEvents,
   taskOutcomes,
@@ -9,6 +10,7 @@ import type { TaskEventSource, TaskLifecycle, TaskOutcome, TaskScheduleKind } fr
 import { and, asc, desc, eq, gt, inArray, isNull, lt, ne } from "drizzle-orm";
 
 export type StoredTask = typeof tasks.$inferSelect;
+export type StoredInboxEntry = typeof inboxEntries.$inferSelect;
 export type StoredTaskOutcome = typeof taskOutcomes.$inferSelect;
 
 export type NewTaskRecord = {
@@ -64,6 +66,9 @@ export type ConflictAcceptanceRecord = {
 };
 
 export interface TaskStoreTransaction {
+  insertInboxEntry(record: typeof inboxEntries.$inferInsert): Promise<StoredInboxEntry>;
+  getInboxEntry(id: string): Promise<StoredInboxEntry | null>;
+  markInboxConverted(id: string, expectedVersion: number, convertedAt: Date): Promise<StoredInboxEntry | null>;
   insertTask(record: NewTaskRecord): Promise<StoredTask>;
   getTask(id: string, includeDeleted?: boolean): Promise<StoredTask | null>;
   updateTask(id: string, expectedVersion: number, changes: TaskUpdateRecord): Promise<StoredTask | null>;
@@ -81,10 +86,31 @@ export interface TaskStore {
   listOutcomes(taskId: string): Promise<StoredTaskOutcome[]>;
   listExactOverlaps(startAt: Date, endAt: Date, lifecycleStatuses: TaskLifecycle[], excludeTaskId?: string): Promise<StoredTask[]>;
   isConflictAccepted(record: ConflictAcceptanceRecord): Promise<boolean>;
+  listInboxEntries(): Promise<StoredInboxEntry[]>;
 }
 
 class PostgresTaskTransaction implements TaskStoreTransaction {
   constructor(private readonly db: AppDatabase) {}
+
+  async insertInboxEntry(record: typeof inboxEntries.$inferInsert): Promise<StoredInboxEntry> {
+    const [created] = await this.db.insert(inboxEntries).values(record).returning();
+    if (!created) throw new Error("PostgreSQL did not return the inbox entry.");
+    return created;
+  }
+
+  async getInboxEntry(id: string): Promise<StoredInboxEntry | null> {
+    const [entry] = await this.db.select().from(inboxEntries)
+      .where(and(eq(inboxEntries.id, id), isNull(inboxEntries.deletedAt))).limit(1);
+    return entry ?? null;
+  }
+
+  async markInboxConverted(id: string, expectedVersion: number, convertedAt: Date): Promise<StoredInboxEntry | null> {
+    const [entry] = await this.db.update(inboxEntries).set({
+      convertedAt, version: expectedVersion + 1, updatedAt: convertedAt
+    }).where(and(eq(inboxEntries.id, id), eq(inboxEntries.version, expectedVersion),
+      isNull(inboxEntries.convertedAt), isNull(inboxEntries.deletedAt))).returning();
+    return entry ?? null;
+  }
 
   async insertTask(record: NewTaskRecord): Promise<StoredTask> {
     const [created] = await this.db.insert(tasks).values(record).returning();
@@ -203,6 +229,12 @@ export class PostgresTaskStore implements TaskStore {
 
   isConflictAccepted(record: ConflictAcceptanceRecord): Promise<boolean> {
     return this.reader.isConflictAccepted(record);
+  }
+
+  listInboxEntries(): Promise<StoredInboxEntry[]> {
+    return this.db.select().from(inboxEntries)
+      .where(and(isNull(inboxEntries.deletedAt), isNull(inboxEntries.convertedAt)))
+      .orderBy(asc(inboxEntries.createdAt));
   }
 }
 

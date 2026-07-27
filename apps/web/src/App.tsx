@@ -31,6 +31,7 @@ import {
   Undo2,
   X
 } from "lucide-react";
+import { TodayWorkspace } from "./TodayWorkspace";
 
 type EntryType = "task" | "idea" | "question";
 type View = "today" | "focus" | "review" | "diary" | "growth";
@@ -513,7 +514,8 @@ export function App() {
 
         {error && <div className="error-banner" role="alert"><X aria-hidden="true" />{error}</div>}
 
-        {view === "today" && (
+        {view === "today" && <TodayWorkspace onFocus={(id) => { setSelectedTaskId(id); setView("focus"); }} />}
+        {false && (
           <section className="page today-page" aria-labelledby="today-title">
             <div className="page-intro">
               <div>

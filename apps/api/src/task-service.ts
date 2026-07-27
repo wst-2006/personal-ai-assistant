@@ -11,6 +11,7 @@ import { createHash, randomUUID } from "node:crypto";
 import type {
   ConflictAcceptanceRecord,
   NewTaskRecord,
+  StoredInboxEntry,
   StoredTask,
   StoredTaskOutcome,
   TaskStore,
@@ -55,6 +56,12 @@ export class TaskScheduleRevisionConflictError extends Error {
   }
 }
 
+export class InboxEntryConflictError extends Error {
+  constructor(readonly currentEntry: StoredInboxEntry | null) {
+    super("Inbox entry is missing, stale, or already converted.");
+  }
+}
+
 export class InvalidTaskTransitionError extends Error {
   constructor(readonly currentStatus: string, readonly operation: string) {
     super(`Cannot ${operation} a task in ${currentStatus} state.`);
@@ -94,6 +101,38 @@ export class TaskService {
       }
       const historicalOverlaps = await this.findHistoricalOverlaps(transaction, task);
       return { task, historicalOverlaps };
+    });
+  }
+
+  listInbox(): Promise<StoredInboxEntry[]> {
+    return this.store.listInboxEntries();
+  }
+
+  async createInbox(entryKind: "idea" | "question", content: string, notes?: string | null): Promise<StoredInboxEntry> {
+    return this.store.runSerializable((transaction) => transaction.insertInboxEntry({
+      id: randomUUID(), entryKind, content, notes: notes ?? null, version: 1
+    }));
+  }
+
+  async convertInbox(id: string, expectedVersion: number, input: TaskInput): Promise<{
+    entry: StoredInboxEntry;
+    task: StoredTask;
+    historicalOverlaps: TaskConflict[];
+  }> {
+    return this.store.runSerializable(async (transaction) => {
+      const source = await transaction.getInboxEntry(id);
+      if (!source || source.version !== expectedVersion || source.convertedAt) throw new InboxEntryConflictError(source);
+      const record = { ...toNewTaskRecord(input), sourceInboxEntryId: id };
+      const blocking = await this.findConflicts(transaction, record);
+      await this.assertConflictDecision(transaction, record, blocking, input.conflictDecision, input.expectedConflictFingerprint);
+      const task = await transaction.insertTask(record);
+      await transaction.insertLifecycleEvent({ id: randomUUID(), taskId: task.id, fromStatus: null, toStatus: "open", source: "app" });
+      if (input.conflictDecision === "keep") {
+        await transaction.insertConflictAcceptances(blocking.map((conflict) => canonicalAcceptance(task, conflict)));
+      }
+      const entry = await transaction.markInboxConverted(id, expectedVersion, new Date());
+      if (!entry) throw new InboxEntryConflictError(await transaction.getInboxEntry(id));
+      return { entry, task, historicalOverlaps: await this.findHistoricalOverlaps(transaction, task) };
     });
   }
 

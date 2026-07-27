@@ -49,6 +49,48 @@ describe("task endpoints", () => {
   });
 });
 
+describe("inbox endpoints", () => {
+  it("keeps an idea as its source when the user confirms conversion to a task", async () => {
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/v1/inbox-entries",
+      payload: { entryKind: "idea", content: "整理一份时间管理实验" }
+    });
+    expect(created.statusCode).toBe(201);
+    const entry = created.json().entry;
+
+    const listed = await app.inject({ method: "GET", url: "/api/v1/inbox-entries" });
+    expect(listed.json().map((item: { id: string }) => item.id)).toContain(entry.id);
+
+    const converted = await app.inject({
+      method: "POST",
+      url: `/api/v1/inbox-entries/${entry.id}/convert-to-task`,
+      payload: {
+        confirmed: true,
+        expectedVersion: entry.version,
+        task: { title: entry.content, scheduleKind: "none", localDate: "2026-07-27" }
+      }
+    });
+    expect(converted.statusCode).toBe(201);
+    expect(converted.json().task.sourceInboxEntryId).toBe(entry.id);
+    expect(converted.json().entry.convertedAt).toBeTruthy();
+
+    const after = await app.inject({ method: "GET", url: "/api/v1/inbox-entries" });
+    expect(after.json().map((item: { id: string }) => item.id)).not.toContain(entry.id);
+    const repeated = await app.inject({
+      method: "POST",
+      url: `/api/v1/inbox-entries/${entry.id}/convert-to-task`,
+      payload: {
+        confirmed: true,
+        expectedVersion: entry.version,
+        task: { title: entry.content, scheduleKind: "none" }
+      }
+    });
+    expect(repeated.statusCode).toBe(409);
+    expect(repeated.json().error).toBe("inbox_entry_conflict");
+  });
+});
+
 describe("AI task parsing", () => {
   it("returns a candidate without writing a task", async () => {
     const parser: TaskParser = {

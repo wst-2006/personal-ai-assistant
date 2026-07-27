@@ -11,7 +11,6 @@ const config = loadServerConfig();
 const database = await connectVerifiedDatabase(loadDatabaseConfig());
 const app = buildApp({
   taskService: new TaskService(new PostgresTaskStore(database.db)),
-  database: database.db,
   taskParser: new DeepSeekTaskParser(loadDeepSeekConfig())
 });
 
