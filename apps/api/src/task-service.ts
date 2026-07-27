@@ -414,7 +414,7 @@ function toNewTaskRecord(input: TaskInput): NewTaskRecord {
   return {
     id: randomUUID(),
     title: input.title,
-    entryType: input.entryType,
+    sourceInboxEntryId: null,
     lifecycleStatus: "open",
     scheduleKind: input.scheduleKind,
     currentOutcome: null,
@@ -423,7 +423,7 @@ function toNewTaskRecord(input: TaskInput): NewTaskRecord {
     startAt,
     endAt,
     timeZone: input.timeZone,
-    estimatedMinutes: input.estimatedMinutes ?? null,
+    plannedEffortMinutes: input.estimatedMinutes ?? null,
     difficulty: input.difficulty ?? null,
     taskType: input.taskType ?? null,
     requiresContinuousFocus: input.requiresContinuousFocus ?? null,
@@ -436,14 +436,14 @@ function toNewTaskRecord(input: TaskInput): NewTaskRecord {
 function mergeAndValidate(current: StoredTask, patch: TaskPatch): NewTaskRecord {
   const candidate = {
     title: patch.title ?? current.title,
-    entryType: patch.entryType ?? current.entryType,
+    entryType: patch.entryType ?? "task",
     scheduleKind: patch.scheduleKind ?? current.scheduleKind,
     localDate: patch.localDate !== undefined ? patch.localDate : current.localDate,
     daypart: patch.daypart !== undefined ? patch.daypart : current.daypart,
     startAt: patch.startAt !== undefined ? patch.startAt : current.startAt?.toISOString() ?? null,
     endAt: patch.endAt !== undefined ? patch.endAt : current.endAt?.toISOString() ?? null,
     timeZone: patch.timeZone ?? current.timeZone,
-    estimatedMinutes: patch.estimatedMinutes !== undefined ? patch.estimatedMinutes : current.estimatedMinutes,
+    estimatedMinutes: patch.estimatedMinutes !== undefined ? patch.estimatedMinutes : current.plannedEffortMinutes,
     difficulty: patch.difficulty !== undefined ? patch.difficulty : current.difficulty,
     taskType: patch.taskType !== undefined ? patch.taskType : current.taskType,
     requiresContinuousFocus: patch.requiresContinuousFocus !== undefined
@@ -466,10 +466,11 @@ function toTaskUpdateRecord(record: NewTaskRecord): Omit<NewTaskRecord, "id"> {
 
 function hasScheduleSemanticChange(current: StoredTask, next: NewTaskRecord): boolean {
   return current.scheduleKind !== next.scheduleKind
+    || current.localDate !== next.localDate
+    || current.daypart !== next.daypart
     || current.startAt?.getTime() !== next.startAt?.getTime()
     || current.endAt?.getTime() !== next.endAt?.getTime()
-    || (current.scheduleKind === "exact" && current.timeZone !== next.timeZone)
-    || (current.scheduleKind === "exact" || next.scheduleKind === "exact") && current.entryType !== next.entryType;
+    || current.timeZone !== next.timeZone;
 }
 
 function isBlocking(status: string): boolean {

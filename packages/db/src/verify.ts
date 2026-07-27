@@ -28,11 +28,48 @@ try {
     WHERE table_schema = 'public'
     ORDER BY table_name
   `);
+  const taskColumnsResult = await client.query<{ column_name: string }>(`
+    SELECT column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'tasks'
+      AND column_name IN ('planned_effort_minutes', 'source_inbox_entry_id')
+    ORDER BY column_name
+  `);
+  const taskConstraintsResult = await client.query<{ conname: string }>(`
+    SELECT conname
+    FROM pg_constraint
+    WHERE conrelid = 'public.tasks'::regclass
+      AND conname IN (
+        'tasks_exact_minimum_duration_check',
+        'tasks_planned_effort_check',
+        'tasks_schedule_shape_check'
+      )
+    ORDER BY conname
+  `);
+  const tableNames = tablesResult.rows.map((row) => row.table_name);
+  const taskColumns = taskColumnsResult.rows.map((row) => row.column_name);
+  const taskConstraints = taskConstraintsResult.rows.map((row) => row.conname);
+  const expectedTables = ["inbox_entries", "tasks"];
+  const expectedColumns = ["planned_effort_minutes", "source_inbox_entry_id"];
+  const expectedConstraints = [
+    "tasks_exact_minimum_duration_check",
+    "tasks_planned_effort_check",
+    "tasks_schedule_shape_check"
+  ];
+
+  if (expectedTables.some((name) => !tableNames.includes(name))
+    || expectedColumns.some((name) => !taskColumns.includes(name))
+    || expectedConstraints.some((name) => !taskConstraints.includes(name))) {
+    throw new Error("Database schema is missing the formal-task and inbox migration contract.");
+  }
 
   console.log(JSON.stringify({
     target: targetResult.rows[0],
     privileges: privilegesResult.rows[0],
-    tables: tablesResult.rows.map((row) => row.table_name)
+    tables: tableNames,
+    taskColumns,
+    taskConstraints
   }, null, 2));
 } finally {
   await client.end();

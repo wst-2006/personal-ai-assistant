@@ -11,15 +11,36 @@ import {
   text,
   timestamp,
   uuid,
+  uniqueIndex,
   varchar
 } from "drizzle-orm/pg-core";
+
+export const inboxEntries = pgTable(
+  "inbox_entries",
+  {
+    id: uuid("id").primaryKey(),
+    entryKind: varchar("entry_kind", { length: 16 }).notNull(),
+    content: varchar("content", { length: 200 }).notNull(),
+    notes: text("notes"),
+    version: integer("version").notNull().default(1),
+    convertedAt: timestamp("converted_at", { withTimezone: true }),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    index("inbox_entries_active_idx").on(table.deletedAt, table.createdAt),
+    check("inbox_entries_kind_check", sql`${table.entryKind} in ('idea', 'question')`),
+    check("inbox_entries_version_check", sql`${table.version} > 0`)
+  ]
+);
 
 export const tasks = pgTable(
   "tasks",
   {
     id: uuid("id").primaryKey(),
     title: varchar("title", { length: 200 }).notNull(),
-    entryType: varchar("entry_type", { length: 16 }).notNull(),
+    sourceInboxEntryId: uuid("source_inbox_entry_id").references(() => inboxEntries.id),
     lifecycleStatus: varchar("lifecycle_status", { length: 32 }).notNull().default("open"),
     scheduleKind: varchar("schedule_kind", { length: 16 }).notNull().default("none"),
     currentOutcome: varchar("current_outcome", { length: 32 }),
@@ -28,7 +49,7 @@ export const tasks = pgTable(
     startAt: timestamp("start_at", { withTimezone: true }),
     endAt: timestamp("end_at", { withTimezone: true }),
     timeZone: varchar("time_zone", { length: 64 }).notNull().default("Asia/Shanghai"),
-    estimatedMinutes: integer("estimated_minutes"),
+    plannedEffortMinutes: integer("planned_effort_minutes"),
     difficulty: varchar("difficulty", { length: 16 }),
     taskType: varchar("task_type", { length: 80 }),
     requiresContinuousFocus: boolean("requires_continuous_focus"),
@@ -42,6 +63,7 @@ export const tasks = pgTable(
   (table) => [
     index("tasks_local_date_idx").on(table.localDate),
     index("tasks_exact_interval_idx").on(table.startAt, table.endAt),
+    uniqueIndex("tasks_source_inbox_entry_id_unique").on(table.sourceInboxEntryId),
     check(
       "tasks_lifecycle_status_check",
       sql`${table.lifecycleStatus} in ('open', 'active', 'awaiting_outcome', 'closed', 'cancelled')`
@@ -55,16 +77,22 @@ export const tasks = pgTable(
       "tasks_time_pair_check",
       sql`(${table.startAt} is null and ${table.endAt} is null) or (${table.startAt} is not null and ${table.endAt} is not null)`
     ),
-    check("tasks_time_order_check", sql`${table.endAt} is null or ${table.endAt} > ${table.startAt}`),
+    check(
+      "tasks_exact_minimum_duration_check",
+      sql`${table.endAt} is null or ${table.endAt} >= ${table.startAt} + interval '5 minutes'`
+    ),
+    check(
+      "tasks_planned_effort_check",
+      sql`${table.plannedEffortMinutes} is null or (${table.plannedEffortMinutes} between 1 and 1440)`
+    ),
     check(
       "tasks_schedule_shape_check",
       sql`(
         (${table.scheduleKind} = 'none' and ${table.startAt} is null and ${table.endAt} is null and ${table.daypart} is null)
         or (${table.scheduleKind} = 'daypart' and ${table.localDate} is not null and ${table.daypart} in ('morning', 'afternoon', 'evening') and ${table.startAt} is null and ${table.endAt} is null)
-        or (${table.scheduleKind} = 'exact' and ${table.startAt} is not null and ${table.endAt} is not null and ${table.daypart} is null)
+        or (${table.scheduleKind} = 'exact' and ${table.localDate} is not null and ${table.startAt} is not null and ${table.endAt} is not null and ${table.daypart} is null)
       )`
     ),
-    check("tasks_exact_entry_type_check", sql`${table.scheduleKind} <> 'exact' or ${table.entryType} = 'task'`),
     check("tasks_version_check", sql`${table.version} > 0`),
     check("tasks_schedule_revision_check", sql`${table.scheduleRevision} > 0`)
   ]

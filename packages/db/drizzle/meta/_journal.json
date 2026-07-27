@@ -15,6 +15,13 @@
       "when": 1785140609009,
       "tag": "0001_task_lifecycle",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785166642898,
+      "tag": "0002_formal_tasks_and_inbox",
+      "breakpoints": true
     }
   ]
 }

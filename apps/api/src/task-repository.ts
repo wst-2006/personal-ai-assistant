@@ -14,7 +14,7 @@ export type StoredTaskOutcome = typeof taskOutcomes.$inferSelect;
 export type NewTaskRecord = {
   id: string;
   title: string;
-  entryType: string;
+  sourceInboxEntryId: string | null;
   lifecycleStatus: TaskLifecycle;
   scheduleKind: TaskScheduleKind;
   currentOutcome: TaskOutcome | null;
@@ -23,7 +23,7 @@ export type NewTaskRecord = {
   startAt: Date | null;
   endAt: Date | null;
   timeZone: string;
-  estimatedMinutes: number | null;
+  plannedEffortMinutes: number | null;
   difficulty: string | null;
   taskType: string | null;
   requiresContinuousFocus: boolean | null;
