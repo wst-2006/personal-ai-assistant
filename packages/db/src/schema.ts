@@ -1,9 +1,13 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
+  check,
+  date,
   index,
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   text,
   timestamp,
   uuid,
@@ -16,22 +20,54 @@ export const tasks = pgTable(
     id: uuid("id").primaryKey(),
     title: varchar("title", { length: 200 }).notNull(),
     entryType: varchar("entry_type", { length: 16 }).notNull(),
-    lifecycleStatus: varchar("lifecycle_status", { length: 32 }).notNull(),
-    objectiveOutcome: varchar("objective_outcome", { length: 32 }),
-    localDate: varchar("local_date", { length: 10 }),
+    lifecycleStatus: varchar("lifecycle_status", { length: 32 }).notNull().default("open"),
+    scheduleKind: varchar("schedule_kind", { length: 16 }).notNull().default("none"),
+    currentOutcome: varchar("current_outcome", { length: 32 }),
+    localDate: date("local_date", { mode: "string" }),
+    daypart: varchar("daypart", { length: 16 }),
     startAt: timestamp("start_at", { withTimezone: true }),
     endAt: timestamp("end_at", { withTimezone: true }),
+    timeZone: varchar("time_zone", { length: 64 }).notNull().default("Asia/Shanghai"),
     estimatedMinutes: integer("estimated_minutes"),
     difficulty: varchar("difficulty", { length: 16 }),
     taskType: varchar("task_type", { length: 80 }),
     requiresContinuousFocus: boolean("requires_continuous_focus"),
-    schedulePrecision: varchar("schedule_precision", { length: 16 }),
     notes: text("notes"),
     version: integer("version").notNull().default(1),
+    scheduleRevision: integer("schedule_revision").notNull().default(1),
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
   },
-  (table) => [index("tasks_local_date_idx").on(table.localDate)]
+  (table) => [
+    index("tasks_local_date_idx").on(table.localDate),
+    index("tasks_exact_interval_idx").on(table.startAt, table.endAt),
+    check(
+      "tasks_lifecycle_status_check",
+      sql`${table.lifecycleStatus} in ('open', 'active', 'awaiting_outcome', 'closed', 'cancelled')`
+    ),
+    check("tasks_schedule_kind_check", sql`${table.scheduleKind} in ('none', 'daypart', 'exact')`),
+    check(
+      "tasks_current_outcome_check",
+      sql`${table.currentOutcome} is null or ${table.currentOutcome} in ('not_completed', 'partial', 'complete')`
+    ),
+    check(
+      "tasks_time_pair_check",
+      sql`(${table.startAt} is null and ${table.endAt} is null) or (${table.startAt} is not null and ${table.endAt} is not null)`
+    ),
+    check("tasks_time_order_check", sql`${table.endAt} is null or ${table.endAt} > ${table.startAt}`),
+    check(
+      "tasks_schedule_shape_check",
+      sql`(
+        (${table.scheduleKind} = 'none' and ${table.startAt} is null and ${table.endAt} is null and ${table.daypart} is null)
+        or (${table.scheduleKind} = 'daypart' and ${table.localDate} is not null and ${table.daypart} in ('morning', 'afternoon', 'evening') and ${table.startAt} is null and ${table.endAt} is null)
+        or (${table.scheduleKind} = 'exact' and ${table.startAt} is not null and ${table.endAt} is not null and ${table.daypart} is null)
+      )`
+    ),
+    check("tasks_exact_entry_type_check", sql`${table.scheduleKind} <> 'exact' or ${table.entryType} = 'task'`),
+    check("tasks_version_check", sql`${table.version} > 0`),
+    check("tasks_schedule_revision_check", sql`${table.scheduleRevision} > 0`)
+  ]
 );
 
 export const focusSessions = pgTable(
@@ -59,6 +95,83 @@ export const taskFeedback = pgTable("task_feedback", {
   note: text("note"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
 });
+
+export const taskOutcomes = pgTable(
+  "task_outcomes",
+  {
+    id: uuid("id").primaryKey(),
+    taskId: uuid("task_id").notNull().references(() => tasks.id),
+    focusSessionId: uuid("focus_session_id").references(() => focusSessions.id),
+    outcome: varchar("outcome", { length: 32 }).notNull(),
+    progressPercent: integer("progress_percent").notNull(),
+    source: varchar("source", { length: 16 }).notNull(),
+    note: text("note"),
+    recordedAt: timestamp("recorded_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    index("task_outcomes_task_id_idx").on(table.taskId, table.recordedAt),
+    check(
+      "task_outcomes_value_check",
+      sql`(${table.outcome} = 'not_completed' and ${table.progressPercent} = 0)
+        or (${table.outcome} = 'partial' and ${table.progressPercent} between 1 and 99)
+        or (${table.outcome} = 'complete' and ${table.progressPercent} = 100)`
+    ),
+    check("task_outcomes_source_check", sql`${table.source} in ('app', 'ai', 'feishu', 'system')`)
+  ]
+);
+
+export const taskLifecycleEvents = pgTable(
+  "task_lifecycle_events",
+  {
+    id: uuid("id").primaryKey(),
+    taskId: uuid("task_id").notNull().references(() => tasks.id),
+    fromStatus: varchar("from_status", { length: 32 }),
+    toStatus: varchar("to_status", { length: 32 }).notNull(),
+    source: varchar("source", { length: 16 }).notNull(),
+    reason: text("reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    index("task_lifecycle_events_task_id_idx").on(table.taskId, table.createdAt),
+    check(
+      "task_lifecycle_events_from_status_check",
+      sql`${table.fromStatus} is null or ${table.fromStatus} in ('open', 'active', 'awaiting_outcome', 'closed', 'cancelled')`
+    ),
+    check(
+      "task_lifecycle_events_to_status_check",
+      sql`${table.toStatus} in ('open', 'active', 'awaiting_outcome', 'closed', 'cancelled', 'deleted')`
+    ),
+    check("task_lifecycle_events_source_check", sql`${table.source} in ('app', 'ai', 'feishu', 'system')`)
+  ]
+);
+
+export const taskConflictAcceptances = pgTable(
+  "task_conflict_acceptances",
+  {
+    taskIdLow: uuid("task_id_low").notNull().references(() => tasks.id),
+    taskScheduleRevisionLow: integer("task_schedule_revision_low").notNull(),
+    taskIdHigh: uuid("task_id_high").notNull().references(() => tasks.id),
+    taskScheduleRevisionHigh: integer("task_schedule_revision_high").notNull(),
+    acceptedAt: timestamp("accepted_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    primaryKey({
+      name: "task_conflict_acceptances_pk",
+      columns: [
+        table.taskIdLow,
+        table.taskScheduleRevisionLow,
+        table.taskIdHigh,
+        table.taskScheduleRevisionHigh
+      ]
+    }),
+    index("task_conflict_acceptances_high_idx").on(table.taskIdHigh, table.taskScheduleRevisionHigh),
+    check("task_conflict_acceptances_order_check", sql`${table.taskIdLow} < ${table.taskIdHigh}`),
+    check(
+      "task_conflict_acceptances_revisions_check",
+      sql`${table.taskScheduleRevisionLow} > 0 and ${table.taskScheduleRevisionHigh} > 0`
+    )
+  ]
+);
 
 export const reviewSessions = pgTable("review_sessions", {
   id: uuid("id").primaryKey(),

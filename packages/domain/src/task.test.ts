@@ -1,0 +1,72 @@
+import { describe, expect, it } from "vitest";
+import { taskInputSchema, taskOutcomeInputSchema } from "./task.js";
+
+const exactTask = {
+  title: "Deep work",
+  entryType: "task" as const,
+  scheduleKind: "exact" as const,
+  startAt: "2026-07-27T09:00:00+08:00",
+  endAt: "2026-07-27T10:00:00+08:00",
+  timeZone: "Asia/Shanghai"
+};
+
+describe("task scheduling validation", () => {
+  it("derives exact dates on the server by rejecting client localDate", () => {
+    const result = taskInputSchema.safeParse({ ...exactTask, localDate: "2026-07-27" });
+    expect(result.success).toBe(false);
+  });
+
+  it("requires exact timestamps as a pair and in ascending order", () => {
+    expect(taskInputSchema.safeParse({ ...exactTask, endAt: undefined }).success).toBe(false);
+    expect(taskInputSchema.safeParse({ ...exactTask, endAt: exactTask.startAt }).success).toBe(false);
+  });
+
+  it("rejects exact tasks that cross midnight in their IANA time zone", () => {
+    const result = taskInputSchema.safeParse({
+      ...exactTask,
+      startAt: "2026-07-27T23:30:00+08:00",
+      endAt: "2026-07-28T00:30:00+08:00"
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects exact scheduling for ideas and questions", () => {
+    expect(taskInputSchema.safeParse({ ...exactTask, entryType: "idea" }).success).toBe(false);
+    expect(taskInputSchema.safeParse({ ...exactTask, entryType: "question" }).success).toBe(false);
+  });
+
+  it("validates daypart and unscheduled shapes independently", () => {
+    expect(taskInputSchema.safeParse({
+      title: "Read",
+      entryType: "task",
+      scheduleKind: "daypart",
+      localDate: "2026-07-27",
+      daypart: "morning"
+    }).success).toBe(true);
+    expect(taskInputSchema.safeParse({
+      title: "Read",
+      entryType: "task",
+      scheduleKind: "none",
+      daypart: "morning"
+    }).success).toBe(false);
+  });
+
+  it("requires a valid IANA time zone", () => {
+    expect(taskInputSchema.safeParse({ ...exactTask, timeZone: "Shanghai-ish" }).success).toBe(false);
+  });
+});
+
+describe("task outcome validation", () => {
+  it.each([
+    ["not_completed", 0, true],
+    ["not_completed", 1, false],
+    ["partial", 1, true],
+    ["partial", 99, true],
+    ["partial", 100, false],
+    ["complete", 100, true],
+    ["complete", 99, false]
+  ] as const)("validates %s at %i%%", (outcome, progressPercent, valid) => {
+    const result = taskOutcomeInputSchema.safeParse({ expectedVersion: 1, outcome, progressPercent });
+    expect(result.success).toBe(valid);
+  });
+});

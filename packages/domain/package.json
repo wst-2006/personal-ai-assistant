@@ -15,9 +15,13 @@
   },
   "scripts": {
     "build": "tsc --project tsconfig.build.json",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "vitest": "^3.0.7"
   }
 }
