@@ -19,3 +19,21 @@ All migration commands require a verified connection to
 `personal_ai_assistant` as `personal_ai_app` at the configured host, port, and
 PostgreSQL major version. This protects other local projects sharing the
 PostgreSQL service.
+
+## 2026-07-27: Independent task lifecycle and schedule state
+
+Task lifecycle is `open | active | awaiting_outcome | closed | cancelled`.
+Scheduling is represented independently as `none | daypart | exact`, and soft
+deletion is independent from both. The application database is the sole source
+of truth; external calendars are reminder, synchronization, or import channels.
+
+Exact overlaps are advisory and never auto-adjust a task. Active blocking
+overlaps require explicit confirmation, while overlaps with closed tasks are
+shown as historical warnings. Conflict confirmations are tied to a canonical
+task pair and both tasks' schedule revisions.
+
+## 2026-07-27: Append-only task outcomes
+
+Every task close operation appends a `task_outcomes` record. Reopening clears
+the current outcome value but preserves prior outcomes. Subjective satisfaction
+remains separate and will be recorded with focus feedback.
