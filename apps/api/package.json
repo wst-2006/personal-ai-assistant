@@ -1,0 +1,26 @@
+{
+  "name": "@personal-ai/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc --outDir dist",
+    "start": "node dist/server.js",
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "verify:db": "tsx src/task-persistence.verify.ts"
+  },
+  "dependencies": {
+    "@fastify/cors": "^10.0.2",
+    "@personal-ai/db": "workspace:*",
+    "@personal-ai/domain": "workspace:*",
+    "drizzle-orm": "^0.38.4",
+    "fastify": "^5.2.1",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.2",
+    "vitest": "^3.0.7"
+  }
+}

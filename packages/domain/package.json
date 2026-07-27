@@ -1,0 +1,23 @@
+{
+  "name": "@personal-ai/domain",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./task": {
+      "types": "./dist/task.d.ts",
+      "default": "./dist/task.js"
+    },
+    "./focus": {
+      "types": "./dist/focus.d.ts",
+      "default": "./dist/focus.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.build.json",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "zod": "^3.24.2"
+  }
+}

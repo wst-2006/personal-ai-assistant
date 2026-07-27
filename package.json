@@ -1,0 +1,20 @@
+{
+  "name": "personal-ai-assistant",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.9.0",
+  "scripts": {
+    "dev:web": "pnpm --filter @personal-ai/web dev",
+    "dev:api": "pnpm --filter @personal-ai/api dev",
+    "build": "pnpm --filter @personal-ai/domain --filter @personal-ai/db --filter @personal-ai/api --filter @personal-ai/web -r --if-present run build",
+    "check": "pnpm -r --if-present run check",
+    "test": "pnpm -r --if-present run test",
+    "db:generate": "pnpm --filter @personal-ai/db generate",
+    "db:migrate": "pnpm --filter @personal-ai/db migrate",
+    "db:verify": "pnpm --filter @personal-ai/db verify"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.4",
+    "typescript": "^5.7.3"
+  }
+}
