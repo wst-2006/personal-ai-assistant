@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ArrowRight,
   BarChart3,
@@ -19,6 +19,7 @@ import {
   MessageCircle,
   MoreHorizontal,
   NotebookPen,
+  Pencil,
   PanelRightOpen,
   Pause,
   Play,
@@ -26,23 +27,54 @@ import {
   Sparkles,
   Target,
   TimerReset,
+  Trash2,
+  Undo2,
   X
 } from "lucide-react";
 
 type EntryType = "task" | "idea" | "question";
 type View = "today" | "focus" | "review" | "diary" | "growth";
 type Satisfaction = "satisfied" | "neutral" | "dissatisfied";
+type LifecycleStatus = "open" | "active" | "awaiting_outcome" | "closed" | "cancelled";
+type ScheduleKind = "none" | "daypart" | "exact";
+type Daypart = "morning" | "afternoon" | "evening";
 
 type Task = {
   id: string;
   title: string;
   entryType: EntryType;
-  lifecycleStatus: string;
+  lifecycleStatus: LifecycleStatus;
+  scheduleKind: ScheduleKind;
+  currentOutcome: "not_completed" | "partial" | "complete" | null;
   localDate: string | null;
+  daypart: Daypart | null;
   startAt: string | null;
+  endAt: string | null;
+  timeZone: string;
   estimatedMinutes: number | null;
   difficulty: "low" | "medium" | "high" | null;
+  notes: string | null;
+  version: number;
+  scheduleRevision: number;
 };
+
+type ConflictPair = { taskIdA: string; taskIdB: string; accepted: boolean };
+type TaskListResponse = {
+  tasks: Task[];
+  blockingConflicts: ConflictPair[];
+  historicalOverlaps: ConflictPair[];
+};
+
+type ApiErrorBody = {
+  error?: string;
+  conflictSetFingerprint?: string;
+};
+
+class ApiError extends Error {
+  constructor(readonly status: number, readonly body: ApiErrorBody) {
+    super(body.error ?? `HTTP ${status}`);
+  }
+}
 
 type NaturalLanguageTaskCandidate = {
   title: string;
@@ -66,6 +98,14 @@ const entryLabels: Record<EntryType, string> = {
   question: "问题"
 };
 const difficultyLabels = { low: "轻", medium: "中", high: "深" };
+const lifecycleLabels: Record<LifecycleStatus, string> = {
+  open: "待开始",
+  active: "进行中",
+  awaiting_outcome: "待补结果",
+  closed: "已结束",
+  cancelled: "已取消"
+};
+const daypartLabels: Record<Daypart, string> = { morning: "上午", afternoon: "下午", evening: "晚上" };
 const navItems: Array<{ id: View; label: string; icon: typeof CalendarDays }> = [
   { id: "today", label: "今日", icon: CalendarDays },
   { id: "focus", label: "专注", icon: Target },
@@ -93,6 +133,7 @@ function displayDate(): string {
 }
 
 function displayTime(task: Task): string {
+  if (task.scheduleKind === "daypart" && task.daypart) return daypartLabels[task.daypart];
   if (!task.startAt) return "待定";
   return new Intl.DateTimeFormat("zh-CN", {
     timeZone: "Asia/Shanghai",
@@ -100,6 +141,20 @@ function displayTime(task: Task): string {
     minute: "2-digit",
     hour12: false
   }).format(new Date(task.startAt));
+}
+
+function localTime(value: string | null): string {
+  if (!value) return "";
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Shanghai",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).format(new Date(value));
+}
+
+function shanghaiIso(localDate: string, time: string): string {
+  return `${localDate}T${time}:00+08:00`;
 }
 
 function timeFromSeconds(seconds: number): string {
@@ -111,6 +166,8 @@ export function App() {
   const today = useMemo(shanghaiDate, []);
   const [view, setView] = useState<View>("today");
   const [items, setItems] = useState<Task[]>([]);
+  const [blockingConflicts, setBlockingConflicts] = useState<ConflictPair[]>([]);
+  const [historicalOverlaps, setHistoricalOverlaps] = useState<ConflictPair[]>([]);
   const [entryType, setEntryType] = useState<EntryType>("task");
   const [title, setTitle] = useState("");
   const [duration, setDuration] = useState("30");
@@ -129,6 +186,13 @@ export function App() {
   const [reviewDraft, setReviewDraft] = useState("");
   const [reviewMessages, setReviewMessages] = useState<string[]>([]);
   const [diaryDraft, setDiaryDraft] = useState("");
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editScheduleKind, setEditScheduleKind] = useState<ScheduleKind>("none");
+  const [editDate, setEditDate] = useState(today);
+  const [editDaypart, setEditDaypart] = useState<Daypart>("morning");
+  const [editStart, setEditStart] = useState("09:00");
+  const [editEnd, setEditEnd] = useState("10:00");
 
   const tasks = items.filter((item) => item.entryType === "task");
   const inboxItems = items.filter((item) => item.entryType !== "task");
@@ -138,25 +202,24 @@ export function App() {
   const plannedSeconds = (selectedTask?.estimatedMinutes ?? 25) * 60;
   const remainingSeconds = Math.max(0, plannedSeconds - focusSeconds);
 
+  const loadTasks = useCallback(async (signal?: AbortSignal) => {
+    const response = await fetch(`${apiBaseUrl}/api/v1/tasks?date=${today}`, { signal });
+    if (!response.ok) throw new Error("无法读取今日任务");
+    const data = await response.json() as TaskListResponse;
+    setItems(data.tasks);
+    setBlockingConflicts(data.blockingConflicts);
+    setHistoricalOverlaps(data.historicalOverlaps);
+  }, [today]);
+
   useEffect(() => {
     const controller = new AbortController();
-    async function loadTasks() {
-      try {
-        const response = await fetch(`${apiBaseUrl}/api/v1/tasks?date=${today}`, { signal: controller.signal });
-        if (!response.ok) throw new Error("无法读取今日任务");
-        const data = await response.json() as { tasks: Task[] };
-        setItems(data.tasks);
-      } catch (loadError) {
-        if ((loadError as Error).name !== "AbortError") {
-          setError("暂时无法连接任务服务，请确认本地 API 正在运行。");
-        }
-      } finally {
-        setLoading(false);
-      }
-    }
-    void loadTasks();
+    void loadTasks(controller.signal)
+      .catch((loadError: Error) => {
+        if (loadError.name !== "AbortError") setError("暂时无法连接任务服务，请确认本地 API 正在运行。");
+      })
+      .finally(() => setLoading(false));
     return () => controller.abort();
-  }, [today]);
+  }, [loadTasks]);
 
   useEffect(() => {
     if (!focusRunning || !selectedTask) return;
@@ -182,14 +245,47 @@ export function App() {
     setSatisfaction(null);
   }
 
-  async function createTask(payload: Record<string, unknown>) {
-    const response = await fetch(`${apiBaseUrl}/api/v1/tasks`, {
-      method: "POST",
+  async function requestJson<T>(path: string, method: string, payload?: Record<string, unknown>): Promise<T> {
+    const response = await fetch(`${apiBaseUrl}${path}`, {
+      method,
       headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload)
+      body: payload ? JSON.stringify(payload) : undefined
     });
-    if (!response.ok) throw new Error("保存失败");
-    return (await response.json() as { task: Task }).task;
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({})) as ApiErrorBody;
+      throw new ApiError(response.status, body);
+    }
+    return response.status === 204 ? undefined as T : await response.json() as T;
+  }
+
+  async function requestWithConflictConfirmation<T>(
+    path: string,
+    method: string,
+    payload: Record<string, unknown>
+  ): Promise<T> {
+    let currentPayload = payload;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        return await requestJson<T>(path, method, currentPayload);
+      } catch (requestError) {
+        if (!(requestError instanceof ApiError)
+          || !["task_time_conflict", "conflict_set_changed"].includes(requestError.body.error ?? "")
+          || !requestError.body.conflictSetFingerprint) throw requestError;
+        const keep = window.confirm("这个时间与现有任务重叠。数据库不会自动调整时间，是否明确保留冲突？");
+        if (!keep) throw requestError;
+        currentPayload = {
+          ...payload,
+          conflictDecision: "keep",
+          expectedConflictFingerprint: requestError.body.conflictSetFingerprint
+        };
+      }
+    }
+    throw new Error("冲突集合持续变化，请刷新后重试。");
+  }
+
+  async function createTask(payload: Record<string, unknown>) {
+    const result = await requestWithConflictConfirmation<{ task: Task }>("/api/v1/tasks", "POST", payload);
+    return result.task;
   }
 
   async function addItem(event: React.FormEvent<HTMLFormElement>) {
@@ -202,7 +298,9 @@ export function App() {
       const task = await createTask({
         title: trimmedTitle,
         entryType,
-        date: today,
+        scheduleKind: "none",
+        localDate: today,
+        timeZone: "Asia/Shanghai",
         ...(entryType === "task" ? { estimatedMinutes: Number(duration), difficulty: "medium" } : {})
       });
       setItems((current) => [...current, task]);
@@ -239,17 +337,25 @@ export function App() {
     if (!aiCandidate) return;
     setSaving(true);
     try {
+      const exactSchedule = aiCandidate.entryType === "task"
+        && aiCandidate.schedulePrecision === "exact"
+        && aiCandidate.startAt
+        && aiCandidate.endAt;
+      const daypart = aiCandidate.schedulePrecision && aiCandidate.schedulePrecision !== "exact"
+        ? aiCandidate.schedulePrecision
+        : null;
       const task = await createTask({
         title: aiCandidate.title,
         entryType: aiCandidate.entryType,
-        ...(aiCandidate.date ? { date: aiCandidate.date } : {}),
-        ...(aiCandidate.startAt ? { startAt: aiCandidate.startAt } : {}),
-        ...(aiCandidate.endAt ? { endAt: aiCandidate.endAt } : {}),
+        scheduleKind: exactSchedule ? "exact" : daypart && aiCandidate.date ? "daypart" : "none",
+        ...(!exactSchedule && aiCandidate.date ? { localDate: aiCandidate.date } : {}),
+        ...(exactSchedule ? { startAt: aiCandidate.startAt, endAt: aiCandidate.endAt } : {}),
+        ...(daypart && aiCandidate.date ? { daypart } : {}),
+        timeZone: "Asia/Shanghai",
         ...(aiCandidate.estimatedMinutes ? { estimatedMinutes: aiCandidate.estimatedMinutes } : {}),
         ...(aiCandidate.difficulty ? { difficulty: aiCandidate.difficulty } : {}),
         ...(aiCandidate.taskType ? { taskType: aiCandidate.taskType } : {}),
         ...(aiCandidate.requiresContinuousFocus !== null ? { requiresContinuousFocus: aiCandidate.requiresContinuousFocus } : {}),
-        ...(aiCandidate.schedulePrecision ? { schedulePrecision: aiCandidate.schedulePrecision } : {}),
         ...(aiCandidate.notes ? { notes: aiCandidate.notes } : {})
       });
       if (task.localDate === today) setItems((current) => [...current, task]);
@@ -261,6 +367,93 @@ export function App() {
     } finally {
       setSaving(false);
     }
+  }
+
+  function beginEdit(task: Task) {
+    setEditingTask(task);
+    setEditTitle(task.title);
+    setEditScheduleKind(task.scheduleKind);
+    setEditDate(task.localDate ?? today);
+    setEditDaypart(task.daypart ?? "morning");
+    setEditStart(localTime(task.startAt) || "09:00");
+    setEditEnd(localTime(task.endAt) || "10:00");
+  }
+
+  async function saveEdit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editingTask || !editTitle.trim()) return;
+    setSaving(true);
+    setError(null);
+    const schedule = editScheduleKind === "exact"
+      ? {
+          scheduleKind: "exact",
+          localDate: null,
+          daypart: null,
+          startAt: shanghaiIso(editDate, editStart),
+          endAt: shanghaiIso(editDate, editEnd),
+          timeZone: "Asia/Shanghai"
+        }
+      : editScheduleKind === "daypart"
+        ? { scheduleKind: "daypart", localDate: editDate, daypart: editDaypart, startAt: null, endAt: null }
+        : { scheduleKind: "none", localDate: editDate || null, daypart: null, startAt: null, endAt: null };
+    try {
+      await requestWithConflictConfirmation(`/api/v1/tasks/${editingTask.id}`, "PATCH", {
+        expectedVersion: editingTask.version,
+        title: editTitle.trim(),
+        ...schedule
+      });
+      setEditingTask(null);
+      await loadTasks();
+    } catch (saveError) {
+      if (saveError instanceof ApiError && saveError.body.error === "task_version_conflict") {
+        setError("任务已在别处更新，请刷新后再编辑。");
+      } else if (saveError instanceof ApiError && saveError.body.error === "task_time_conflict") {
+        setError("已保留原排期，没有保存这次冲突修改。");
+      } else {
+        setError("编辑保存失败，请检查输入后重试。");
+      }
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function runTaskAction(task: Task, action: "cancel" | "reopen" | "delete" | "complete" | "partial") {
+    setSaving(true);
+    setError(null);
+    try {
+      if (action === "delete") {
+        await requestJson(`/api/v1/tasks/${task.id}`, "DELETE", { expectedVersion: task.version });
+      } else if (action === "cancel") {
+        await requestJson(`/api/v1/tasks/${task.id}/cancel`, "POST", { expectedVersion: task.version });
+      } else if (action === "reopen") {
+        await requestWithConflictConfirmation(`/api/v1/tasks/${task.id}/reopen`, "POST", {
+          expectedVersion: task.version
+        });
+      } else {
+        const progress = action === "complete"
+          ? 100
+          : Number(window.prompt("请输入当前客观进度（1-99）", "50"));
+        if (!Number.isInteger(progress) || progress < 1 || (action === "partial" && progress > 99)) return;
+        await requestJson(`/api/v1/tasks/${task.id}/outcomes`, "POST", {
+          expectedVersion: task.version,
+          outcome: action === "complete" ? "complete" : "partial",
+          progressPercent: progress,
+          source: "app"
+        });
+      }
+      if (selectedTaskId === task.id && (action === "delete" || action === "cancel")) setSelectedTaskId(null);
+      await loadTasks();
+    } catch (actionError) {
+      setError(actionError instanceof ApiError && actionError.body.error === "task_version_conflict"
+        ? "任务版本已变化，请刷新后重试。"
+        : "操作没有完成，请稍后重试。");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function hasPair(taskId: string, pairs: ConflictPair[]): boolean {
+    return pairs.some((pair) => pair.taskIdA === taskId || pair.taskIdB === taskId);
   }
 
   function addReviewMessage() {
@@ -340,13 +533,35 @@ export function App() {
                 ) : (
                   <div className="timeline">
                     {orderedTasks.map((task) => (
-                      <article className={`timeline-row ${task.id === selectedTaskId ? "selected" : ""}`} key={task.id}>
+                      <article className={`timeline-row ${task.id === selectedTaskId ? "selected" : ""} ${task.lifecycleStatus}`} key={task.id}>
                         <time>{displayTime(task)}</time><div className="timeline-point" aria-hidden="true" />
-                        <button className="timeline-task" type="button" onClick={() => { selectTask(task.id); setView("focus"); }}>
+                        <button
+                          className="timeline-task"
+                          type="button"
+                          disabled={task.lifecycleStatus === "closed" || task.lifecycleStatus === "cancelled"}
+                          onClick={() => { selectTask(task.id); setView("focus"); }}
+                        >
                           <span className={`task-tone ${task.difficulty ?? "medium"}`} aria-hidden="true" />
-                          <span className="task-content"><strong>{task.title}</strong><small>{task.estimatedMinutes ?? 30} 分钟 <i /> {task.difficulty ? difficultyLabels[task.difficulty] : "待定"}量</small></span>
+                          <span className="task-content">
+                            <strong>{task.title}</strong>
+                            <small>
+                              {task.estimatedMinutes ?? 30} 分钟 <i /> {lifecycleLabels[task.lifecycleStatus]}
+                              {hasPair(task.id, blockingConflicts) && <em className="conflict-label">时间冲突</em>}
+                              {hasPair(task.id, historicalOverlaps) && <em className="history-label">历史重叠</em>}
+                            </small>
+                          </span>
                           <Play aria-hidden="true" />
                         </button>
+                        <div className="task-actions" aria-label={`${task.title}的操作`}>
+                          {(task.lifecycleStatus === "open" || task.lifecycleStatus === "awaiting_outcome") && <>
+                            <button type="button" title="记录部分完成" aria-label="记录部分完成" disabled={saving} onClick={() => void runTaskAction(task, "partial")}><CheckCircle2 aria-hidden="true" /></button>
+                            <button type="button" title="标记完成" aria-label="标记完成" disabled={saving} onClick={() => void runTaskAction(task, "complete")}><Check aria-hidden="true" /></button>
+                          </>}
+                          {task.lifecycleStatus === "open" && <button type="button" title="取消任务" aria-label="取消任务" disabled={saving} onClick={() => void runTaskAction(task, "cancel")}><X aria-hidden="true" /></button>}
+                          {(task.lifecycleStatus === "closed" || task.lifecycleStatus === "cancelled") && <button type="button" title="重新打开" aria-label="重新打开" disabled={saving} onClick={() => void runTaskAction(task, "reopen")}><Undo2 aria-hidden="true" /></button>}
+                          {task.lifecycleStatus === "open" && <button type="button" title="编辑任务" aria-label="编辑任务" disabled={saving} onClick={() => beginEdit(task)}><Pencil aria-hidden="true" /></button>}
+                          {task.lifecycleStatus !== "active" && <button type="button" title="删除任务" aria-label="删除任务" disabled={saving} onClick={() => void runTaskAction(task, "delete")}><Trash2 aria-hidden="true" /></button>}
+                        </div>
                       </article>
                     ))}
                   </div>
@@ -354,6 +569,20 @@ export function App() {
               </section>
 
               <aside className="today-aside">
+                {editingTask && <section className="task-editor" aria-labelledby="edit-task-title">
+                  <div className="section-heading compact">
+                    <div><p className="section-kicker">编辑任务</p><h2 id="edit-task-title">调整这项安排</h2></div>
+                    <button className="quiet-icon" type="button" aria-label="关闭编辑" onClick={() => setEditingTask(null)}><X aria-hidden="true" /></button>
+                  </div>
+                  <form onSubmit={saveEdit}>
+                    <label><span>标题</span><input value={editTitle} onChange={(event) => setEditTitle(event.target.value)} maxLength={200} /></label>
+                    <label><span>排期方式</span><select value={editScheduleKind} onChange={(event) => setEditScheduleKind(event.target.value as ScheduleKind)}><option value="none">仅指定日期</option><option value="daypart">指定时段</option><option value="exact">精确时间</option></select></label>
+                    <label><span>日期</span><input type="date" value={editDate} onChange={(event) => setEditDate(event.target.value)} required={editScheduleKind !== "none"} /></label>
+                    {editScheduleKind === "daypart" && <label><span>时段</span><select value={editDaypart} onChange={(event) => setEditDaypart(event.target.value as Daypart)}><option value="morning">上午</option><option value="afternoon">下午</option><option value="evening">晚上</option></select></label>}
+                    {editScheduleKind === "exact" && <div className="editor-time-row"><label><span>开始</span><input type="time" value={editStart} onChange={(event) => setEditStart(event.target.value)} required /></label><label><span>结束</span><input type="time" value={editEnd} onChange={(event) => setEditEnd(event.target.value)} required /></label></div>}
+                    <button className="primary-button full-width" type="submit" disabled={saving || !editTitle.trim()}>{saving ? <LoaderCircle className="spin" aria-hidden="true" /> : <Check aria-hidden="true" />}{saving ? "保存中" : "保存修改"}</button>
+                  </form>
+                </section>}
                 <section className="quick-capture" aria-labelledby="capture-title">
                   <div className="section-heading compact"><div><p className="section-kicker">快速记录</p><h2 id="capture-title">先放进来</h2></div><Lightbulb aria-hidden="true" /></div>
                   <div className="entry-switch" aria-label="录入类型">
