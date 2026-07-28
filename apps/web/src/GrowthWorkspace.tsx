@@ -1,0 +1,36 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { BarChart3, CheckCircle2, Leaf, Sparkles, Timer } from "lucide-react";
+
+type Summary = {
+  days: Array<{ localDate: string; focusMinutes: number; closedTasks: number; plannedTasks: number; tone: "quiet" | "steady" | "bright" }>;
+  focusMinutes: number; plannedTasks: number; closedTasks: number;
+  satisfaction: { satisfied: number; neutral: number; dissatisfied: number };
+  radar: Array<{ key: string; label: string; value: number }>;
+  garden: { points: number; growthPercent: number; treeKind: string; quality: number };
+};
+const API = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:3000";
+const localDate = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+const weekday = (value: string) => new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", weekday: "short" }).format(new Date(`${value}T12:00:00Z`)).replace("周", "");
+
+export function GrowthWorkspace() {
+  const [summary, setSummary] = useState<Summary | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const load = useCallback(async () => {
+    const response = await fetch(`${API}/api/v1/growth/summary?endDate=${localDate()}`);
+    if (!response.ok) throw new Error("growth_request_failed");
+    setSummary((await response.json() as { summary: Summary }).summary);
+  }, []);
+  useEffect(() => { void load().catch(() => setError("无法读取成长数据，请确认 API 正在运行。")); }, [load]);
+  const maxFocus = useMemo(() => Math.max(30, ...(summary?.days.map((day) => day.focusMinutes) ?? [30])), [summary]);
+  return <section className="page growth-page" aria-labelledby="growth-title">
+    <div className="growth-heading"><div><p className="eyebrow">成长花园</p><h1 id="growth-title">生长来自留下的数据。</h1></div><span className="growth-week">最近 7 天</span></div>
+    {!summary ? <div className="growth-loading"><Leaf /><p>正在汇集你的真实记录。</p></div> : <>
+      <section className="growth-hero" aria-label="成长概览"><div className="growth-plant"><span className="plant-stem" style={{ height: `${Math.max(42, summary.garden.growthPercent * 1.5)}px` }} /><i /><b /></div><div><p className="section-kicker">当前树种</p><strong>{summary.garden.treeKind}</strong><p>由近期完成质量决定，专注时长推动生长进度。</p></div><div className="growth-hero-stats"><span><Timer />{summary.focusMinutes} 分钟</span><span><CheckCircle2 />{summary.closedTasks}/{summary.plannedTasks} 项结束</span><span><Sparkles />{summary.garden.points} 积分</span></div></section>
+      <div className="growth-grid"><section className="growth-panel focus-trend"><div className="panel-heading"><div><p className="section-kicker">专注轨迹</p><h2>有效专注时长</h2></div><BarChart3 /></div><div className="bar-chart">{summary.days.map((day) => <div className="bar-day" key={day.localDate}><div className="bar-track"><span style={{ height: `${Math.max(day.focusMinutes ? 8 : 2, day.focusMinutes / maxFocus * 100)}%` }} title={`${day.focusMinutes} 分钟`} /></div><strong>{day.focusMinutes || "-"}</strong><small>{weekday(day.localDate)}</small></div>)}</div></section>
+        <section className="growth-panel"><div className="panel-heading"><div><p className="section-kicker">每日状态</p><h2>一周留下的色块</h2></div><Leaf /></div><div className="state-grid">{summary.days.map((day) => <div key={day.localDate} className={`state-cell ${day.tone}`}><strong>{weekday(day.localDate)}</strong><span>{day.focusMinutes}m</span><small>{day.closedTasks} 项</small></div>)}</div></section>
+        <section className="growth-panel radar-panel"><div className="panel-heading"><div><p className="section-kicker">六维回看</p><h2>不是给自己打分</h2></div><span>{summary.garden.quality}%</span></div><div className="radar-list">{summary.radar.map((metric) => <div key={metric.key}><span>{metric.label}</span><i><b style={{ width: `${metric.value}%` }} /></i><strong>{metric.value}</strong></div>)}</div></section>
+        <section className="growth-panel feeling-panel"><div className="panel-heading"><div><p className="section-kicker">主观感受</p><h2>专注之后的声音</h2></div><Sparkles /></div><div className="feeling-row"><span className="satisfied">满意 <strong>{summary.satisfaction.satisfied}</strong></span><span className="neutral">一般 <strong>{summary.satisfaction.neutral}</strong></span><span className="dissatisfied">不满意 <strong>{summary.satisfaction.dissatisfied}</strong></span></div></section>
+      </div></>}
+    {error && <div className="focus-error" role="alert">{error}</div>}
+  </section>;
+}

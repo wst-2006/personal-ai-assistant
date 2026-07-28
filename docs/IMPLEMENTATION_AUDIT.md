@@ -72,7 +72,7 @@ brief-source and cloud-reminder requirements remain outstanding.
 | Review session workflow | Product Spec, State Machines | Partially implemented | Medium for persistence; low for full workflow | Durable daily review session, message restore, real task/outcome/focus/feedback context and brief handoff | review routes; `review_sessions`, `review_messages` | domain validation, guarded integration verification and build checks | Software conversation context and browser E2E remain. |
 | Daily brief | Product Spec, Roadmap | Partially implemented | Medium for review-derived draft; low for external content | Review may generate, edit, and confirm a persisted personal-record brief | brief routes; `daily_briefs` linked to review when created from review | domain validation and build checks | Search/weather/location cards, reliable external sources, regeneration policy, export, normal-chat path, and browser E2E remain. |
 | Cyber diary | Product Spec, State Machines | Partially implemented | Medium for the persistence path; low for the complete diary experience | API-backed draft, save, reload, edit and text export. Saving requires a same-day review session with at least one message and a confirmed brief linked to that review. | `diary-routes.ts`, `diary-service.ts`, `DiaryWorkspace.tsx`; `cyber_diaries`, `review_sessions`, `review_messages`, `daily_briefs` | diary domain contract tests; isolated guarded-database integration verification for save/reload/cleanup; browser lock-state verification | Add diary-specific browser E2E for the persisted write path; add task/focus-derived cards, date/location/weather, radar, daily state color and tree data. |
-| Growth and statistics | Product Spec, Roadmap, Design Review | UI prototype only | High | local focus count plus fixed decorative plants | no growth/statistics API | none | Derive trends, subjective categories, state colors, radar, points, tree type/growth from persisted records. |
+| Growth and statistics | Product Spec, Roadmap, Design Review | Partially implemented | Medium for the seven-day data path; low for long-term trends | Real seven-day focus trend, subjective feedback counts, daily state grid, six metrics, points and tree feedback | `growth-routes.ts`, `growth-service.ts`, `GrowthWorkspace.tsx`; task/focus/outcome/feedback/review tables | guarded API contract verification; desktop browser visual verification | Add month views, persistent derived snapshots only if justified, and dedicated browser/API automated tests. |
 | Search, weather, location, export | Product Spec, Roadmap | Not implemented | High | no product integration | no adapters/routes | none | Implement provider-neutral adapters, source metadata, user location controls, and exports after core persistence. |
 | Worker, Feishu, cloud runtime | Architecture, Roadmap | Not implemented | High | no worker application | no job/reminder or webhook API | none | Add durable jobs, cloud database/runtime, signed Feishu webhook, start/other-arrangement/open-task controls. |
 | Long-range planning and AI task trees | Roadmap, Product Spec | Not implemented | High | no month/term/year views | no plan/tree API or tables | none | Add only after usable daily core; AI-created trees require explicit confirmation before writes. |
@@ -87,7 +87,7 @@ brief-source and cloud-reminder requirements remain outstanding.
 | Focus | Reads real tasks and durable focus sessions; pause, resume, raw/effective time, objective result and subjective feedback write through API and survive refresh | Cloud/offline reminder delivery, rich plan-change conversation, and production mobile acceptance remain | Partially implemented |
 | Review | Opens/restores a daily review session, saves messages, reads real context, and generates/edits/confirms a brief | Software conversation context and full browser acceptance | Partially implemented |
 | Diary | Reads its review/brief prerequisites, saves, restores, edits and exports a persisted diary with server-side link validation | task/focus-derived cards, weather, location, radar, state color and tree data | Partially implemented |
-| Growth | Displays local-session minutes | plants and weekly state are fixed frontend illustration data; no database statistics | UI prototype only |
+| Growth | Reads seven-day database-derived focus, outcomes, feedback and review signals | No month/year exploration or dedicated automated acceptance yet | Partially implemented |
 | AI drawer | Server-side model parsing returns a candidate without an immediate write; user confirms before save | no durable conversation context or long-range task-tree confirmation flow | Partially implemented |
 | Desktop shell/Tauri | Shared React interface and Tauri wrapper exist | no separately verified desktop-native workflow or background behavior | Partially implemented |
 | 390px mobile | responsive timeline and formal-task dialog; mobile smoke test passes | cross-device/cloud persistence and focus/review/mobile visual acceptance | Partially implemented |
@@ -359,8 +359,9 @@ verification confidence to high.
 5. **Browser coverage remains focused.** Playwright covers the core Today and
    Focus flows, but Review, Brief and diary persistence need their own browser
    acceptance tests.
-6. **Growth state is still volatile and illustrative.** Focus, review and the
-   basic diary save path are now persisted, but growth remains local UI data.
+6. **Growth feedback is intentionally basic.** It now derives from persisted
+   records, but month/year trends and a deeper statistical model are not yet
+   implemented.
 7. **Cyber diary content is still deliberately narrow.** Referential integrity
    is now validated by the API, but its task/focus cards, weather/location,
    radar, state color and tree data are not implemented.

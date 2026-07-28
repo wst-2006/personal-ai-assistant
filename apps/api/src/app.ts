@@ -13,6 +13,8 @@ import { briefRoutes } from "./brief-routes.js";
 import type { BriefService } from "./brief-service.js";
 import { diaryRoutes } from "./diary-routes.js";
 import type { DiaryService } from "./diary-service.js";
+import { growthRoutes } from "./growth-routes.js";
+import type { GrowthService } from "./growth-service.js";
 
 type AppOptions = {
   taskService?: TaskService;
@@ -20,6 +22,7 @@ type AppOptions = {
   reviewService?: ReviewService;
   briefService?: BriefService;
   diaryService?: DiaryService;
+  growthService?: GrowthService;
   taskParser?: TaskParser;
 };
 
@@ -47,6 +50,7 @@ export function buildApp(options: AppOptions = {}) {
   if (options.reviewService) app.register(reviewRoutes, { prefix: "/api/v1", reviewService: options.reviewService });
   if (options.briefService) app.register(briefRoutes, { prefix: "/api/v1", briefService: options.briefService });
   if (options.diaryService) app.register(diaryRoutes, { prefix: "/api/v1", diaryService: options.diaryService });
+  if (options.growthService) app.register(growthRoutes, { prefix: "/api/v1", growthService: options.growthService });
 
   if (options.taskParser) {
     app.register(aiRoutes, {

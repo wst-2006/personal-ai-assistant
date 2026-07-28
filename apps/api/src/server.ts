@@ -10,6 +10,7 @@ import { FocusService } from "./focus-service.js";
 import { ReviewService } from "./review-service.js";
 import { BriefService } from "./brief-service.js";
 import { DiaryService } from "./diary-service.js";
+import { GrowthService } from "./growth-service.js";
 
 const config = loadServerConfig();
 const database = await connectVerifiedDatabase(loadDatabaseConfig());
@@ -20,6 +21,7 @@ const app = buildApp({
   reviewService: new ReviewService(database.db),
   briefService: new BriefService(database.db),
   diaryService: new DiaryService(database.db),
+  growthService: new GrowthService(database.db),
   taskParser: new DeepSeekTaskParser(loadDeepSeekConfig())
 });
 

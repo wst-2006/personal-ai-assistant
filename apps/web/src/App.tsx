@@ -35,6 +35,7 @@ import { TodayWorkspace } from "./TodayWorkspace";
 import { FocusWorkspace } from "./FocusWorkspace";
 import { ReviewWorkspace } from "./ReviewWorkspace";
 import { DiaryWorkspace } from "./DiaryWorkspace";
+import { GrowthWorkspace } from "./GrowthWorkspace";
 
 type EntryType = "task" | "idea" | "question";
 type View = "today" | "focus" | "review" | "diary" | "growth";
@@ -626,9 +627,7 @@ export function App() {
 
         {view === "diary" && <DiaryWorkspace onOpenReview={() => setView("review")} />}
 
-        {view === "growth" && (
-          <section className="page growth-page" aria-labelledby="growth-title"><div className="growth-heading"><div><p className="eyebrow">成长花园</p><h1 id="growth-title">每一次回到自己，都会留下生长。</h1></div><span className="growth-week">本周</span></div><div className="garden-field"><div className="field-grid" aria-hidden="true" />{["moss", "mint", "sun", "coral", "moss", "mint", "sun"].map((tone, index) => <div className={`plant plant-${index + 1} ${tone}`} key={index}><span className="plant-stem" /><i /><b /></div>)}<div className="garden-copy"><p>有效专注</p><strong>{Math.round(focusSeconds / 60)}<small>分钟</small></strong><span>从今天的第一段开始</span></div></div><div className="growth-notes"><div><Leaf aria-hidden="true" /><span>任务完成与主观感受分开记录</span></div><div><Clock3 aria-hidden="true" /><span>只有真实专注时段进入成长反馈</span></div></div></section>
-        )}
+        {view === "growth" && <GrowthWorkspace />}
       </section>
 
       <aside className={`ai-drawer ${aiOpen ? "open" : ""}`} aria-label="AI 助手" aria-hidden={!aiOpen}>
