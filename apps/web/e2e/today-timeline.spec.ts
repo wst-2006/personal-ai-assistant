@@ -81,4 +81,38 @@ test.describe("真实今日时间轴",()=>{
     await expect(page.getByRole("dialog")).toBeVisible();
     await expect(page.getByLabel("任务标题")).toBeVisible();
   });
+
+  test("记录结果、刷新并重新打开任务",async({page,request})=>{
+    const suffix=Date.now().toString(36); const ids:string[]=[];
+    const title=`E2E 生命周期任务 ${suffix}`;
+    try {
+      await page.goto("/");
+      const task=await createExactTask(page,title,"15:00","16:00","45"); ids.push(task.id);
+      const block=page.locator(`[data-task-id="${task.id}"]`);
+      await block.scrollIntoViewIfNeeded();
+      await block.getByLabel(`打开 ${title} 的任务操作`).click();
+      await page.getByRole("button",{name:"记录结果"}).click();
+      await expect(page.getByRole("dialog",{name:"记录这次完成情况"})).toBeVisible();
+      await page.getByRole("button",{name:"完成",exact:true}).click();
+      const closed=page.waitForResponse((response)=>response.url().endsWith(`/api/v1/tasks/${task.id}/outcomes`)&&response.request().method()==="POST"&&response.status()===201);
+      await page.getByRole("button",{name:"保存结果"}).click();
+      await closed;
+      await expect(block).toHaveClass(/closed/);
+      await expect(block).toContainText("已完成");
+
+      await page.reload();
+      const restored=page.locator(`[data-task-id="${task.id}"]`);
+      await expect(restored).toHaveClass(/closed/);
+      await expect(restored).toContainText("已完成");
+
+      await restored.scrollIntoViewIfNeeded();
+      await restored.getByLabel(`打开 ${title} 的任务操作`).click();
+      const reopened=page.waitForResponse((response)=>response.url().endsWith(`/api/v1/tasks/${task.id}/reopen`)&&response.request().method()==="POST"&&response.status()===200);
+      await page.getByRole("button",{name:"重新打开"}).click();
+      await reopened;
+      await expect(restored).toHaveClass(/open/);
+      await page.reload();
+      await expect(page.locator(`[data-task-id="${task.id}"]`)).toHaveClass(/open/);
+    } finally { await cleanup(request,ids); }
+  });
 });
