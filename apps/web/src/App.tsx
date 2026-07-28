@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import { TodayWorkspace } from "./TodayWorkspace";
 import { FocusWorkspace } from "./FocusWorkspace";
+import { ReviewWorkspace } from "./ReviewWorkspace";
 
 type EntryType = "task" | "idea" | "question";
 type View = "today" | "focus" | "review" | "diary" | "growth";
@@ -612,7 +613,8 @@ export function App() {
 
         {view === "focus" && <FocusWorkspace preferredTaskId={selectedTaskId} onBack={() => setView("today")} />}
 
-        {view === "review" && (
+        {view === "review" && <ReviewWorkspace />}
+        {false && view === "review" && (
           <section className="page review-page" aria-labelledby="review-title">
             <div className="review-heading"><div><p className="eyebrow">一天将要落幕</p><h1 id="review-title">把今天还给自己。</h1><p>完成与感受可以同时成立，不需要互相证明。</p></div><div className="review-count"><strong>{reviewMessages.length}</strong><span>条复盘片段</span></div></div>
             <div className="review-layout"><section className="review-checkin"><p className="section-kicker">今日回看</p><div className="review-stat-row"><span><CheckCircle2 aria-hidden="true" /> 已安排</span><strong>{tasks.length}</strong></div><div className="review-stat-row"><span><Clock3 aria-hidden="true" /> 计划时长</span><strong>{scheduledMinutes}m</strong></div><div className="review-stat-row"><span><Flame aria-hidden="true" /> 专注片段</span><strong>{focusSeconds > 0 ? 1 : 0}</strong></div><div className="garden-mini"><span className="garden-stem" /><span className="garden-leaf leaf-a" /><span className="garden-leaf leaf-b" /><span className="garden-bud" /></div></section>

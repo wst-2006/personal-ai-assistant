@@ -11,6 +11,10 @@
     "./focus": {
       "types": "./dist/focus.d.ts",
       "default": "./dist/focus.js"
+    },
+    "./review": {
+      "types": "./dist/review.d.ts",
+      "default": "./dist/review.js"
     }
   },
   "scripts": {
