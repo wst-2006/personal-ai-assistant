@@ -34,6 +34,7 @@ import {
 import { TodayWorkspace } from "./TodayWorkspace";
 import { FocusWorkspace } from "./FocusWorkspace";
 import { ReviewWorkspace } from "./ReviewWorkspace";
+import { DiaryWorkspace } from "./DiaryWorkspace";
 
 type EntryType = "task" | "idea" | "question";
 type View = "today" | "focus" | "review" | "diary" | "growth";
@@ -623,12 +624,7 @@ export function App() {
           </section>
         )}
 
-        {view === "diary" && (
-          <section className="page diary-page" aria-labelledby="diary-title">
-            <div className="diary-toolbar"><button className="quiet-icon" type="button" aria-label="前一天"><ChevronLeft aria-hidden="true" /></button><div><p className="eyebrow">赛博日记</p><h1 id="diary-title">{displayDate()}</h1></div><button className="quiet-icon" type="button" aria-label="后一天"><ChevronRight aria-hidden="true" /></button></div>
-            {reviewMessages.length === 0 ? <div className="diary-lock"><NotebookPen aria-hidden="true" /><h2>先留下一条复盘</h2><p>赛博日记从今天真实写下的一句话开始。</p><button className="primary-button" type="button" onClick={() => setView("review")}>去复盘 <ArrowRight aria-hidden="true" /></button></div> : <div className="diary-sheet"><header><div className="diary-mood"><span /><span /><span className="active" /><span /><span /></div><p>今天的坐标</p><strong>专注 {Math.round(focusSeconds / 60)} 分钟</strong></header>{!diaryDraft ? <div className="diary-ready"><Leaf aria-hidden="true" /><h2>今天已经有材料了。</h2><p>把复盘片段整理成一页可继续编辑的日记草稿。</p><button className="primary-button" type="button" onClick={createDiaryDraft}><Sparkles aria-hidden="true" />整理为草稿</button></div> : <><textarea className="diary-editor" value={diaryDraft} onChange={(event) => setDiaryDraft(event.target.value)} rows={11} /><footer><span>草稿</span><button className="primary-button" type="button"><Check aria-hidden="true" />保存日记</button></footer></>}</div>}
-          </section>
-        )}
+        {view === "diary" && <DiaryWorkspace onOpenReview={() => setView("review")} />}
 
         {view === "growth" && (
           <section className="page growth-page" aria-labelledby="growth-title"><div className="growth-heading"><div><p className="eyebrow">成长花园</p><h1 id="growth-title">每一次回到自己，都会留下生长。</h1></div><span className="growth-week">本周</span></div><div className="garden-field"><div className="field-grid" aria-hidden="true" />{["moss", "mint", "sun", "coral", "moss", "mint", "sun"].map((tone, index) => <div className={`plant plant-${index + 1} ${tone}`} key={index}><span className="plant-stem" /><i /><b /></div>)}<div className="garden-copy"><p>有效专注</p><strong>{Math.round(focusSeconds / 60)}<small>分钟</small></strong><span>从今天的第一段开始</span></div></div><div className="growth-notes"><div><Leaf aria-hidden="true" /><span>任务完成与主观感受分开记录</span></div><div><Clock3 aria-hidden="true" /><span>只有真实专注时段进入成长反馈</span></div></div></section>

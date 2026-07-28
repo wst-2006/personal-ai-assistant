@@ -60,10 +60,12 @@ export function ReviewWorkspace() {
       session: Review;
       messages: Message[];
       context: Context;
+      briefs: Brief[];
     }>(`/api/v1/reviews/${localDate()}`);
     setReview(data.session);
     setMessages(data.messages);
     setContext(data.context);
+    setBrief(data.briefs.at(-1) ?? null);
   }, []);
   useEffect(() => {
     void load().catch(() =>

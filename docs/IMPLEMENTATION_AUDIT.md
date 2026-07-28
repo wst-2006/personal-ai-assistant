@@ -40,40 +40,38 @@ Primary requirement sources are `PRODUCT_SPEC.md`, `ARCHITECTURE.md`,
 The secure repository baseline and the backend task lifecycle/conflict slice
 are real. Task creation, listing, editing, cancellation, reopening, soft
 deletion, outcome closing, conflict reporting, and explicit conflict retention
-use the Fastify API and PostgreSQL repository. These facts do **not** mean the
-usable core product is complete: the current Today page is a sorted card list,
-not a time-coordinate editor, and it lacks the complete manual task form.
+use the Fastify API and PostgreSQL repository. The Today page now includes the
+core manual form and a time-coordinate editor. These facts still do **not**
+mean the usable core product is complete: persistent review/brief/diary flows
+need broader browser acceptance, and growth and cloud capabilities remain.
 
-The largest immediate structural conflict is that `tasks.entry_type` stores
-tasks, ideas, and questions together. Confirmed behavior requires formal tasks
-to own lifecycle and scheduling, while ideas/questions remain independent until
-the user explicitly converts them. The scheduling slice therefore requires a
-guarded migration; it cannot honestly be described as a UI-only change.
+The former `tasks.entry_type` conflict is resolved: formal tasks own lifecycle
+and scheduling, while ideas/questions reside in `inbox_entries` until the user
+explicitly converts one. That guarded migration is applied to the project
+database and must be preserved in future schema work.
 
-Focus, review, diary, and growth screens currently provide valuable visual
-direction, but their user data is React-local and disappears on refresh. The
-schema contains placeholder tables for several of these areas, but no service
-or API routes use them. A particularly serious defect is that `cyber_diaries`
-references a brief but not its required review session.
+Focus, review, brief and the basic diary path now use real API-backed
+persistence. Growth remains presentation-only, and the richer diary,
+brief-source and cloud-reminder requirements remain outstanding.
 
 ## 3. Functional Audit Matrix
 
 | Capability | Requirement source | Status | Confidence | Current code / page | API / tables | Automated evidence | Missing work and next step |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | Secure project/database baseline | Architecture, AGENTS | Fully implemented | High | `.gitignore`, DB guard/config | `personal_ai_assistant`, `personal_ai_app` | migration guard tests; `pnpm db:verify` | Keep the guard mandatory for every migration and E2E cleanup. |
-| Task lifecycle and optimistic versioning | Product Spec, State Machines, Task Lifecycle | Partially implemented | High for backend; medium end-to-end | Today task actions in `App.tsx`; task service/repository | Task CRUD/action routes; `tasks`, lifecycle events, outcomes | service, route, repository, persistence tests | Browser flows and all lifecycle visual states need E2E coverage. |
-| Append-only task outcomes and reopening | Product Spec, State Machines | Partially implemented | High for backend | Today complete/partial/reopen actions | outcome and reopen routes; `task_outcomes` | outcome history service tests | Full outcome form, focus linkage, refresh/browser verification, and subjective feedback remain. |
-| Exact-time conflict detection and retention | Product Spec, Task Lifecycle | Partially implemented | High for backend; low for interaction | Conflict messages in Today page | task create/update/accept APIs; `task_conflict_acceptances` | overlap, history, stale set, rollback tests | No spatial overlap rendering, conflict dialog, drag/resize retry, or browser E2E. |
-| Full manual task creation | Product Spec, Roadmap | Partially implemented | High | Quick capture has title and estimated minutes; edit form has limited scheduling | `POST /tasks` supports more fields; `tasks` contains them | API/domain tests only | Add a formal-task full form with every mapped field and frontend validation; explicit form entry must not call AI. |
-| Quick task capture | Product Spec, Design Review | Partially implemented | Medium | Quick capture calls the real task API | `POST /tasks`; `tasks` | route test, no browser test | Rename duration copy/contract to planned effort; keep it unscheduled and add “complete and schedule”. |
-| Independent ideas/questions | Product Spec | Conflicts with requirements | High | Type switch writes all entries through task flow | `POST /tasks`; `tasks.entry_type` | AI candidate non-write test only | Introduce `inbox_entries`; remove them from task lifecycle; preserve converted entries and source linkage. |
+| Task lifecycle and optimistic versioning | Product Spec, State Machines, Task Lifecycle | Partially implemented | High for backend and core browser paths | Today task actions and lifecycle service/repository | Task CRUD/action routes; `tasks`, lifecycle events, outcomes | service, route, repository, persistence and browser E2E tests | Expand visual acceptance for exceptional/recovery paths. |
+| Append-only task outcomes and reopening | Product Spec, State Machines | Partially implemented | High for backend and core browser paths | Today outcome form, reopen actions and focus evaluation | outcome and reopen routes; `task_outcomes` | outcome history and browser E2E tests | Add richer outcome history display and recovery-state acceptance. |
+| Exact-time conflict detection and retention | Product Spec, Task Lifecycle | Partially implemented | High for backend and browser core path | Spatial blocks, conflict prompt and explicit retention in Today | task create/update/accept APIs; `task_conflict_acceptances` | overlap, history, stale set, rollback and browser E2E tests | Add visual treatment for complex multi-lane conflict sets. |
+| Full manual task creation | Product Spec, Roadmap | Partially implemented | High for mapped core fields and browser path | Dedicated formal-task dialog with scheduling, effort, difficulty, type, focus and notes | `POST /tasks`; `tasks` | API/domain and browser E2E tests | Add accessibility and error-state coverage for all field combinations. |
+| Quick task capture | Product Spec, Design Review | Partially implemented | High for core path | Quick capture creates an unscheduled task with planned effort and can be completed later | `POST /tasks`; `tasks` | API and browser E2E coverage through Today | Add a distinct completion affordance in the unscheduled region. |
+| Independent ideas/questions | Product Spec | Fully implemented | Medium | Idea/question capture writes separate inbox entries; conversion requires confirmation | inbox routes; `inbox_entries`, `tasks.source_inbox_entry_id` | API/domain tests | Add browser conversion coverage. |
 | AI candidate confirmation | Product Spec, Design Review | Partially implemented | Medium | AI drawer parses then asks for confirmation | `POST /api/v1/ai/tasks/parse`; confirmed candidate later uses task API | parser route test | Route ideas/questions to inbox, add correction/error tests, and preserve formal fields without silent scheduling. |
-| Real Today timeline | Product Spec, Design Review | Partially implemented | High | Sorted task cards, no 24-hour coordinate system | Reads task list API | no Web/E2E tests | Build the real axis, current-time marker, daypart/unscheduled areas, spatial overlaps, auto-scroll, drag creation/move/resize. |
-| Timeline persistence and cross-client reading | Product Spec, Architecture | Partially implemented | Medium | API-backed cards survive refresh | task list API; `tasks` | DB persistence verification, no real browser test | Prove create-refresh-desktop/mobile read and interaction persistence in Playwright. |
+| Real Today timeline | Product Spec, Design Review | Partially implemented | High for core schedule editing; medium for full interaction | 24-hour coordinate axis, current-time marker, daypart/unscheduled areas, creation, drag/resize and spatial overlaps | task APIs; `tasks`, conflict acceptances | desktop and 390px browser E2E | Add keyboard-accessible movement and richer conflict explanations. |
+| Timeline persistence and cross-client reading | Product Spec, Architecture | Partially implemented | High for refresh and local database read | Timeline reads the database-backed task list | task list API; `tasks` | DB persistence and browser refresh tests | Cross-device/cloud synchronization remains unimplemented. |
 | Focus session workflow | Product Spec, State Machines, Roadmap | Partially implemented | High for core session persistence; medium end-to-end | API-backed preparation, reminder response, auto-start, pause/resume, end, objective outcome and subjective feedback | focus-session routes; `focus_sessions`, `task_feedback`, `task_outcomes` | domain validation and browser E2E | Local app polling provides the active-app reminder and five-minute expiry; cloud Worker delivery, explicit plan-change conversation, and mobile visual E2E remain. |
-| Review session workflow | Product Spec, State Machines | Partially implemented | Medium for persistence; low for full workflow | Durable daily review session, message restore, and real task/outcome/focus/feedback context | review routes; `review_sessions`, `review_messages` | domain validation and build checks | Finish-and-generate brief action, software conversation context, E2E/browser acceptance, and diary handoff remain. |
+| Review session workflow | Product Spec, State Machines | Partially implemented | Medium for persistence; low for full workflow | Durable daily review session, message restore, real task/outcome/focus/feedback context and brief handoff | review routes; `review_sessions`, `review_messages` | domain validation, guarded integration verification and build checks | Software conversation context and browser E2E remain. |
 | Daily brief | Product Spec, Roadmap | Partially implemented | Medium for review-derived draft; low for external content | Review may generate, edit, and confirm a persisted personal-record brief | brief routes; `daily_briefs` linked to review when created from review | domain validation and build checks | Search/weather/location cards, reliable external sources, regeneration policy, export, normal-chat path, and browser E2E remain. |
-| Cyber diary | Product Spec, State Machines | Conflicts with requirements | High | local draft and non-functional save button | `cyber_diaries` lacks required `review_session_id`; no routes | none | Fix relational model and implement confirmed-review + confirmed-brief validation, save/restore/edit/export. |
+| Cyber diary | Product Spec, State Machines | Partially implemented | Medium for the persistence path; low for the complete diary experience | API-backed draft, save, reload, edit and text export. Saving requires a same-day review session with at least one message and a confirmed brief linked to that review. | `diary-routes.ts`, `diary-service.ts`, `DiaryWorkspace.tsx`; `cyber_diaries`, `review_sessions`, `review_messages`, `daily_briefs` | diary domain contract tests; isolated guarded-database integration verification for save/reload/cleanup; browser lock-state verification | Add diary-specific browser E2E for the persisted write path; add task/focus-derived cards, date/location/weather, radar, daily state color and tree data. |
 | Growth and statistics | Product Spec, Roadmap, Design Review | UI prototype only | High | local focus count plus fixed decorative plants | no growth/statistics API | none | Derive trends, subjective categories, state colors, radar, points, tree type/growth from persisted records. |
 | Search, weather, location, export | Product Spec, Roadmap | Not implemented | High | no product integration | no adapters/routes | none | Implement provider-neutral adapters, source metadata, user location controls, and exports after core persistence. |
 | Worker, Feishu, cloud runtime | Architecture, Roadmap | Not implemented | High | no worker application | no job/reminder or webhook API | none | Add durable jobs, cloud database/runtime, signed Feishu webhook, start/other-arrangement/open-task controls. |
@@ -85,21 +83,21 @@ references a brief but not its required review session.
 
 | Page/surface | What is real today | What is only presentation/local state | Honest status |
 | --- | --- | --- | --- |
-| Today | Lists PostgreSQL tasks; quick task/idea/question capture currently writes through task API; task lifecycle actions and limited editing call real APIs | card ordering is not a timeline; no blank-slot creation, drag, resize, current-time indicator, or robust conflict dialog | Partially implemented |
+| Today | Database-backed task/inbox capture, complete form, time axis, blank-slot creation, drag/resize, conflict retention and lifecycle actions | Rich keyboard manipulation and cloud synchronization | Partially implemented |
 | Focus | Reads real tasks and durable focus sessions; pause, resume, raw/effective time, objective result and subjective feedback write through API and survive refresh | Cloud/offline reminder delivery, rich plan-change conversation, and production mobile acceptance remain | Partially implemented |
-| Review | Opens/restores a daily review session, saves messages, and reads real task/outcome/focus/feedback data | Brief generation and diary handoff are not yet connected | Partially implemented |
-| Diary | Enforces a visual local-message gate and creates an editable local draft | no brief, weather, review relation, save, restore or export | Conflicts with requirements |
+| Review | Opens/restores a daily review session, saves messages, reads real context, and generates/edits/confirms a brief | Software conversation context and full browser acceptance | Partially implemented |
+| Diary | Reads its review/brief prerequisites, saves, restores, edits and exports a persisted diary with server-side link validation | task/focus-derived cards, weather, location, radar, state color and tree data | Partially implemented |
 | Growth | Displays local-session minutes | plants and weekly state are fixed frontend illustration data; no database statistics | UI prototype only |
-| AI drawer | Server-side model parsing returns a candidate without an immediate write; user confirms before current save | ideas/questions are still saved as tasks; no durable conversation context | Partially implemented |
+| AI drawer | Server-side model parsing returns a candidate without an immediate write; user confirms before save | no durable conversation context or long-range task-tree confirmation flow | Partially implemented |
 | Desktop shell/Tauri | Shared React interface and Tauri wrapper exist | no separately verified desktop-native workflow or background behavior | Partially implemented |
-| 390px mobile | responsive CSS exists | no automated mobile viewport or cross-client persistence verification | Unverified prototype surface |
+| 390px mobile | responsive timeline and formal-task dialog; mobile smoke test passes | cross-device/cloud persistence and focus/review/mobile visual acceptance | Partially implemented |
 
 ## 5. Field-to-Storage Contract
 
-The following mapping is the gate for the manual scheduling slice. It proves
-that a migration **is required** before implementation: the desired inbox and
-source-link fields do not exist, and `estimated_minutes` must be renamed to
-remove duration ambiguity.
+The following mapping is the contract used by the implemented manual
+scheduling slice. The inbox/source-link migration and the
+`planned_effort_minutes` rename have been applied to the guarded project
+database; subsequent UI/API work must continue to honor this mapping.
 
 ### 5.1 Formal Task Form
 
@@ -124,7 +122,7 @@ remove duration ambiguity.
 | Keep-conflict decision | `conflictDecision`, `expectedConflictFingerprint` | `task_conflict_acceptances` | `keep` requires the last complete server fingerprint; the server recomputes and atomically accepts all current pairs. |
 | Scheduled block duration | response `scheduledDurationMinutes` | not stored | Derived from `endAt - startAt`; it is never copied into planned effort. |
 
-Migration consequences:
+Applied migration consequences:
 
 - Rename `tasks.estimated_minutes` to `planned_effort_minutes` without changing
   existing values.
@@ -347,23 +345,25 @@ verification confidence to high.
 
 ## 12. Serious Issues and Requirement Gaps
 
-1. **Ideas and questions currently enter task lifecycle.** This directly
-   conflicts with the confirmed product model and requires schema/API/UI change.
-2. **The Today page is not a true timeline.** It cannot create from time-space,
-   move/resize blocks, represent the current time, or prove conflict retention
-   through real interaction.
-3. **`estimatedMinutes` conflates two duration concepts.** It can make a
-   scheduled block and total planned effort contradict each other unless renamed
-   and kept independent.
-4. **Schedule PATCH lacks an explicit schedule-revision precondition.** Version
-   checks exist, but the confirmed drag/resize contract requires both versions.
-5. **No Web or Playwright automated tests exist.** Current backend confidence
-   must not be generalized to desktop/mobile product confidence.
-6. **Focus, review, diary, and growth state is volatile.** Refresh or another
-   client loses it; placeholder tables do not make the flows implemented.
-7. **Cyber diary referential integrity is insufficient.** A diary cannot
-   currently enforce association with both a valid review session and confirmed
-   daily brief.
+1. **Ideas/questions need browser conversion coverage.** Their data model is
+   independent and conversion preserves the source inbox entry, but the user
+   flow lacks end-to-end automated acceptance.
+2. **Timeline keyboard accessibility remains incomplete.** Pointer creation,
+   drag/resize and explicit conflict retention are verified; keyboard
+   manipulation and complete accessible conflict detail are not yet implemented.
+3. **The full duration distinction needs ongoing enforcement.**
+   `plannedEffortMinutes` is independent from an exact block's calculated
+   duration; future focus recommendations must retain that distinction.
+4. **Cross-device confidence is not established.** Local refresh and browser
+   interaction are verified, but cloud synchronization is still absent.
+5. **Browser coverage remains focused.** Playwright covers the core Today and
+   Focus flows, but Review, Brief and diary persistence need their own browser
+   acceptance tests.
+6. **Growth state is still volatile and illustrative.** Focus, review and the
+   basic diary save path are now persisted, but growth remains local UI data.
+7. **Cyber diary content is still deliberately narrow.** Referential integrity
+   is now validated by the API, but its task/focus cards, weather/location,
+   radar, state color and tree data are not implemented.
 8. **Later Phase 1 dependencies remain absent.** Brief sources, weather,
    exports, durable Worker jobs, Feishu controls, cloud runtime, PWA, backups,
    and cross-device verification still need explicit implementation phases.
