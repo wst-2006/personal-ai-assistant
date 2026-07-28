@@ -40,9 +40,9 @@ test.describe("真实今日时间轴",()=>{
       await block.scrollIntoViewIfNeeded();
       const box=await block.boundingBox();expect(box).not.toBeNull();
       const moved=page.waitForResponse((response)=>response.url().endsWith(`/api/v1/tasks/${first.id}`)&&response.request().method()==="PATCH"&&response.status()===200);
-      const dragStartY=box!.y+Math.min(12,box!.height/2);
+      const dragStartY=box!.y+3;
       await page.mouse.move(box!.x+8,dragStartY);
-      await page.mouse.down();await page.mouse.move(box!.x+8,dragStartY+36,{steps:5});await page.mouse.up();
+      await page.mouse.down();await page.mouse.move(box!.x+8,dragStartY+18,{steps:5});await page.mouse.up();
       const movedTask=(await (await moved).json()).task as {startAt:string;plannedEffortMinutes:number};
       expect(movedTask.startAt).toContain("05:30:00.000Z");
       expect(movedTask.plannedEffortMinutes).toBe(50);
@@ -50,8 +50,9 @@ test.describe("真实今日时间轴",()=>{
       const handle=page.locator(`[data-task-id="${first.id}"] .resize-handle`);
       await handle.scrollIntoViewIfNeeded();const handleBox=await handle.boundingBox();expect(handleBox).not.toBeNull();
       const resized=page.waitForResponse((response)=>response.url().endsWith(`/api/v1/tasks/${first.id}`)&&response.request().method()==="PATCH"&&response.status()===200);
-      await page.mouse.move(handleBox!.x+handleBox!.width/2,handleBox!.y+handleBox!.height/2);
-      await page.mouse.down();await page.mouse.move(handleBox!.x+handleBox!.width/2,handleBox!.y+18,{steps:4});await page.mouse.up();
+      const resizeStartY=handleBox!.y+handleBox!.height/2;
+      await page.mouse.move(handleBox!.x+handleBox!.width/2,resizeStartY);
+      await page.mouse.down();await page.mouse.move(handleBox!.x+handleBox!.width/2,resizeStartY+9,{steps:4});await page.mouse.up();
       const resizedTask=(await (await resized).json()).task as {endAt:string;plannedEffortMinutes:number};
       expect(resizedTask.endAt).toContain("06:15:00.000Z");
       expect(resizedTask.plannedEffortMinutes).toBe(50);

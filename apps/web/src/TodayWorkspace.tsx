@@ -13,7 +13,8 @@ type RangeState = { pointerId:number; start:number; current:number };
 type Lane = { index:number; count:number };
 
 const API = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:3000";
-const HOUR_PX = 72;
+// One visual row is 30 minutes; data precision remains independent of the view scale.
+const HOUR_PX = 36;
 const DAY_PX = HOUR_PX * 24;
 const today = () => new Intl.DateTimeFormat("en-CA", { timeZone:"Asia/Shanghai", year:"numeric", month:"2-digit", day:"2-digit" }).format(new Date());
 const iso = (date:string,time:string) => `${date}T${time}:00+08:00`;
