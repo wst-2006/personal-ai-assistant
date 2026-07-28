@@ -36,6 +36,13 @@
       "when": 1785246738072,
       "tag": "0004_flimsy_wrecker",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1785251561190,
+      "tag": "0005_chief_aaron_stack",
+      "breakpoints": true
     }
   ]
 }

@@ -9,11 +9,14 @@ import { focusRoutes } from "./focus-routes.js";
 import type { FocusService } from "./focus-service.js";
 import { reviewRoutes } from "./review-routes.js";
 import type { ReviewService } from "./review-service.js";
+import { briefRoutes } from "./brief-routes.js";
+import type { BriefService } from "./brief-service.js";
 
 type AppOptions = {
   taskService?: TaskService;
   focusService?: FocusService;
   reviewService?: ReviewService;
+  briefService?: BriefService;
   taskParser?: TaskParser;
 };
 
@@ -39,6 +42,7 @@ export function buildApp(options: AppOptions = {}) {
   if (options.taskService) app.register(inboxRoutes, { prefix: "/api/v1", taskService: options.taskService });
   if (options.focusService) app.register(focusRoutes, { prefix: "/api/v1", focusService: options.focusService });
   if (options.reviewService) app.register(reviewRoutes, { prefix: "/api/v1", reviewService: options.reviewService });
+  if (options.briefService) app.register(briefRoutes, { prefix: "/api/v1", briefService: options.briefService });
 
   if (options.taskParser) {
     app.register(aiRoutes, {

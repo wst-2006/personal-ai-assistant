@@ -241,16 +241,21 @@ export const reviewMessages = pgTable(
 export const dailyBriefs = pgTable("daily_briefs", {
   id: uuid("id").primaryKey(),
   localDate: varchar("local_date", { length: 10 }).notNull(),
+  reviewSessionId: uuid("review_session_id").references(() => reviewSessions.id),
   state: varchar("state", { length: 32 }).notNull(),
   content: jsonb("content").notNull(),
   sources: jsonb("sources").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
-});
+}, (table) => [
+  index("daily_briefs_review_session_idx").on(table.reviewSessionId),
+  check("daily_briefs_state_check", sql`${table.state} in ('draft', 'confirmed')`)
+]);
 
 export const cyberDiaries = pgTable("cyber_diaries", {
   id: uuid("id").primaryKey(),
   localDate: varchar("local_date", { length: 10 }).notNull().unique(),
+  reviewSessionId: uuid("review_session_id").notNull().references(() => reviewSessions.id),
   briefId: uuid("brief_id").notNull().references(() => dailyBriefs.id),
   content: jsonb("content").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

@@ -15,6 +15,10 @@
     "./review": {
       "types": "./dist/review.d.ts",
       "default": "./dist/review.js"
+    },
+    "./brief": {
+      "types": "./dist/brief.d.ts",
+      "default": "./dist/brief.js"
     }
   },
   "scripts": {
