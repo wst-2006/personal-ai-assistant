@@ -105,14 +105,28 @@ export const focusSessions = pgTable(
     taskId: uuid("task_id").notNull().references(() => tasks.id),
     state: varchar("state", { length: 32 }).notNull(),
     plannedStartAt: timestamp("planned_start_at", { withTimezone: true }),
+    remindedAt: timestamp("reminded_at", { withTimezone: true }),
+    preparingEndsAt: timestamp("preparing_ends_at", { withTimezone: true }),
     startedAt: timestamp("started_at", { withTimezone: true }),
+    activeSinceAt: timestamp("active_since_at", { withTimezone: true }),
+    pausedAt: timestamp("paused_at", { withTimezone: true }),
     endedAt: timestamp("ended_at", { withTimezone: true }),
+    stoppedReason: text("stopped_reason"),
     rawActiveSeconds: integer("raw_active_seconds").notNull().default(0),
     effectiveFocusSeconds: integer("effective_focus_seconds").notNull().default(0),
+    version: integer("version").notNull().default(1),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
   },
-  (table) => [index("focus_sessions_task_id_idx").on(table.taskId)]
+  (table) => [
+    index("focus_sessions_task_id_idx").on(table.taskId),
+    index("focus_sessions_current_idx").on(table.state, table.updatedAt),
+    uniqueIndex("focus_sessions_open_task_unique").on(table.taskId).where(sql`${table.state} in ('scheduled', 'reminded', 'preparing', 'awaiting_start', 'running', 'paused')`),
+    check("focus_sessions_state_check", sql`${table.state} in ('scheduled', 'reminded', 'preparing', 'awaiting_start', 'running', 'paused', 'ended', 'evaluated', 'stopped_no_response', 'stopped_for_change')`),
+    check("focus_sessions_raw_seconds_check", sql`${table.rawActiveSeconds} >= 0`),
+    check("focus_sessions_effective_seconds_check", sql`${table.effectiveFocusSeconds} >= 0`),
+    check("focus_sessions_version_check", sql`${table.version} > 0`)
+  ]
 );
 
 export const taskFeedback = pgTable("task_feedback", {
@@ -122,7 +136,10 @@ export const taskFeedback = pgTable("task_feedback", {
   satisfaction: varchar("satisfaction", { length: 16 }).notNull(),
   note: text("note"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
-});
+}, (table) => [
+  uniqueIndex("task_feedback_focus_session_unique").on(table.focusSessionId),
+  check("task_feedback_satisfaction_check", sql`${table.satisfaction} in ('satisfied', 'neutral', 'dissatisfied')`)
+]);
 
 export const taskOutcomes = pgTable(
   "task_outcomes",

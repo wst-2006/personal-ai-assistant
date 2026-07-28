@@ -6,11 +6,14 @@ import { DeepSeekTaskParser } from "./ai/task-parser.js";
 import { loadServerConfig } from "./config.js";
 import { PostgresTaskStore } from "./task-repository.js";
 import { TaskService } from "./task-service.js";
+import { FocusService } from "./focus-service.js";
 
 const config = loadServerConfig();
 const database = await connectVerifiedDatabase(loadDatabaseConfig());
+const taskStore = new PostgresTaskStore(database.db);
 const app = buildApp({
-  taskService: new TaskService(new PostgresTaskStore(database.db)),
+  taskService: new TaskService(taskStore),
+  focusService: new FocusService(database.db),
   taskParser: new DeepSeekTaskParser(loadDeepSeekConfig())
 });
 

@@ -32,6 +32,7 @@ import {
   X
 } from "lucide-react";
 import { TodayWorkspace } from "./TodayWorkspace";
+import { FocusWorkspace } from "./FocusWorkspace";
 
 type EntryType = "task" | "idea" | "question";
 type View = "today" | "focus" | "review" | "diary" | "growth";
@@ -609,29 +610,7 @@ export function App() {
           </section>
         )}
 
-        {view === "focus" && (
-          <section className="page focus-page" aria-labelledby="focus-title">
-            <div className="focus-stage">
-              <div className="focus-orbit orbit-one" aria-hidden="true" /><div className="focus-orbit orbit-two" aria-hidden="true" />
-              <div className="focus-stage-header"><button className="back-button" type="button" onClick={() => setView("today")}><ChevronLeft aria-hidden="true" />回到时间轴</button><span>{focusRunning ? "正在专注" : focusFinished ? "本次完成" : "准备开始"}</span></div>
-              <div className="focus-center">
-                <p className="section-kicker">当前意图</p>
-                <h1 id="focus-title">{selectedTask?.title ?? "选择一件事，留在此刻"}</h1>
-                <p className="focus-meta">{selectedTask ? `${selectedTask.estimatedMinutes ?? 25} 分钟 · ${selectedTask.difficulty ? difficultyLabels[selectedTask.difficulty] : "适中"}量专注` : "从今日时间轴选择一个任务开始"}</p>
-                <div className={`focus-timer ${focusRunning ? "running" : ""}`}><svg viewBox="0 0 180 180" aria-hidden="true"><circle cx="90" cy="90" r="80" /><circle className="timer-progress" cx="90" cy="90" r="80" style={{ strokeDashoffset: 503 - (503 * (plannedSeconds - remainingSeconds)) / plannedSeconds }} /></svg><strong>{selectedTask ? timeFromSeconds(remainingSeconds) : "--:--"}</strong></div>
-                <div className="focus-controls">
-                  <button className="round-control" type="button" aria-label="重置计时" disabled={!selectedTask} onClick={() => { setFocusRunning(false); setFocusSeconds(0); setFocusFinished(false); }}><TimerReset aria-hidden="true" /></button>
-                  <button className="focus-main-action" type="button" disabled={!selectedTask} onClick={() => { if (focusFinished) { setFocusFinished(false); setFocusSeconds(0); } else { setFocusRunning((value) => !value); } }}>
-                    {focusRunning ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}{focusRunning ? "暂停" : focusFinished ? "再来一次" : "开始专注"}
-                  </button>
-                  <button className="round-control" type="button" aria-label="结束专注" disabled={!selectedTask} onClick={() => { setFocusRunning(false); if (focusSeconds > 0) setFocusFinished(true); }}><CheckCircle2 aria-hidden="true" /></button>
-                </div>
-              </div>
-              {focusFinished && <div className="focus-reflection"><span>这段时间感觉如何？</span><div>{(["satisfied", "neutral", "dissatisfied"] as Satisfaction[]).map((item) => <button className={satisfaction === item ? "chosen" : ""} type="button" onClick={() => setSatisfaction(item)} key={item}>{item === "satisfied" ? "顺畅" : item === "neutral" ? "平稳" : "费力"}</button>)}</div></div>}
-            </div>
-            <section className="focus-picker" aria-label="今日任务"><p className="section-kicker">今日可选</p><div>{orderedTasks.length === 0 ? <p>还没有任务</p> : orderedTasks.map((task) => <button className={task.id === selectedTaskId ? "selected" : ""} type="button" onClick={() => selectTask(task.id)} key={task.id}><span>{displayTime(task)}</span><strong>{task.title}</strong><small>{task.estimatedMinutes ?? 30}m</small></button>)}</div></section>
-          </section>
-        )}
+        {view === "focus" && <FocusWorkspace preferredTaskId={selectedTaskId} onBack={() => setView("today")} />}
 
         {view === "review" && (
           <section className="page review-page" aria-labelledby="review-title">

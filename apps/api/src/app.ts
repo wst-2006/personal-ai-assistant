@@ -5,9 +5,12 @@ import { inboxRoutes } from "./inbox-routes.js";
 import type { TaskParser } from "./ai/task-parser.js";
 import { taskRoutes } from "./task-routes.js";
 import type { TaskService } from "./task-service.js";
+import { focusRoutes } from "./focus-routes.js";
+import type { FocusService } from "./focus-service.js";
 
 type AppOptions = {
   taskService?: TaskService;
+  focusService?: FocusService;
   taskParser?: TaskParser;
 };
 
@@ -31,6 +34,7 @@ export function buildApp(options: AppOptions = {}) {
   }
 
   if (options.taskService) app.register(inboxRoutes, { prefix: "/api/v1", taskService: options.taskService });
+  if (options.focusService) app.register(focusRoutes, { prefix: "/api/v1", focusService: options.focusService });
 
   if (options.taskParser) {
     app.register(aiRoutes, {
