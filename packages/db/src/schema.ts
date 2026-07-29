@@ -261,3 +261,25 @@ export const cyberDiaries = pgTable("cyber_diaries", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
 });
+
+export const reminderJobs = pgTable("reminder_jobs", {
+  id: uuid("id").primaryKey(),
+  taskId: uuid("task_id").references(() => tasks.id),
+  channel: varchar("channel", { length: 32 }).notNull(),
+  kind: varchar("kind", { length: 32 }).notNull(),
+  status: varchar("status", { length: 20 }).notNull().default("pending"),
+  scheduledAt: timestamp("scheduled_at", { withTimezone: true }).notNull(),
+  availableAt: timestamp("available_at", { withTimezone: true }).notNull(),
+  attempts: integer("attempts").notNull().default(0),
+  payload: jsonb("payload").notNull(),
+  lastError: text("last_error"),
+  sentAt: timestamp("sent_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+}, (table) => [
+  index("reminder_jobs_due_idx").on(table.status, table.availableAt),
+  check("reminder_jobs_channel_check", sql`${table.channel} in ('feishu')`),
+  check("reminder_jobs_kind_check", sql`${table.kind} in ('task_start', 'task_follow_up')`),
+  check("reminder_jobs_status_check", sql`${table.status} in ('pending', 'processing', 'sent', 'failed', 'cancelled')`),
+  check("reminder_jobs_attempts_check", sql`${table.attempts} >= 0`)
+]);

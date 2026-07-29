@@ -1,6 +1,6 @@
 # Implementation Audit
 
-Audit date: 2026-07-27
+Audit date: 2026-07-29
 Audit scope: product specification, architecture, roadmap, state machines,
 design review, repository rules, PostgreSQL schema, API routes, automated tests,
 and the current desktop/mobile web implementation.
@@ -50,9 +50,9 @@ and scheduling, while ideas/questions reside in `inbox_entries` until the user
 explicitly converts one. That guarded migration is applied to the project
 database and must be preserved in future schema work.
 
-Focus, review, brief and the basic diary path now use real API-backed
-persistence. Growth remains presentation-only, and the richer diary,
-brief-source and cloud-reminder requirements remain outstanding.
+Focus, review, brief, diary and the basic growth path now use real API-backed
+persistence. The richer diary, external-provider acceptance and cloud-reminder
+requirements remain outstanding.
 
 ## 3. Functional Audit Matrix
 
@@ -73,8 +73,8 @@ brief-source and cloud-reminder requirements remain outstanding.
 | Daily brief | Product Spec, Roadmap | Partially implemented | Medium for review-derived draft and provider boundaries; low for live external acceptance | Review may generate, edit, regenerate and confirm a persisted brief with finance, AI, technology, task-expansion, humanities, weather and location sections. | `brief-providers.ts`, brief routes; `daily_briefs.sources` persists normalized provider metadata | domain validation and build checks | Configure location and search key, add live-provider fixtures/E2E, export and normal-chat path. |
 | Cyber diary | Product Spec, State Machines | Partially implemented | Medium for the persistence path; low for the complete diary experience | API-backed draft, save, reload, edit and text export. Saving requires a same-day review session with at least one message and a confirmed brief linked to that review. | `diary-routes.ts`, `diary-service.ts`, `DiaryWorkspace.tsx`; `cyber_diaries`, `review_sessions`, `review_messages`, `daily_briefs` | diary domain contract tests; isolated guarded-database integration verification for save/reload/cleanup; browser lock-state verification | Add diary-specific browser E2E for the persisted write path; add task/focus-derived cards, date/location/weather, radar, daily state color and tree data. |
 | Growth and statistics | Product Spec, Roadmap, Design Review | Partially implemented | Medium for the seven-day data path; low for long-term trends | Real seven-day focus trend, subjective feedback counts, daily state grid, six metrics, points and tree feedback | `growth-routes.ts`, `growth-service.ts`, `GrowthWorkspace.tsx`; task/focus/outcome/feedback/review tables | guarded API contract verification; desktop browser visual verification | Add month views, persistent derived snapshots only if justified, and dedicated browser/API automated tests. |
-| Search, weather, location, export | Product Spec, Roadmap | Partially implemented | Medium for adapter boundaries; low for configured live behavior | Brave Search and Open-Meteo adapters are server-only and preserve source metadata; missing configuration is displayed as unavailable. | `brief-providers.ts`; `daily_briefs.sources` | type checks | Set explicit location and search credentials, test provider results, add a user-controlled settings surface and brief export. |
-| Worker, Feishu, cloud runtime | Architecture, Roadmap | Not implemented | High | no worker application | no job/reminder or webhook API | none | Add durable jobs, cloud database/runtime, signed Feishu webhook, start/other-arrangement/open-task controls. |
+| Search, weather, location, export | Product Spec, Roadmap | Partially implemented | Medium for adapter boundaries; low for configured live behavior | Free GDELT news search is the default; Brave is optional; Open-Meteo weather is server-only and source metadata is retained. | `brief-providers.ts`; `daily_briefs.sources` | type checks | Set explicit location, test live provider fixtures, add a user-controlled settings surface and brief export. |
+| Worker, Feishu, cloud runtime | Architecture, Roadmap | Partially implemented | Medium for queue/retry core; low for delivery | `reminder_jobs` migration and claim/retry Worker core exist; no provider is marked sent without a delivery adapter. | `reminder_jobs`; `apps/worker/src/worker-core.ts` | migration guard/schema verification; Worker build | Add Feishu delivery adapter, signed webhook controls, durable deployment and cloud database/runtime. |
 | Long-range planning and AI task trees | Roadmap, Product Spec | Not implemented | High | no month/term/year views | no plan/tree API or tables | none | Add only after usable daily core; AI-created trees require explicit confirmation before writes. |
 | PWA, cross-device sync, backup | Architecture, Roadmap | Not implemented | High | React web exists but has no PWA manifest/service worker | database API provides a future base only | none | Add installability, online synchronization policy, backup/export and recovery verification. |
 | User profile and AI preferences | Product Spec privacy rules | Not implemented | High | no settings model | no API/tables | none | Add explicit user-controlled preferences only; no surveillance or inferred personality profile. |
@@ -296,8 +296,9 @@ After this audit is approved, the implementation is expected to modify:
 - Tests: domain validation, API/service/repository integration, migration
   verification, frontend interaction tests, and Playwright browser E2E.
 
-No focus, review, brief, diary, growth, Worker, or Feishu implementation should
-be added during this scheduling slice.
+The scheduling-slice plan above is historical. Focus, review, brief, diary,
+growth and the Worker queue have since been implemented in separate commits;
+Feishu delivery remains pending.
 
 ## 11. Test and Acceptance Plan
 
@@ -365,9 +366,9 @@ verification confidence to high.
 7. **Cyber diary content is still deliberately narrow.** Referential integrity
    is now validated by the API, but its task/focus cards, weather/location,
    radar, state color and tree data are not implemented.
-8. **Later Phase 1 dependencies remain absent.** Brief sources, weather,
-   exports, durable Worker jobs, Feishu controls, cloud runtime, PWA, backups,
-   and cross-device verification still need explicit implementation phases.
+8. **Later Phase 1 dependencies remain absent.** Brief export, Feishu controls,
+   cloud runtime, PWA, backups, and cross-device verification still need
+   explicit implementation phases; the durable Worker queue now exists.
 
 This audit is the only deliverable in its commit. Schema, API, and UI work may
 start only after the document and implementation slice are confirmed.
