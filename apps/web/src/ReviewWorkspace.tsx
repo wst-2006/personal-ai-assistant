@@ -24,7 +24,7 @@ type Context = {
   feedback: Array<{ satisfaction: string }>;
 };
 type BriefContent = { title:string; reflection:string; taskSummary:string; sections:Array<{title:string;body:string}> };
-type Brief = { id:string; state:"draft"|"confirmed"; content:BriefContent; sources:Array<{kind:string;label:string}> };
+type Brief = { id:string; state:"draft"|"confirmed"; content:BriefContent; sources:Array<{kind:string;label:string;url?:string;provider?:string}> };
 const API = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:3000";
 const localDate = () =>
   new Intl.DateTimeFormat("en-CA", {
@@ -208,7 +208,7 @@ export function ReviewWorkspace() {
           <button className="primary-button review-brief-trigger" disabled={messages.length===0||saving} onClick={()=>void generateBrief()}><Sparkles />结束今日复盘并生成简报</button>
         </section>
       </div>
-      {brief && <section className="review-brief-editor"><div><p className="section-kicker">每日简报草稿</p><h2>{brief.content.title}</h2></div><label>复盘摘要<textarea aria-label="简报复盘摘要" value={brief.content.reflection} onChange={event=>setBrief({...brief,content:{...brief.content,reflection:event.target.value}})} rows={5}/></label><label>任务摘要<textarea aria-label="简报任务摘要" value={brief.content.taskSummary} onChange={event=>setBrief({...brief,content:{...brief.content,taskSummary:event.target.value}})} rows={3}/></label><p className="brief-source-note">来源：{brief.sources.map(source=>source.label).join("；")}</p><button className="primary-button" disabled={saving||brief.state==="confirmed"} onClick={()=>void confirmBrief()}><Check />{brief.state==="confirmed"?"简报已确认":"确认简报"}</button></section>}
+      {brief && <section className="review-brief-editor"><div><p className="section-kicker">每日简报草稿</p><h2>{brief.content.title}</h2></div><label>复盘摘要<textarea aria-label="简报复盘摘要" value={brief.content.reflection} onChange={event=>setBrief({...brief,content:{...brief.content,reflection:event.target.value}})} rows={5}/></label><label>任务摘要<textarea aria-label="简报任务摘要" value={brief.content.taskSummary} onChange={event=>setBrief({...brief,content:{...brief.content,taskSummary:event.target.value}})} rows={3}/></label><div className="brief-sections">{brief.content.sections.map((section,index)=><label key={`${section.title}-${index}`}>{section.title}<textarea aria-label={`${section.title}简报内容`} value={section.body} onChange={event=>setBrief({...brief,content:{...brief.content,sections:brief.content.sections.map((item,itemIndex)=>itemIndex===index?{...item,body:event.target.value}:item)}})} rows={3}/></label>)}</div><p className="brief-source-note">来源：{brief.sources.map(source=>source.label).join("；")}</p><button className="primary-button" disabled={saving||brief.state==="confirmed"} onClick={()=>void confirmBrief()}><Check />{brief.state==="confirmed"?"简报已确认":"确认简报"}</button></section>}
       {error && (
         <div className="focus-error" role="alert">
           {error}
