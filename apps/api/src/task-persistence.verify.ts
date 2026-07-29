@@ -19,7 +19,7 @@ try {
       title: "database-persistence-verification",
       scheduleKind: "exact",
       startAt: "2099-12-31T09:00:00+08:00",
-      endAt: "2099-12-31T09:45:00+08:00",
+      endAt: "2099-12-31T10:00:00+08:00",
       timeZone: "Asia/Shanghai",
       plannedEffortMinutes: 60
     }

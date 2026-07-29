@@ -109,7 +109,7 @@ export const naturalLanguageTaskCandidateSchema = z.object({
   date: z.string().date().nullable(),
   startAt: z.string().datetime({ offset: true }).nullable(),
   endAt: z.string().datetime({ offset: true }).nullable(),
-  estimatedMinutes: z.number().int().positive().max(1440).nullable(),
+  plannedEffortMinutes: z.number().int().positive().max(1440).nullable(),
   difficulty: taskDifficultySchema.nullable(),
   taskType: z.string().trim().max(80).nullable(),
   requiresContinuousFocus: z.boolean().nullable(),
@@ -120,13 +120,32 @@ export const naturalLanguageTaskCandidateSchema = z.object({
     "date",
     "startAt",
     "endAt",
-    "estimatedMinutes",
+    "plannedEffortMinutes",
     "difficulty",
     "taskType",
     "requiresContinuousFocus",
     "schedulePrecision",
     "notes"
   ]))
+}).strict().superRefine((candidate, context) => {
+  if (candidate.entryType !== "task") {
+    for (const field of ["date", "startAt", "endAt", "plannedEffortMinutes", "difficulty", "taskType", "requiresContinuousFocus", "schedulePrecision"] as const) {
+      if (candidate[field] !== null) context.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: "Ideas and questions cannot contain task fields" });
+    }
+    return;
+  }
+  if (candidate.schedulePrecision !== "exact") return;
+  if (!candidate.startAt || !candidate.endAt) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["startAt"], message: "Exact candidates require startAt and endAt" });
+    return;
+  }
+  const start = new Date(candidate.startAt);
+  const end = new Date(candidate.endAt);
+  if (!isHalfHourBoundary(start, "Asia/Shanghai")
+    || !isHalfHourBoundary(end, "Asia/Shanghai")
+    || end.getTime() - start.getTime() < 30 * 60 * 1000) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["startAt"], message: "Exact candidates must use the 30-minute timeline contract" });
+  }
 });
 
 type ScheduleShape = {
@@ -164,6 +183,19 @@ export function localDateAtTimeZone(value: string | Date, timeZone: string): str
   return `${get("year")}-${get("month")}-${get("day")}`;
 }
 
+function isHalfHourBoundary(value: Date, timeZone: string): boolean {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false
+  }).formatToParts(value);
+  const minute = Number(parts.find((part) => part.type === "minute")?.value ?? -1);
+  const second = Number(parts.find((part) => part.type === "second")?.value ?? -1);
+  return minute % 30 === 0 && second === 0 && value.getUTCMilliseconds() === 0;
+}
+
 export function validateTaskSchedule(input: ScheduleShape, context: z.RefinementCtx): void {
   const hasStart = Boolean(input.startAt);
   const hasEnd = Boolean(input.endAt);
@@ -184,8 +216,12 @@ export function validateTaskSchedule(input: ScheduleShape, context: z.Refinement
     if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || !isValidIanaTimeZone(input.timeZone)) {
       return;
     }
-    if (end.getTime() - start.getTime() < 5 * 60 * 1000) {
-      context.addIssue({ code: z.ZodIssueCode.custom, path: ["endAt"], message: "Exact tasks must be at least five minutes" });
+    if (!isHalfHourBoundary(start, input.timeZone) || !isHalfHourBoundary(end, input.timeZone)) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ["startAt"], message: "Exact task boundaries must use 30-minute intervals" });
+      return;
+    }
+    if (end.getTime() - start.getTime() < 30 * 60 * 1000) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ["endAt"], message: "Exact tasks must be at least 30 minutes" });
       return;
     }
     if (localDateAtTimeZone(start, input.timeZone) !== localDateAtTimeZone(end, input.timeZone)) {

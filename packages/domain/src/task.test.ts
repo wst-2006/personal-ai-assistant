@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { taskInputSchema, taskOutcomeInputSchema } from "./task.js";
+import { naturalLanguageTaskCandidateSchema, taskInputSchema, taskOutcomeInputSchema } from "./task.js";
 
 const exactTask = {
   title: "Deep work",
@@ -18,6 +18,26 @@ describe("task scheduling validation", () => {
   it("requires exact timestamps as a pair and in ascending order", () => {
     expect(taskInputSchema.safeParse({ ...exactTask, endAt: undefined }).success).toBe(false);
     expect(taskInputSchema.safeParse({ ...exactTask, endAt: exactTask.startAt }).success).toBe(false);
+  });
+
+  it("enforces 30-minute boundaries and a 30-minute minimum", () => {
+    expect(taskInputSchema.safeParse({
+      ...exactTask,
+      startAt: "2026-07-27T09:15:00+08:00",
+      endAt: "2026-07-27T10:15:00+08:00"
+    }).success).toBe(false);
+    expect(taskInputSchema.safeParse({
+      ...exactTask,
+      endAt: "2026-07-27T09:15:00+08:00"
+    }).success).toBe(false);
+    expect(taskInputSchema.safeParse({
+      ...exactTask,
+      startAt: "2026-07-27T09:00:30+08:00"
+    }).success).toBe(false);
+    expect(taskInputSchema.safeParse({
+      ...exactTask,
+      endAt: "2026-07-27T09:30:00+08:00"
+    }).success).toBe(true);
   });
 
   it("rejects exact tasks that cross midnight in their IANA time zone", () => {
@@ -50,6 +70,35 @@ describe("task scheduling validation", () => {
 
   it("requires a valid IANA time zone", () => {
     expect(taskInputSchema.safeParse({ ...exactTask, timeZone: "Shanghai-ish" }).success).toBe(false);
+  });
+});
+
+describe("AI candidate validation", () => {
+  const candidate = {
+    title: "Read the paper",
+    entryType: "task" as const,
+    date: "2026-07-27",
+    startAt: "2026-07-27T09:00:00+08:00",
+    endAt: "2026-07-27T10:00:00+08:00",
+    plannedEffortMinutes: 45,
+    difficulty: "medium" as const,
+    taskType: null,
+    requiresContinuousFocus: null,
+    schedulePrecision: "exact" as const,
+    notes: null,
+    missingFields: ["taskType", "requiresContinuousFocus", "notes"] as const
+  };
+
+  it("uses the current planned-effort field and 30-minute exact boundaries", () => {
+    expect(naturalLanguageTaskCandidateSchema.safeParse(candidate).success).toBe(true);
+    expect(naturalLanguageTaskCandidateSchema.safeParse({ ...candidate, endAt: "2026-07-27T09:45:00+08:00" }).success).toBe(false);
+    expect(naturalLanguageTaskCandidateSchema.safeParse({ ...candidate, estimatedMinutes: 45 }).success).toBe(false);
+  });
+
+  it("keeps ideas and questions free of task-only fields", () => {
+    const idea = { ...candidate, entryType: "idea", date: null, startAt: null, endAt: null, plannedEffortMinutes: null, difficulty: null, taskType: null, requiresContinuousFocus: null, schedulePrecision: null, missingFields: [] };
+    expect(naturalLanguageTaskCandidateSchema.safeParse(idea).success).toBe(true);
+    expect(naturalLanguageTaskCandidateSchema.safeParse({ ...idea, difficulty: "medium" }).success).toBe(false);
   });
 });
 

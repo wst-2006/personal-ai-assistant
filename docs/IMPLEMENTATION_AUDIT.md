@@ -65,7 +65,7 @@ requirements remain outstanding.
 | Full manual task creation | Product Spec, Roadmap | Partially implemented | High for mapped core fields and browser path | Dedicated formal-task dialog with scheduling, effort, difficulty, type, focus and notes | `POST /tasks`; `tasks` | API/domain and browser E2E tests | Add accessibility and error-state coverage for all field combinations. |
 | Quick task capture | Product Spec, Design Review | Partially implemented | High for core path | Quick capture creates an unscheduled task with planned effort and can be completed later | `POST /tasks`; `tasks` | API and browser E2E coverage through Today | Add a distinct completion affordance in the unscheduled region. |
 | Independent ideas/questions | Product Spec | Fully implemented | Medium | Idea/question capture writes separate inbox entries; conversion requires confirmation | inbox routes; `inbox_entries`, `tasks.source_inbox_entry_id` | API/domain tests | Add browser conversion coverage. |
-| AI candidate confirmation | Product Spec, Design Review | Partially implemented | Medium | AI drawer parses then asks for confirmation | `POST /api/v1/ai/tasks/parse`; confirmed candidate later uses task API | parser route test | Route ideas/questions to inbox, add correction/error tests, and preserve formal fields without silent scheduling. |
+| AI candidate confirmation | Product Spec, Design Review | Partially implemented | Medium | AI drawer parses then asks for confirmation; formal tasks use the current task contract while ideas/questions use the independent inbox API | parse, task and inbox routes; `tasks`, `inbox_entries` | parser route and shared contract tests | Add browser confirmation/error coverage and an editable correction flow. |
 | Real Today timeline | Product Spec, Design Review | Partially implemented | High for core schedule editing; medium for full interaction | 24-hour coordinate axis, current-time marker, daypart/unscheduled areas, creation, drag/resize and spatial overlaps | task APIs; `tasks`, conflict acceptances | desktop and 390px browser E2E | Add keyboard-accessible movement and richer conflict explanations. |
 | Timeline persistence and cross-client reading | Product Spec, Architecture | Partially implemented | High for refresh and local database read | Timeline reads the database-backed task list | task list API; `tasks` | DB persistence and browser refresh tests | Cross-device/cloud synchronization remains unimplemented. |
 | Focus session workflow | Product Spec, State Machines, Roadmap | Partially implemented | High for core session persistence and local E2E; medium for external interaction | API-backed preparation, reminder response, auto-start, pause/resume, end, objective outcome and subjective feedback; exact tasks transactionally schedule a 15-minute reminder | focus-session routes; `focus_sessions`, `task_feedback`, `task_outcomes`, `reminder_jobs` | domain validation, database reminder verification and browser E2E | Real-account Feishu acceptance, durable cloud runtime, explicit plan-change conversation, and mobile focus visual E2E remain. |
@@ -83,7 +83,7 @@ requirements remain outstanding.
 
 | Page/surface | What is real today | What is only presentation/local state | Honest status |
 | --- | --- | --- | --- |
-| Today | Database-backed task/inbox capture, complete form, time axis, blank-slot creation, drag/resize, conflict retention and lifecycle actions | Rich keyboard manipulation and cloud synchronization | Partially implemented |
+| Today | Database-backed task/inbox capture, complete form, 30-minute time axis/interactions, blank-slot creation, drag/resize, conflict retention, lifecycle actions and direct task-to-focus handoff | Rich keyboard manipulation and cloud synchronization | Partially implemented |
 | Focus | Reads real tasks and durable focus sessions; pause, resume, raw/effective time, objective result and subjective feedback write through API and survive refresh | Cloud/offline reminder delivery, rich plan-change conversation, and production mobile acceptance remain | Partially implemented |
 | Review | Opens/restores a daily review session, saves messages, reads real context, and generates/edits/confirms a brief | Software conversation context and full browser acceptance | Partially implemented |
 | Diary | Reads its review/brief prerequisites, saves, restores, edits and exports a persisted diary with server-side link validation | task/focus-derived cards, weather, location, radar, state color and tree data | Partially implemented |
@@ -108,7 +108,7 @@ database; subsequent UI/API work must continue to honor this mapping.
 | Date | `localDate` | `local_date` | Optional target date for `none`; required for `daypart`; forbidden in exact input and derived by the server. |
 | Daypart | `daypart` | `daypart` | `morning`, `afternoon`, or `evening`; required only for `daypart`. |
 | Start | `startAt` | `start_at` | Offset ISO 8601; required only for `exact`; stored as UTC `timestamptz`. |
-| End | `endAt` | `end_at` | Offset ISO 8601; paired with start, later than start, minimum interval 5 minutes. |
+| End | `endAt` | `end_at` | Offset ISO 8601; paired with start, on a half-hour boundary, and at least 30 minutes after start. |
 | Time zone | `timeZone` | `time_zone` | Valid IANA zone; first UI defaults to `Asia/Shanghai`. Exact `localDate` is derived from start plus this zone. |
 | Planned effort | `plannedEffortMinutes` | `planned_effort_minutes` | Optional integer 1–1440. This is the user's estimate of total effort, not the scheduled block length. |
 | Difficulty | `difficulty` | `difficulty` | Optional: `low`, `medium`, `high`. |
@@ -165,12 +165,14 @@ validation, and PostgreSQL checks must all enforce the same matrix:
 
 Additional exact rules:
 
-- `endAt` must be at least 5 minutes after `startAt`.
+- `startAt` and `endAt` must resolve to `:00` or `:30` in `timeZone`, and
+  `endAt` must be at least 30 minutes after `startAt`.
 - Both instants must resolve to the same date in `timeZone`; Phase 1 rejects
   cross-midnight tasks.
-- The full form accepts 5-minute precision. Drag/resize defaults to 15-minute
-  snapping; a blank click uses 30 minutes only as a pre-filled default.
-- Moving an existing 45-, 50-, or 90-minute block preserves its exact length.
+- The full form, blank selection, drag and resize all use one 30-minute
+  interval contract. A blank click creates a 30-minute draft.
+- Moving a block preserves its exact scheduled length; resizing changes the
+  block by 30-minute increments. Neither operation changes planned effort.
 
 ## 7. Version and Schedule Revision Rules
 
@@ -252,7 +254,7 @@ experience to forms and rows.
    - Run the existing database/role/host/port/PostgreSQL-major guard first.
 2. **Domain and API contracts**
    - Split formal task and inbox schemas/routes.
-   - Add transactional conversion, the exact schedule matrix, 5-minute minimum,
+   - Add transactional conversion, the exact schedule matrix, 30-minute minimum,
      planned/scheduled duration separation, and schedule-revision preconditions.
    - Keep complete `40001` transaction retries and atomic conflict acceptance.
 3. **Entry experiences**
@@ -266,7 +268,7 @@ experience to forms and rows.
    - Use a 00:00–24:00 vertical coordinate system with real ticks, current-time
      indicator, date context, daypart groups, and a distinct unscheduled area.
    - Blank click opens a 30-minute exact-task draft; blank drag selects a
-     15-minute-snapped range. No row is written until form confirmation.
+     30-minute-snapped range. No row is written until form confirmation.
    - Support touch/mouse drag and resize, locked lifecycle states, spatial
      overlaps, historical warnings, optimistic overlays, rollback, and explicit
      keep-conflict dialog.
@@ -298,7 +300,7 @@ After this audit is approved, the implementation is expected to modify:
 
 The scheduling-slice plan above is historical. Focus, review, brief, diary,
 growth and the Worker queue have since been implemented in separate commits;
-Feishu delivery remains pending.
+live Feishu delivery acceptance remains pending.
 
 ## 11. Test and Acceptance Plan
 
@@ -306,8 +308,9 @@ Feishu delivery remains pending.
 
 - Validate every allowed/forbidden schedule-shape combination in frontend and
   backend contracts, including null/omitted fields.
-- Verify 5-minute minimum, 5-minute form precision, 45/50/90-minute intervals,
-  time-zone date derivation, UTC storage, and cross-midnight rejection.
+- Verify the shared 30-minute boundary/minimum contract in the form, timeline,
+  API and database, plus time-zone date derivation, UTC storage, and
+  cross-midnight rejection.
 - Verify the complete schedule-revision matrix in section 7, including
   `localDate`, daypart, cancel, reopen, delete, restore, and non-schedule edits.
 - Verify drag and resize service updates never change planned effort.
@@ -332,6 +335,9 @@ A serial Playwright scenario must use the real API and PostgreSQL database:
 8. Open a 390px browser context and read the same task without overflow.
 9. Clean up only the UUIDs captured by that test.
 
+The timeline acceptance must assert persisted `startAt`/`endAt` values after
+blank creation, drag and resize. Visual displacement alone is not evidence.
+
 E2E cleanup must refuse to run until it verifies the project database name,
 role, host, port, and PostgreSQL major version. It may delete only captured
 UUIDs and their dependent test records; broad predicates, truncation, and
@@ -345,6 +351,22 @@ PostgreSQL persistence, API integration, desktop browser interaction, and
 verification confidence to high.
 
 ## 12. Serious Issues and Requirement Gaps
+
+Corrective audit findings fixed on 2026-07-29:
+
+- The grid displayed 30-minute rows while blank selection, move and resize still
+  used 15/5-minute internals. One 30-minute contract now drives the form,
+  interactions, shared validation and guarded PostgreSQL migration `0008`.
+- `App.tsx` contained hidden obsolete Today/Review implementations and reused
+  their removed `entryType`/`estimatedMinutes` task model in the live AI drawer.
+  The hidden implementation was removed; AI tasks now use the current task
+  contract and ideas/questions use `inbox_entries`.
+- A 30-minute block was only 18px tall, so its visible action button overlapped
+  the resize handle and could not be clicked. Each half-hour lane now has a
+  stable 36px height with disjoint action/resize hit regions; browser E2E covers
+  the task-to-focus handoff.
+
+Remaining gaps:
 
 1. **Ideas/questions need browser conversion coverage.** Their data model is
    independent and conversion preserves the source inbox entry, but the user

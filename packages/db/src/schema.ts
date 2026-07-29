@@ -79,7 +79,16 @@ export const tasks = pgTable(
     ),
     check(
       "tasks_exact_minimum_duration_check",
-      sql`${table.endAt} is null or ${table.endAt} >= ${table.startAt} + interval '5 minutes'`
+      sql`${table.deletedAt} is not null or ${table.endAt} is null or ${table.endAt} >= ${table.startAt} + interval '30 minutes'`
+    ),
+    check(
+      "tasks_exact_half_hour_boundary_check",
+      sql`${table.deletedAt} is not null or ${table.startAt} is null or (
+        extract(minute from ${table.startAt} at time zone ${table.timeZone}) in (0, 30)
+        and extract(second from ${table.startAt} at time zone ${table.timeZone}) = 0
+        and extract(minute from ${table.endAt} at time zone ${table.timeZone}) in (0, 30)
+        and extract(second from ${table.endAt} at time zone ${table.timeZone}) = 0
+      )`
     ),
     check(
       "tasks_planned_effort_check",

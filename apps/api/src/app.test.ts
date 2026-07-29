@@ -47,6 +47,22 @@ describe("task endpoints", () => {
     });
     expect(response.statusCode).toBe(400);
   });
+
+  it("rejects exact tasks outside the shared 30-minute contract", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/tasks",
+      payload: {
+        title: "Off-grid task",
+        scheduleKind: "exact",
+        startAt: "2026-07-27T09:15:00+08:00",
+        endAt: "2026-07-27T10:15:00+08:00",
+        timeZone: "Asia/Shanghai"
+      }
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toBe("invalid_task");
+  });
 });
 
 describe("inbox endpoints", () => {
@@ -97,8 +113,8 @@ describe("AI task parsing", () => {
       async parse() {
         return {
           title: "学习线性代数", entryType: "task", date: "2026-07-28",
-          startAt: "2026-07-28T09:00:00+08:00", endAt: "2026-07-28T09:45:00+08:00",
-          estimatedMinutes: 45, difficulty: "medium", taskType: null,
+          startAt: "2026-07-28T09:00:00+08:00", endAt: "2026-07-28T10:00:00+08:00",
+          plannedEffortMinutes: 45, difficulty: "medium", taskType: null,
           requiresContinuousFocus: null, schedulePrecision: "exact", notes: null,
           missingFields: ["taskType", "requiresContinuousFocus", "notes"]
         };

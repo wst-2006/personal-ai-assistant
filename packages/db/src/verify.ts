@@ -41,6 +41,7 @@ try {
     FROM pg_constraint
     WHERE conrelid = 'public.tasks'::regclass
       AND conname IN (
+        'tasks_exact_half_hour_boundary_check',
         'tasks_exact_minimum_duration_check',
         'tasks_planned_effort_check',
         'tasks_schedule_shape_check'
@@ -71,6 +72,7 @@ try {
   const expectedTables = ["inbox_entries", "tasks"];
   const expectedColumns = ["planned_effort_minutes", "source_inbox_entry_id"];
   const expectedConstraints = [
+    "tasks_exact_half_hour_boundary_check",
     "tasks_exact_minimum_duration_check",
     "tasks_planned_effort_check",
     "tasks_schedule_shape_check"
