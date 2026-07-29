@@ -89,6 +89,7 @@ export class TaskService {
       const blocking = await this.findConflicts(transaction, record);
       await this.assertConflictDecision(transaction, record, blocking, input.conflictDecision, input.expectedConflictFingerprint);
       const task = await transaction.insertTask(record);
+      await transaction.syncReminderForTask(task);
       await transaction.insertLifecycleEvent({
         id: randomUUID(),
         taskId: task.id,
@@ -126,6 +127,7 @@ export class TaskService {
       const blocking = await this.findConflicts(transaction, record);
       await this.assertConflictDecision(transaction, record, blocking, input.conflictDecision, input.expectedConflictFingerprint);
       const task = await transaction.insertTask(record);
+      await transaction.syncReminderForTask(task);
       await transaction.insertLifecycleEvent({ id: randomUUID(), taskId: task.id, fromStatus: null, toStatus: "open", source: "app" });
       if (input.conflictDecision === "keep") {
         await transaction.insertConflictAcceptances(blocking.map((conflict) => canonicalAcceptance(task, conflict)));
@@ -206,6 +208,7 @@ export class TaskService {
         updatedAt: new Date()
       });
       if (!updated) throw await this.versionOrMissing(transaction, id);
+      await transaction.syncReminderForTask(updated);
       if (patch.conflictDecision === "keep") {
         await transaction.insertConflictAcceptances(blocking.map((conflict) => canonicalAcceptance(updated, conflict)));
       }
@@ -241,6 +244,7 @@ export class TaskService {
         updatedAt: new Date()
       });
       if (!updated) throw await this.versionOrMissing(transaction, id);
+      await transaction.syncReminderForTask(updated);
       await transaction.insertLifecycleEvent({
         id: randomUUID(), taskId: id, fromStatus: current.lifecycleStatus as TaskLifecycle,
         toStatus: "deleted", source: "app", reason
@@ -277,6 +281,7 @@ export class TaskService {
         updatedAt: new Date()
       });
       if (!updated) throw await this.versionOrMissing(transaction, id);
+      await transaction.syncReminderForTask(updated);
       await transaction.insertLifecycleEvent({
         id: randomUUID(), taskId: id, fromStatus: current.lifecycleStatus as TaskLifecycle,
         toStatus: "open", source: "app", reason
@@ -313,6 +318,7 @@ export class TaskService {
         updatedAt: new Date()
       });
       if (!updated) throw await this.versionOrMissing(transaction, id);
+      await transaction.syncReminderForTask(updated);
       await transaction.insertLifecycleEvent({
         id: randomUUID(), taskId: id, fromStatus: current.lifecycleStatus as TaskLifecycle,
         toStatus: "closed", source: input.source, reason: input.note
@@ -348,6 +354,7 @@ export class TaskService {
         updatedAt: new Date()
       });
       if (!updated) throw await this.versionOrMissing(transaction, id);
+      await transaction.syncReminderForTask(updated);
       await transaction.insertLifecycleEvent({
         id: randomUUID(), taskId: id, fromStatus: "active", toStatus: "awaiting_outcome",
         source: "system", reason
@@ -377,6 +384,7 @@ export class TaskService {
         updatedAt: new Date()
       });
       if (!updated) throw await this.versionOrMissing(transaction, id);
+      await transaction.syncReminderForTask(updated);
       await transaction.insertLifecycleEvent({
         id: randomUUID(), taskId: id, fromStatus: current.lifecycleStatus as TaskLifecycle,
         toStatus, source, reason

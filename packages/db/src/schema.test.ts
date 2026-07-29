@@ -1,4 +1,4 @@
-import { inboxEntries, tasks } from "./schema.js";
+import { inboxEntries, reminderJobs, tasks } from "./schema.js";
 import { describe, expect, it } from "vitest";
 
 describe("formal task and inbox schema contract", () => {
@@ -13,5 +13,11 @@ describe("formal task and inbox schema contract", () => {
     expect(inboxEntries.entryKind.name).toBe("entry_kind");
     expect(inboxEntries.convertedAt.name).toBe("converted_at");
     expect(inboxEntries.deletedAt.name).toBe("deleted_at");
+  });
+
+  it("binds reminder delivery to the current task schedule revision", () => {
+    expect(reminderJobs.scheduleRevision.name).toBe("schedule_revision");
+    expect(reminderJobs.scheduledAt.name).toBe("scheduled_at");
+    expect(reminderJobs.availableAt.name).toBe("available_at");
   });
 });

@@ -11,17 +11,22 @@ import { ReviewService } from "./review-service.js";
 import { BriefService } from "./brief-service.js";
 import { DiaryService } from "./diary-service.js";
 import { GrowthService } from "./growth-service.js";
+import { FeishuWebhookService, loadFeishuWebhookConfig } from "./feishu-webhook.js";
 
 const config = loadServerConfig();
 const database = await connectVerifiedDatabase(loadDatabaseConfig());
 const taskStore = new PostgresTaskStore(database.db);
+const taskService = new TaskService(taskStore);
+const focusService = new FocusService(database.db);
+const feishuConfig = loadFeishuWebhookConfig(process.env);
 const app = buildApp({
-  taskService: new TaskService(taskStore),
-  focusService: new FocusService(database.db),
+  taskService,
+  focusService,
   reviewService: new ReviewService(database.db),
   briefService: new BriefService(database.db),
   diaryService: new DiaryService(database.db),
   growthService: new GrowthService(database.db),
+  feishuWebhookService: feishuConfig ? new FeishuWebhookService(feishuConfig, taskService, focusService) : undefined,
   taskParser: new DeepSeekTaskParser(loadDeepSeekConfig())
 });
 

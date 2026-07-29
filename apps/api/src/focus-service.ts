@@ -4,6 +4,7 @@ import type { AppDatabase } from "@personal-ai/db/client";
 import { focusSessions, taskFeedback, taskLifecycleEvents, taskOutcomes, tasks } from "@personal-ai/db/schema";
 import type { FocusSatisfaction, FocusSessionState } from "@personal-ai/domain/focus";
 import type { TaskOutcome } from "@personal-ai/domain/task";
+import { syncTaskStartReminder } from "./reminder-scheduler.js";
 
 const recoverableStates: FocusSessionState[] = ["reminded", "preparing", "running", "paused"];
 const currentStates: FocusSessionState[] = [...recoverableStates, "ended", "stopped_no_response", "stopped_for_change"];
@@ -159,6 +160,7 @@ export class FocusService {
       const [closed] = await transaction.update(tasks).set({ lifecycleStatus: "closed", currentOutcome: outcome, version: task.version + 1, scheduleRevision: task.scheduleRevision + 1, updatedAt: now })
         .where(and(eq(tasks.id, task.id), eq(tasks.version, task.version))).returning();
       if (!closed) throw new Error("task_version_conflict");
+      await syncTaskStartReminder(transaction as AppDatabase, closed, now);
       await transaction.insert(taskLifecycleEvents).values({ id: randomUUID(), taskId: task.id, fromStatus: "awaiting_outcome", toStatus: "closed", source: "app", reason: note ?? null });
       return updated;
     });
@@ -208,6 +210,7 @@ export class FocusService {
     const [updated] = await db.update(tasks).set({ lifecycleStatus: "active", version: task.version + 1, updatedAt: now })
       .where(and(eq(tasks.id, task.id), eq(tasks.version, task.version))).returning();
     if (!updated) throw new Error("task_version_conflict");
+    await syncTaskStartReminder(db, updated, now);
     await db.insert(taskLifecycleEvents).values({ id: randomUUID(), taskId: task.id, fromStatus: task.lifecycleStatus, toStatus: "active", source: "app" });
   }
 
@@ -217,6 +220,7 @@ export class FocusService {
     const [updated] = await db.update(tasks).set({ lifecycleStatus: "awaiting_outcome", version: task.version + 1, updatedAt: now })
       .where(and(eq(tasks.id, task.id), eq(tasks.version, task.version))).returning();
     if (!updated) throw new Error("task_version_conflict");
+    await syncTaskStartReminder(db, updated, now);
     await db.insert(taskLifecycleEvents).values({ id: randomUUID(), taskId: task.id, fromStatus: "active", toStatus: "awaiting_outcome", source: "app", reason: reason ?? null });
   }
 }

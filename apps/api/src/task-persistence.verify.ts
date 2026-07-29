@@ -17,10 +17,11 @@ try {
     url: "/api/v1/tasks",
     payload: {
       title: "database-persistence-verification",
-      entryType: "task",
-      scheduleKind: "none",
-      localDate: "2099-12-31",
-      estimatedMinutes: 1
+      scheduleKind: "exact",
+      startAt: "2099-12-31T09:00:00+08:00",
+      endAt: "2099-12-31T09:45:00+08:00",
+      timeZone: "Asia/Shanghai",
+      plannedEffortMinutes: 60
     }
   });
   if (createResponse.statusCode !== 201) {
@@ -37,12 +38,25 @@ try {
     throw new Error("Created task could not be read through the task API.");
   }
 
-  console.log("Task persistence verified with exact test-record cleanup.");
+  const reminder = await connection.client.query<{
+    schedule_revision: number;
+    scheduled_at: Date;
+    available_at: Date;
+    payload: { title?: string; scheduleRevision?: number };
+  }>(`SELECT schedule_revision, scheduled_at, available_at, payload FROM reminder_jobs WHERE task_id = $1`, [createdTaskId]);
+  const job = reminder.rows[0];
+  if (!job || job.schedule_revision !== 1 || job.scheduled_at.getTime() - job.available_at.getTime() !== 15 * 60 * 1000
+    || job.payload.title !== "database-persistence-verification" || job.payload.scheduleRevision !== 1) {
+    throw new Error("Task reminder was not persisted with the exact schedule contract.");
+  }
+
+  console.log("Task and 15-minute reminder persistence verified with exact test-record cleanup.");
 } finally {
   await app.close();
   if (createdTaskId) {
     await connection.client.query("BEGIN");
     try {
+      await connection.client.query("DELETE FROM reminder_jobs WHERE task_id = $1", [createdTaskId]);
       await connection.client.query("DELETE FROM task_lifecycle_events WHERE task_id = $1", [createdTaskId]);
       await connection.client.query("DELETE FROM tasks WHERE id = $1", [createdTaskId]);
       await connection.client.query("COMMIT");

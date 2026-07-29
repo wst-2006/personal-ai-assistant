@@ -15,6 +15,12 @@ import { diaryRoutes } from "./diary-routes.js";
 import type { DiaryService } from "./diary-service.js";
 import { growthRoutes } from "./growth-routes.js";
 import type { GrowthService } from "./growth-service.js";
+import { feishuRoutes } from "./feishu-routes.js";
+import type { FeishuWebhookService } from "./feishu-webhook.js";
+
+declare module "fastify" {
+  interface FastifyRequest { rawBody?: string }
+}
 
 type AppOptions = {
   taskService?: TaskService;
@@ -23,11 +29,20 @@ type AppOptions = {
   briefService?: BriefService;
   diaryService?: DiaryService;
   growthService?: GrowthService;
+  feishuWebhookService?: FeishuWebhookService;
   taskParser?: TaskParser;
 };
 
 export function buildApp(options: AppOptions = {}) {
   const app = Fastify({ logger: true });
+
+  app.removeContentTypeParser("application/json");
+  app.addContentTypeParser("application/json", { parseAs: "string" }, (request, body, done) => {
+    const rawBody = String(body);
+    request.rawBody = rawBody;
+    try { done(null, rawBody ? JSON.parse(rawBody) : null); }
+    catch (error) { done(error as Error); }
+  });
 
   app.register(cors, {
     origin: ["http://localhost:5173", "http://127.0.0.1:5173"]
@@ -51,6 +66,7 @@ export function buildApp(options: AppOptions = {}) {
   if (options.briefService) app.register(briefRoutes, { prefix: "/api/v1", briefService: options.briefService });
   if (options.diaryService) app.register(diaryRoutes, { prefix: "/api/v1", diaryService: options.diaryService });
   if (options.growthService) app.register(growthRoutes, { prefix: "/api/v1", growthService: options.growthService });
+  if (options.feishuWebhookService) app.register(feishuRoutes, { prefix: "/api/v1", webhookService: options.feishuWebhookService });
 
   if (options.taskParser) {
     app.register(aiRoutes, {

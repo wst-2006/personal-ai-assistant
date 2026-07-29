@@ -118,6 +118,61 @@ describe("TaskService lifecycle and revisions", () => {
   });
 });
 
+describe("TaskService reminder scheduling", () => {
+  it("creates a 15-minute reminder and keeps it aligned with task edits", async () => {
+    const store = new MemoryTaskStore();
+    const service = new TaskService(store);
+    const created = (await service.create(exact("Read paper", "14:00", "15:30"))).task;
+
+    expect(store.reminderJobs).toHaveLength(1);
+    expect(store.reminderJobs[0]).toMatchObject({
+      taskId: created.id,
+      scheduleRevision: created.scheduleRevision,
+      status: "pending"
+    });
+    expect(store.reminderJobs[0]!.availableAt.toISOString()).toBe("2026-07-27T05:45:00.000Z");
+
+    const renamed = (await service.update(created.id, taskPatchSchema.parse({
+      expectedVersion: created.version,
+      title: "Read systems paper"
+    }))).task;
+    expect(renamed.scheduleRevision).toBe(created.scheduleRevision);
+    expect(store.reminderJobs[0]!.payload.title).toBe("Read systems paper");
+
+    const moved = (await service.update(created.id, taskPatchSchema.parse({
+      expectedVersion: renamed.version,
+      expectedScheduleRevision: renamed.scheduleRevision,
+      startAt: "2026-07-27T16:00:00+08:00",
+      endAt: "2026-07-27T17:30:00+08:00"
+    }))).task;
+    expect(store.reminderJobs[0]).toMatchObject({ scheduleRevision: moved.scheduleRevision, status: "pending" });
+    expect(store.reminderJobs[0]!.availableAt.toISOString()).toBe("2026-07-27T07:45:00.000Z");
+  });
+
+  it("cancels pending delivery when a task leaves reminder eligibility and restores it on reopen", async () => {
+    const store = new MemoryTaskStore();
+    const service = new TaskService(store);
+    let task = (await service.create(exact("Prepare slides", "18:00", "19:00"))).task;
+
+    task = await service.cancel(task.id, task.version);
+    expect(store.reminderJobs[0]!.status).toBe("cancelled");
+
+    task = (await service.reopen(task.id, task.version, "reject")).task;
+    expect(store.reminderJobs[0]).toMatchObject({ status: "pending", scheduleRevision: task.scheduleRevision });
+
+    task = await service.start(task.id, task.version);
+    expect(store.reminderJobs[0]!.status).toBe("cancelled");
+  });
+
+  it("does not schedule reminders for unscheduled or daypart tasks", async () => {
+    const store = new MemoryTaskStore();
+    const service = new TaskService(store);
+    await service.create(unscheduled());
+    await service.create(taskInputSchema.parse({ title: "Morning note", scheduleKind: "daypart", localDate: "2026-07-27", daypart: "morning" }));
+    expect(store.reminderJobs).toHaveLength(0);
+  });
+});
+
 describe("TaskService conflict semantics", () => {
   it("allows touching boundaries and atomically accepts every current overlap", async () => {
     const store = new MemoryTaskStore();

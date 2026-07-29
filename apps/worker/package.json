@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "scripts": { "check": "tsc --noEmit", "build": "tsc --outDir dist", "start": "node dist/worker.js" },
+  "scripts": { "check": "tsc --noEmit", "build": "tsc --outDir dist", "start": "node dist/worker.js", "test": "vitest run" },
   "dependencies": { "@personal-ai/db": "workspace:*", "drizzle-orm": "^0.38.4" },
-  "devDependencies": { "tsx": "^4.19.2", "typescript": "^5.7.3" }
+  "devDependencies": { "tsx": "^4.19.2", "typescript": "^5.7.3", "vitest": "^3.0.7" }
 }

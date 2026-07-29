@@ -8,6 +8,7 @@ import {
 } from "@personal-ai/db/schema";
 import type { TaskEventSource, TaskLifecycle, TaskOutcome, TaskScheduleKind } from "@personal-ai/domain/task";
 import { and, asc, desc, eq, gt, inArray, isNull, lt, ne } from "drizzle-orm";
+import { syncTaskStartReminder } from "./reminder-scheduler.js";
 
 export type StoredTask = typeof tasks.$inferSelect;
 export type StoredInboxEntry = typeof inboxEntries.$inferSelect;
@@ -77,6 +78,7 @@ export interface TaskStoreTransaction {
   insertConflictAcceptances(records: ConflictAcceptanceRecord[]): Promise<void>;
   insertLifecycleEvent(record: LifecycleEventRecord): Promise<void>;
   insertOutcome(record: TaskOutcomeRecord): Promise<StoredTaskOutcome>;
+  syncReminderForTask(task: StoredTask): Promise<void>;
 }
 
 export interface TaskStore {
@@ -178,6 +180,10 @@ class PostgresTaskTransaction implements TaskStoreTransaction {
     const [created] = await this.db.insert(taskOutcomes).values(record).returning();
     if (!created) throw new Error("PostgreSQL did not return the created task outcome.");
     return created;
+  }
+
+  async syncReminderForTask(task: StoredTask): Promise<void> {
+    await syncTaskStartReminder(this.db, task);
   }
 }
 

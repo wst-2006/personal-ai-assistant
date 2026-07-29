@@ -267,6 +267,7 @@ export const reminderJobs = pgTable("reminder_jobs", {
   taskId: uuid("task_id").references(() => tasks.id),
   channel: varchar("channel", { length: 32 }).notNull(),
   kind: varchar("kind", { length: 32 }).notNull(),
+  scheduleRevision: integer("schedule_revision").notNull(),
   status: varchar("status", { length: 20 }).notNull().default("pending"),
   scheduledAt: timestamp("scheduled_at", { withTimezone: true }).notNull(),
   availableAt: timestamp("available_at", { withTimezone: true }).notNull(),
@@ -278,8 +279,10 @@ export const reminderJobs = pgTable("reminder_jobs", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
 }, (table) => [
   index("reminder_jobs_due_idx").on(table.status, table.availableAt),
+  uniqueIndex("reminder_jobs_task_channel_kind_unique").on(table.taskId, table.channel, table.kind),
   check("reminder_jobs_channel_check", sql`${table.channel} in ('feishu')`),
   check("reminder_jobs_kind_check", sql`${table.kind} in ('task_start', 'task_follow_up')`),
   check("reminder_jobs_status_check", sql`${table.status} in ('pending', 'processing', 'sent', 'failed', 'cancelled')`),
-  check("reminder_jobs_attempts_check", sql`${table.attempts} >= 0`)
+  check("reminder_jobs_attempts_check", sql`${table.attempts} >= 0`),
+  check("reminder_jobs_schedule_revision_check", sql`${table.scheduleRevision} > 0`)
 ]);

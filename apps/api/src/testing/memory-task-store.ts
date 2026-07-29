@@ -12,12 +12,23 @@ import type {
   TaskUpdateRecord
 } from "../task-repository.js";
 
+type MemoryReminderJob = {
+  id: string;
+  taskId: string;
+  scheduleRevision: number;
+  status: "pending" | "sent" | "cancelled";
+  scheduledAt: Date;
+  availableAt: Date;
+  payload: Record<string, unknown>;
+};
+
 export class MemoryTaskStore implements TaskStore, TaskStoreTransaction {
   tasks: StoredTask[] = [];
   outcomes: StoredTaskOutcome[] = [];
   lifecycleEvents: LifecycleEventRecord[] = [];
   acceptances: ConflictAcceptanceRecord[] = [];
   inboxEntries: StoredInboxEntry[] = [];
+  reminderJobs: MemoryReminderJob[] = [];
   transactionAttempts = 0;
   serializationFailuresRemaining = 0;
 
@@ -30,7 +41,8 @@ export class MemoryTaskStore implements TaskStore, TaskStoreTransaction {
         outcomes: this.outcomes,
         lifecycleEvents: this.lifecycleEvents,
         acceptances: this.acceptances,
-        inboxEntries: this.inboxEntries
+        inboxEntries: this.inboxEntries,
+        reminderJobs: this.reminderJobs
       });
       try {
         const result = await operation(this);
@@ -47,6 +59,7 @@ export class MemoryTaskStore implements TaskStore, TaskStoreTransaction {
         this.lifecycleEvents = snapshot.lifecycleEvents;
         this.acceptances = snapshot.acceptances;
         this.inboxEntries = snapshot.inboxEntries;
+        this.reminderJobs = snapshot.reminderJobs;
         if (!isSerializationFailure(error) || attempt === maxAttempts) throw error;
       }
     }
@@ -147,6 +160,39 @@ export class MemoryTaskStore implements TaskStore, TaskStoreTransaction {
     };
     this.outcomes.push(outcome);
     return outcome;
+  }
+
+  async syncReminderForTask(task: StoredTask): Promise<void> {
+    const index = this.reminderJobs.findIndex((job) => job.taskId === task.id);
+    const shouldSchedule = !task.deletedAt
+      && task.lifecycleStatus === "open"
+      && task.scheduleKind === "exact"
+      && Boolean(task.startAt && task.endAt);
+    if (!shouldSchedule) {
+      if (index >= 0 && this.reminderJobs[index]!.status !== "sent") {
+        this.reminderJobs[index] = { ...this.reminderJobs[index]!, status: "cancelled" };
+      }
+      return;
+    }
+    const scheduledAt = task.startAt!;
+    const next: MemoryReminderJob = {
+      id: index >= 0 ? this.reminderJobs[index]!.id : `reminder-${task.id}`,
+      taskId: task.id,
+      scheduleRevision: task.scheduleRevision,
+      status: "pending",
+      scheduledAt,
+      availableAt: new Date(scheduledAt.getTime() - 15 * 60 * 1000),
+      payload: {
+        taskId: task.id,
+        title: task.title,
+        startAt: scheduledAt.toISOString(),
+        endAt: task.endAt!.toISOString(),
+        timeZone: task.timeZone,
+        scheduleRevision: task.scheduleRevision
+      }
+    };
+    if (index >= 0) this.reminderJobs[index] = next;
+    else this.reminderJobs.push(next);
   }
 }
 
