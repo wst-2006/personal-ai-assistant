@@ -17,9 +17,11 @@
     "vite": "^6.0.7"
   },
   "devDependencies": {
+    "@personal-ai/db": "workspace:*",
     "@playwright/test": "^1.62.0",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
+    "drizzle-orm": "^0.38.4",
     "typescript": "^5.7.3"
   }
 }
