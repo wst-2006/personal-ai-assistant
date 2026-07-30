@@ -8,6 +8,9 @@ import { eq } from "drizzle-orm";
 test("赛博日记读取真实日数据、持久保存、刷新恢复并导出", async ({ page }) => {
   const suffix = Date.now().toString(36);
   const localDate = `2098-07-${String(10 + Number(BigInt(Date.now()) % 10n)).padStart(2, "0")}`;
+  const previousMonthDate = new Date(`${localDate}T12:00:00Z`);
+  previousMonthDate.setUTCMonth(previousMonthDate.getUTCMonth() - 1);
+  const previousMonth = previousMonthDate.toISOString().slice(0, 7);
   const ids = { review: randomUUID(), message: randomUUID(), brief: randomUUID(), task: randomUUID(), focus: randomUUID(), outcome: randomUUID(), feedback: randomUUID() };
   let diaryId: string | null = null;
   const { client, db } = await connectVerifiedDatabase(loadDatabaseConfig());
@@ -29,6 +32,8 @@ test("赛博日记读取真实日数据、持久保存、刷新恢复并导出",
     await page.clock.setFixedTime(new Date(`${localDate}T10:00:00+08:00`));
     await page.goto("/");
     await page.locator(".app-rail").getByRole("button", { name: "日记", exact: true }).click();
+    await expect(page.getByRole("region", { name: `${localDate.slice(0, 7)} 日记月视图` })).toBeVisible();
+    await expect(page.getByRole("button", { name: `查看 ${localDate} 日记`, exact: true })).toHaveAttribute("aria-pressed", "true");
     await expect(page.getByRole("region", { name: "今日真实数据" })).toContainText("60m");
     await expect(page.getByText(`E2E 日记任务 ${suffix}`, { exact: true })).toBeVisible();
     await expect(page.getByText("上海", { exact: true })).toBeVisible();
@@ -41,6 +46,7 @@ test("赛博日记读取真实日数据、持久保存、刷新恢复并导出",
     await page.reload();
     await page.locator(".app-rail").getByRole("button", { name: "日记", exact: true }).click();
     await expect(page.getByLabel("日记正文", { exact: true })).toHaveValue(`E2E 持久正文 ${suffix}`);
+    await expect(page.getByRole("button", { name: `查看 ${localDate} 日记`, exact: true })).toHaveClass(/has-diary/);
     const download = page.waitForEvent("download");
     await page.getByRole("button", { name: "导出日记", exact: true }).click();
     expect((await download).suggestedFilename()).toBe(`${localDate}-cyber-diary.txt`);
@@ -49,6 +55,10 @@ test("赛博日记读取真实日数据、持久保存、刷新恢复并导出",
     await page.locator(".mobile-nav").getByRole("button", { name: "日记", exact: true }).click();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
     await expect(page.getByRole("region", { name: "今日真实数据" })).toBeVisible();
+    await page.getByRole("button", { name: "上个月", exact: true }).click();
+    await expect(page.getByRole("region", { name: `${previousMonth} 日记月视图` })).toBeVisible();
+    await page.getByRole("button", { name: "下个月", exact: true }).click();
+    await expect(page.getByRole("button", { name: `查看 ${localDate} 日记`, exact: true })).toHaveAttribute("aria-pressed", "true");
   } finally {
     if (diaryId) await db.delete(cyberDiaries).where(eq(cyberDiaries.id, diaryId));
     await db.delete(taskFeedback).where(eq(taskFeedback.id, ids.feedback));

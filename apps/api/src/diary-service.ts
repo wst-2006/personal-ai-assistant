@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte } from "drizzle-orm";
 import type { AppDatabase } from "@personal-ai/db/client";
 import { cyberDiaries, dailyBriefs, focusSessions, reviewMessages, reviewSessions, taskFeedback, taskOutcomes, tasks } from "@personal-ai/db/schema";
 import type { z } from "zod";
@@ -74,6 +74,41 @@ export class DiaryNotFoundError extends Error {}
 
 export class DiaryService {
   constructor(private readonly db: AppDatabase) {}
+
+  async listMonth(month: string) {
+    const [year, monthNumber] = month.split("-").map(Number);
+    const start = `${month}-01`;
+    const end = new Date(Date.UTC(year!, monthNumber!, 0)).toISOString().slice(0, 10);
+    return this.db.transaction(async (transaction) => {
+      const reviewRows = await transaction.select().from(reviewSessions).where(and(gte(reviewSessions.localDate, start), lte(reviewSessions.localDate, end)));
+      const reviewIds = reviewRows.map((review) => review.id);
+      const messageRows = reviewIds.length ? await transaction.select({ reviewSessionId: reviewMessages.reviewSessionId }).from(reviewMessages).where(inArray(reviewMessages.reviewSessionId, reviewIds)) : [];
+      const briefRows = reviewIds.length ? await transaction.select({ reviewSessionId: dailyBriefs.reviewSessionId }).from(dailyBriefs).where(and(inArray(dailyBriefs.reviewSessionId, reviewIds), eq(dailyBriefs.state, "confirmed"))) : [];
+      const diaryRows = await transaction.select({ localDate: cyberDiaries.localDate }).from(cyberDiaries).where(and(gte(cyberDiaries.localDate, start), lte(cyberDiaries.localDate, end)));
+      const taskRows = await transaction.select().from(tasks).where(and(isNull(tasks.deletedAt), gte(tasks.localDate, start), lte(tasks.localDate, end)));
+      const taskIds = taskRows.map((task) => task.id);
+      const sessions = taskIds.length ? await transaction.select().from(focusSessions).where(inArray(focusSessions.taskId, taskIds)) : [];
+      const focusByTask = new Map<string, number>();
+      for (const session of sessions) focusByTask.set(session.taskId, (focusByTask.get(session.taskId) ?? 0) + session.effectiveFocusSeconds);
+      const messagesByReview = new Set(messageRows.map((message) => message.reviewSessionId));
+      const briefsByReview = new Set(briefRows.map((brief) => brief.reviewSessionId).filter((id): id is string => Boolean(id)));
+      const diariesByDate = new Set(diaryRows.map((diary) => diary.localDate));
+      const reviewByDate = new Map(reviewRows.map((review) => [review.localDate, review]));
+      const days = Array.from({ length: Number(end.slice(8, 10)) }, (_, index) => {
+        const localDate = `${month}-${String(index + 1).padStart(2, "0")}`;
+        const dayTasks = taskRows.filter((task) => task.localDate === localDate);
+        const focusMinutes = Math.round(dayTasks.reduce((sum, task) => sum + (focusByTask.get(task.id) ?? 0), 0) / 60);
+        const closedTasks = dayTasks.filter((task) => task.lifecycleStatus === "closed").length;
+        const review = reviewByDate.get(localDate);
+        return {
+          localDate, hasDiary: diariesByDate.has(localDate), hasReview: Boolean(review && messagesByReview.has(review.id)),
+          hasConfirmedBrief: Boolean(review && briefsByReview.has(review.id)), taskCount: dayTasks.length, closedTasks, focusMinutes,
+          tone: focusMinutes >= 60 && closedTasks > 0 ? "bright" as const : focusMinutes > 0 || closedTasks > 0 ? "steady" as const : "quiet" as const
+        };
+      });
+      return { month, days };
+    });
+  }
 
   async getByLocalDate(localDate: string) {
     return this.db.transaction(async (transaction) => {

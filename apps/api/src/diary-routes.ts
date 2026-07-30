@@ -5,8 +5,15 @@ import { z } from "zod";
 import { DiaryPrerequisiteError, DiaryService } from "./diary-service.js";
 
 const params = z.object({ localDate: reviewDateSchema });
+const monthQuery = z.object({ month: z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/) });
 
 export async function diaryRoutes(app: FastifyInstance, options: { diaryService: DiaryService }) {
+  app.get("/diaries", async (request, reply) => {
+    const value = monthQuery.safeParse(request.query);
+    if (!value.success) return reply.status(400).send({ error: "invalid_diary_month" });
+    return options.diaryService.listMonth(value.data.month);
+  });
+
   app.get("/diaries/:localDate", async (request, reply) => {
     const value = params.safeParse(request.params);
     if (!value.success) return reply.status(400).send({ error: "invalid_diary_date" });
