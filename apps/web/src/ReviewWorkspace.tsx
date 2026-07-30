@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, CheckCircle2, Clock3, Flame, MapPin, MessageCircle, Send, Sparkles } from "lucide-react";
+import { Check, CheckCircle2, Clock3, Download, Flame, MapPin, MessageCircle, RefreshCw, Send, Sparkles } from "lucide-react";
 
 type Review = { id: string; localDate: string; state: string };
 type Message = {
@@ -54,11 +54,26 @@ async function request<T>(
   return (await response.json()) as T;
 }
 
+function briefText(brief: Brief) {
+  const sections = brief.content.sections
+    .map((section) => `## ${section.title}\n${section.body}`)
+    .join("\n\n");
+  const location = brief.content.location ? `地点：${brief.content.location.name}\n` : "";
+  const weather = brief.content.weather
+    ? `天气：${brief.content.weather.temperatureCelsius}°C，体感 ${brief.content.weather.apparentTemperatureCelsius}°C，代码 ${brief.content.weather.weatherCode}\n`
+    : "";
+  const sources = brief.sources.length
+    ? `\n来源：\n${brief.sources.map((source) => `- ${source.label}${source.url ? `：${source.url}` : ""}`).join("\n")}`
+    : "";
+  return `${brief.content.title}\n\n${location}${weather}\n## 复盘摘要\n${brief.content.reflection}\n\n## 任务摘要\n${brief.content.taskSummary}\n\n${sections}${sources}\n`;
+}
+
 export function ReviewWorkspace() {
   const [review, setReview] = useState<Review | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [context, setContext] = useState<Context | null>(null);
   const [brief, setBrief] = useState<Brief | null>(null);
+  const [briefEditing, setBriefEditing] = useState(false);
   const [locationName, setLocationName] = useState("");
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
@@ -75,6 +90,7 @@ export function ReviewWorkspace() {
     setContext(data.context);
     const latestBrief = data.briefs.at(-1) ?? null;
     setBrief(latestBrief);
+    setBriefEditing(false);
     if (latestBrief?.content.location?.name) setLocationName((current) => current || latestBrief.content.location!.name);
   }, []);
   useEffect(() => {
@@ -127,6 +143,7 @@ export function ReviewWorkspace() {
         ...(locationName.trim() ? { locationName: locationName.trim() } : {})
       });
       setBrief(result.brief);
+      setBriefEditing(false);
       if (result.brief.content.location?.name) setLocationName(result.brief.content.location.name);
     }
     catch { setError("至少保存一条复盘后，才能生成今日简报。"); }
@@ -138,6 +155,27 @@ export function ReviewWorkspace() {
     try { const result=await request<{brief:Brief}>(`/api/v1/briefs/${brief.id}`,"PATCH",{content:brief.content,state:"confirmed"}); setBrief(result.brief); }
     catch { setError("简报没有确认保存，请重试。"); }
     finally { setSaving(false); }
+  }
+  function exportBrief() {
+    if (!brief) return;
+    const file = new Blob([briefText(brief)], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(file);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${review?.localDate ?? localDate()}-daily-brief.txt`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+  async function saveBriefEdits() {
+    if (!brief) return;
+    setSaving(true); setError(null);
+    try {
+      const result = await request<{brief: Brief}>(`/api/v1/briefs/${brief.id}`, "PATCH", { content: brief.content, state: brief.state });
+      setBrief(result.brief);
+      setBriefEditing(false);
+    } catch {
+      setError("简报修改没有保存，请重试。");
+    } finally { setSaving(false); }
   }
   return (
     <section className="page review-page" aria-labelledby="review-title">
@@ -230,7 +268,7 @@ export function ReviewWorkspace() {
           </div>
         </section>
       </div>
-      {brief && <section className="review-brief-editor"><div><p className="section-kicker">每日简报草稿</p><h2>{brief.content.title}</h2></div><label>复盘摘要<textarea aria-label="简报复盘摘要" value={brief.content.reflection} onChange={event=>setBrief({...brief,content:{...brief.content,reflection:event.target.value}})} rows={5}/></label><label>任务摘要<textarea aria-label="简报任务摘要" value={brief.content.taskSummary} onChange={event=>setBrief({...brief,content:{...brief.content,taskSummary:event.target.value}})} rows={3}/></label><div className="brief-sections">{brief.content.sections.map((section,index)=><label key={`${section.title}-${index}`}>{section.title}<textarea aria-label={`${section.title}简报内容`} value={section.body} onChange={event=>setBrief({...brief,content:{...brief.content,sections:brief.content.sections.map((item,itemIndex)=>itemIndex===index?{...item,body:event.target.value}:item)}})} rows={3}/></label>)}</div><p className="brief-source-note">来源：{brief.sources.map(source=>source.label).join("；")}</p><button className="primary-button" disabled={saving||brief.state==="confirmed"} onClick={()=>void confirmBrief()}><Check />{brief.state==="confirmed"?"简报已确认":"确认简报"}</button></section>}
+      {brief && <section className="review-brief-editor"><div><p className="section-kicker">每日简报{brief.state === "confirmed" ? " · 已确认" : "草稿"}</p><h2>{brief.content.title}</h2><div className="brief-toolbar"><button className="quiet-button" type="button" disabled={saving} onClick={()=>void generateBrief()}><RefreshCw />重新生成</button><button className="quiet-icon" type="button" aria-label="导出简报" onClick={exportBrief}><Download /></button></div></div><label>复盘摘要<textarea aria-label="简报复盘摘要" disabled={brief.state==="confirmed"&&!briefEditing} value={brief.content.reflection} onChange={event=>setBrief({...brief,content:{...brief.content,reflection:event.target.value}})} rows={5}/></label><label>任务摘要<textarea aria-label="简报任务摘要" disabled={brief.state==="confirmed"&&!briefEditing} value={brief.content.taskSummary} onChange={event=>setBrief({...brief,content:{...brief.content,taskSummary:event.target.value}})} rows={3}/></label><div className="brief-sections">{brief.content.sections.map((section,index)=><label key={`${section.title}-${index}`}>{section.title}<textarea aria-label={`${section.title}简报内容`} disabled={brief.state==="confirmed"&&!briefEditing} value={section.body} onChange={event=>setBrief({...brief,content:{...brief.content,sections:brief.content.sections.map((item,itemIndex)=>itemIndex===index?{...item,body:event.target.value}:item)}})} rows={3}/></label>)}</div><p className="brief-source-note">来源：{brief.sources.map(source=>source.label).join("；")}</p>{brief.state==="confirmed"&&!briefEditing?<button className="quiet-button" type="button" onClick={()=>setBriefEditing(true)}>编辑简报</button>:<button className="primary-button" disabled={saving} onClick={()=>void (brief.state==="draft"?confirmBrief():saveBriefEdits())}><Check />{brief.state==="draft"?"确认简报":"保存修改"}</button>}</section>}
       {error && (
         <div className="focus-error" role="alert">
           {error}
