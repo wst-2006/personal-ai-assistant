@@ -35,9 +35,10 @@ creates search-backed daily briefs when explicitly requested.
 
 First release: task creation, daily timeline and conflict warnings, focus
 sessions, review mode, brief and diary workflow, search/weather adapters,
-export, basic trends, and cloud-backed Feishu reminders. File parsing, Huawei
-Calendar integration, native Android work, and advanced game visuals remain
-future work.
+export, basic trends, and an optional local Feishu reminder worker while the
+computer is running. Cloud deployment, remote access, and cloud-backed
+reminders are explicitly deferred. File parsing, Huawei Calendar integration,
+native Android work, and advanced game visuals remain future work.
 
 Initial Feishu controls are reminder delivery, start, other arrangement, and
 opening the corresponding task. Complex editing and full review remain in the

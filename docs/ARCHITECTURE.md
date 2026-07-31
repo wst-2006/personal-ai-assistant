@@ -23,9 +23,10 @@ application state and the future job queue.
 Development uses the local PostgreSQL service but only the
 `personal_ai_assistant` database and `personal_ai_app` role. A migration guard
 queries the connected server before every migration and rejects a mismatch in
-database name, role, address, port, or PostgreSQL major version. Production
-uses the same migrations against a separate cloud database; data directories
-are never copied between environments.
+database name, role, address, port, or PostgreSQL major version. The current
+release is local-first: API, web, worker, and PostgreSQL run on the user's
+Windows computer. Cloud databases, server purchases, and data-directory
+copies are out of the current implementation scope.
 
 ## External Integrations
 

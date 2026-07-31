@@ -7,7 +7,8 @@
 - Task, idea, and question intake; daily timeline; explicit conflict warnings
 - Focus timer states, outcome/satisfaction capture, and basic statistics
 - Review-page mode, brief generation flow, editable cyber diary, and export
-- One search adapter, one weather adapter, and outbound Feishu reminder queue
+- One search adapter, one weather adapter, and an optional local Feishu
+  reminder queue
 
 ## Phase 2: Connected Workflow
 
@@ -15,6 +16,9 @@
 - Feishu Calendar adapter and verified calendar synchronization
 - Framework-level goal decomposition and plan-change negotiation
 - PWA installation, richer long-range views, and basic points/tree feedback
+
+Remote deployment, cloud PostgreSQL, and reminders while the computer is off
+are deferred and are not part of the current execution plan.
 
 ## Future
 

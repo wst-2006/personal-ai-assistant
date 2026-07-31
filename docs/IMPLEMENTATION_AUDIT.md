@@ -43,7 +43,8 @@ deletion, outcome closing, conflict reporting, and explicit conflict retention
 use the Fastify API and PostgreSQL repository. The Today page now includes the
 core manual form and a time-coordinate editor. These facts still do **not**
 mean the usable core product is complete: persistent review/brief/diary flows
-need broader browser acceptance, and growth and cloud capabilities remain.
+need broader browser acceptance, and growth capabilities remain. Cloud
+deployment is explicitly deferred by the local-first execution decision.
 
 The former `tasks.entry_type` conflict is resolved: formal tasks own lifecycle
 and scheduling, while ideas/questions reside in `inbox_entries` until the user
@@ -53,7 +54,7 @@ database and must be preserved in future schema work.
 Focus, review, brief, diary and the basic growth path now use real API-backed
 persistence. Review persistence and brief confirmation/edit/export now also
 have a real PostgreSQL-backed browser acceptance path. The richer diary and
-cloud-reminder requirements remain outstanding.
+local reminder recovery requirements remain outstanding.
 
 ## 3. Functional Audit Matrix
 
@@ -69,15 +70,15 @@ cloud-reminder requirements remain outstanding.
 | AI candidate confirmation | Product Spec, Design Review | Partially implemented | Medium | AI drawer parses then asks for confirmation; formal tasks use the current task contract while ideas/questions use the independent inbox API | parse, task and inbox routes; `tasks`, `inbox_entries` | parser route and shared contract tests | Add browser confirmation/error coverage and an editable correction flow. |
 | Real Today timeline | Product Spec, Design Review | Partially implemented | High for core schedule editing; medium for full interaction | 24-hour coordinate axis, current-time marker, daypart/unscheduled areas, creation, drag/resize and spatial overlaps | task APIs; `tasks`, conflict acceptances | desktop and 390px browser E2E | Add keyboard-accessible movement and richer conflict explanations. |
 | Timeline persistence and cross-client reading | Product Spec, Architecture | Partially implemented | High for refresh and local database read | Timeline reads the database-backed task list | task list API; `tasks` | DB persistence and browser refresh tests | Cross-device/cloud synchronization remains unimplemented. |
-| Focus session workflow | Product Spec, State Machines, Roadmap | Partially implemented | High for core persistence and desktop/390px browser paths; medium for external interaction | API-backed preparation, reminder response, auto-start, pause/resume, end, objective outcome and subjective feedback; exact tasks transactionally schedule a 15-minute reminder | focus-session routes; `focus_sessions`, `task_feedback`, `task_outcomes`, `reminder_jobs` | domain validation, database reminder verification, desktop browser E2E and 390px mobile focus E2E | Real-account Feishu acceptance, durable cloud runtime, and explicit plan-change conversation remain. |
+| Focus session workflow | Product Spec, State Machines, Roadmap | Partially implemented | High for core persistence and desktop/390px browser paths; medium for external interaction | API-backed preparation, reminder response, auto-start, pause/resume, end, objective outcome and subjective feedback; exact tasks transactionally schedule a 15-minute reminder | focus-session routes; `focus_sessions`, `task_feedback`, `task_outcomes`, `reminder_jobs` | domain validation, database reminder verification, desktop browser E2E and 390px mobile focus E2E | Local five-minute recovery and explicit plan-change conversation remain. Remote delivery is deferred. |
 | Review session workflow | Product Spec, State Machines | Partially implemented | High for local PostgreSQL/browser persistence; medium for full workflow | Durable daily review session, message restore, real task/outcome/focus/feedback context and brief handoff | review routes; `review_sessions`, `review_messages` | domain validation, guarded integration verification, review PostgreSQL/browser E2E and build checks | Software conversation context and richer review prompts remain. |
 | Daily brief | Product Spec, Roadmap | Partially implemented | High for local review/standalone persistence and browser edit/confirm/export; medium for complete provider/location coverage | Review generates, edits, regenerates, confirms, exports and reloads a persisted brief with finance, AI, technology, task-expansion, humanities, weather and location sections. A normal conversation can now use a separate explicit AI-drawer action to create a confirmed standalone brief with `reviewSessionId = null`; it is listed, restored after refresh and exportable, and never qualifies for a cyber diary. Confirmed review content remains read-only until the user explicitly enters edit mode; edits persist through the brief API. | `brief-service.ts`, `brief-routes.ts`, `App.tsx`, `ReviewWorkspace.tsx`; `daily_briefs.content`, `daily_briefs.sources`, nullable `daily_briefs.review_session_id` | domain contract tests, API route tests, review and standalone PostgreSQL/browser E2E (including 390px), provider tests and build checks | Add opted-in device location and keep standalone briefs excluded from diary prerequisites. |
 | Cyber diary | Product Spec, State Machines | Partially implemented | High for the local persistence, month-history and derived-data browser paths; medium for the complete diary experience | API-backed month navigation, historical date selection, draft, save, reload, edit and text export. Saving requires a same-day review session with at least one message and a confirmed brief linked to that review. The page derives task/focus cards, raw and effective focus, location/weather, six daily metrics, state color and the day's tree from PostgreSQL records and the linked confirmed brief. | diary month/day routes, `diary-service.ts`, `DiaryWorkspace.tsx`; `cyber_diaries`, `review_sessions`, `review_messages`, `daily_briefs`, task/focus/outcome/feedback tables | diary domain and day-data calculation tests; guarded browser E2E for month switching, save/reload/export/390px with UUID-only cleanup | Decide whether final diary exports need an immutable derived-data snapshot rather than authoritative live derivation. |
 | Growth and statistics | Product Spec, Roadmap, Design Review | Partially implemented | Medium for the seven-day data path; low for long-term trends | Real seven-day focus trend, subjective feedback counts, daily state grid, six metrics, points and tree feedback | `growth-routes.ts`, `growth-service.ts`, `GrowthWorkspace.tsx`; task/focus/outcome/feedback/review tables | guarded API contract verification; desktop browser visual verification | Add month views, persistent derived snapshots only if justified, and dedicated browser/API automated tests. |
 | Search, weather, location, export | Product Spec, Roadmap | Partially implemented | High for Tavily-backed local brief generation and export; medium for user-entered location | Tavily is the preferred optional LLM-oriented provider, Brave is the secondary optional provider, and free GDELT remains the no-key fallback. Open-Meteo geocoding/weather is server-only; location is entered per day, and source/snapshot metadata is retained. Generated search sections are bounded by the brief contract before persistence. | `brief-providers.ts`, `ReviewWorkspace.tsx`; `daily_briefs.content`, `daily_briefs.sources` | provider tests, live Tavily standalone PostgreSQL/browser E2E, review browser E2E and type checks | Add opted-in device location and broader provider-failure acceptance. |
-| Worker, Feishu, cloud runtime | Architecture, Roadmap | Partially implemented | High for guarded local queue contract; medium for adapter/webhook tests; low for live delivery | Exact-task writes transactionally create/update/cancel revision-bound reminder jobs. Worker claims atomically, rejects stale tasks, retries failures, obtains Feishu tenant tokens and sends interactive cards. Signed/encrypted single-user callbacks support start and other-arrangement actions. | `reminder_jobs`; `reminder-scheduler.ts`, `apps/worker`, `feishu-webhook.ts` | migration guard/schema and database persistence verification; Worker/provider/webhook tests and builds | Configure a real Feishu app for acceptance, deploy API/Worker with cloud PostgreSQL, and verify five-minute no-response behavior through the external channel. |
+| Local Worker and optional Feishu | Architecture, Roadmap | Partially implemented | High for guarded local queue contract; medium for adapter/webhook tests; low for live delivery | Exact-task writes transactionally create/update/cancel revision-bound reminder jobs. The local worker claims atomically, rejects stale tasks, retries failures, obtains Feishu tenant tokens and sends interactive cards when configured. | `reminder_jobs`; `reminder-scheduler.ts`, `apps/worker`, `feishu-webhook.ts` | migration guard/schema and database persistence verification; Worker/provider/webhook tests and builds | Complete local five-minute no-response recovery and local end-to-end delivery if enabled. Cloud deployment is out of scope. |
 | Long-range planning and AI task trees | Roadmap, Product Spec | Not implemented | High | no month/term/year views | no plan/tree API or tables | none | Add only after usable daily core; AI-created trees require explicit confirmation before writes. |
-| PWA, cross-device sync, backup | Architecture, Roadmap | Not implemented | High | React web exists but has no PWA manifest/service worker | database API provides a future base only | none | Add installability, online synchronization policy, backup/export and recovery verification. |
+| PWA, cross-device sync, backup | Architecture, Roadmap | Not implemented | High | React web exists but has no PWA manifest/service worker | database API provides a future base only | none | Keep remote sync and cloud deployment deferred; add local backup/export and recovery only when the local core is stable. |
 | User profile and AI preferences | Product Spec privacy rules | Not implemented | High | no settings model | no API/tables | none | Add explicit user-controlled preferences only; no surveillance or inferred personality profile. |
 
 ## 4. Current Page to Real Function Mapping
@@ -380,7 +381,8 @@ Remaining gaps:
    `plannedEffortMinutes` is independent from an exact block's calculated
    duration; future focus recommendations must retain that distinction.
 4. **Cross-device confidence is not established.** Local refresh and browser
-   interaction are verified, but cloud synchronization is still absent.
+   interaction are verified; cross-device synchronization is intentionally
+   outside the current local-first scope.
 5. **Browser coverage remains focused.** Playwright now covers Today, Focus,
    Review/Brief persistence and the diary path; ideas/questions conversion,
    guided software context and broader provider failures still need dedicated
@@ -393,9 +395,9 @@ Remaining gaps:
    state color and tree data are verified against the guarded database. The
    current page derives those signals from authoritative records; an immutable
    snapshot for finalized exports has not been specified or implemented.
-8. **Later Phase 1 dependencies remain absent.** Brief export, Feishu controls,
-   cloud runtime, PWA, backups, and cross-device verification still need
-   explicit implementation phases; the durable Worker queue now exists.
+8. **Later dependencies remain absent.** Local Feishu controls, PWA, backups,
+   and cross-device verification still need explicit implementation phases;
+   cloud runtime is deferred and the durable local Worker queue now exists.
 
 This audit is the only deliverable in its commit. Schema, API, and UI work may
 start only after the document and implementation slice are confirmed.

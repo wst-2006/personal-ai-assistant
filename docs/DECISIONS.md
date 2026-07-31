@@ -37,3 +37,11 @@ task pair and both tasks' schedule revisions.
 Every task close operation appends a `task_outcomes` record. Reopening clears
 the current outcome value but preserves prior outcomes. Subjective satisfaction
 remains separate and will be recorded with focus feedback.
+
+## 2026-07-31: Local-first execution
+
+The user's computer is expected to remain on while the application is in use.
+The current implementation therefore runs PostgreSQL, API, web, and the
+optional reminder worker locally. Cloud servers, cloud PostgreSQL, remote
+access, and off-device reminders are not prerequisites and must not be added
+to the active implementation plan without a new explicit decision.
