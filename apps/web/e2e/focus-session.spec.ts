@@ -59,3 +59,35 @@ test("真实专注会话可暂停、恢复、结束、评估并在刷新后保�
     expect((await current.json()).session).toBeNull();
   } finally { if(taskId) await cleanup(request,taskId); }
 });
+
+test("390px 移动端可恢复真实专注会话并操作计时", async ({ page, request }) => {
+  const date = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const title = `E2E 移动专注 ${Date.now().toString(36)}`;
+  let taskId = "";
+  try {
+    const created = await request.post(`${apiBase}/api/v1/tasks`, { data: { title, scheduleKind: "none", localDate: date, timeZone: "Asia/Shanghai", plannedEffortMinutes: 30, difficulty: "medium", requiresContinuousFocus: true } });
+    expect(created.status()).toBe(201);
+    const task = (await created.json()).task as { id: string; version: number };
+    taskId = task.id;
+    const started = await request.post(`${apiBase}/api/v1/focus-sessions`, { data: { taskId, expectedTaskVersion: task.version, mode: "restart" } });
+    expect(started.status()).toBe(201);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/");
+    await page.locator(".mobile-nav").getByRole("button", { name: "专注", exact: true }).click();
+    await expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "暂停专注", exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+
+    const paused = page.waitForResponse((response) => response.url().endsWith("/pause") && response.request().method() === "POST" && response.status() === 200);
+    await page.getByRole("button", { name: "暂停专注", exact: true }).click();
+    await paused;
+    await expect(page.getByRole("button", { name: "继续专注", exact: true })).toBeVisible();
+    await page.reload();
+    await page.locator(".mobile-nav").getByRole("button", { name: "专注", exact: true }).click();
+    await expect(page.getByRole("button", { name: "继续专注", exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  } finally {
+    if (taskId) await cleanup(request, taskId);
+  }
+});
