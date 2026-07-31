@@ -41,3 +41,18 @@ describe("brief weather provider", () => {
     expect(result.section.body).toContain("没有找到");
   });
 });
+
+describe("brief search provider", () => {
+  it("uses Tavily when its server-only key is configured", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
+      results: [{ title: "Tavily result", content: "A concise result", url: "https://example.com/tavily" }]
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    const result = await new BriefProviders({ TAVILY_SEARCH_API_KEY: "test-key" }, fetcher).search("人工智能 今日要闻");
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(String(fetcher.mock.calls[0]?.[0])).toBe("https://api.tavily.com/search");
+    expect(fetcher.mock.calls[0]?.[1]).toMatchObject({ method: "POST" });
+    expect(JSON.parse(String(fetcher.mock.calls[0]?.[1] && (fetcher.mock.calls[0]?.[1] as RequestInit).body))).toMatchObject({ api_key: "test-key", query: "人工智能 今日要闻", max_results: 3 });
+    expect(result.results[0]).toEqual({ title: "Tavily result", description: "A concise result", url: "https://example.com/tavily" });
+    expect(result.source?.provider).toBe("tavily_search");
+  });
+});

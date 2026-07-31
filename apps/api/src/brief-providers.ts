@@ -4,6 +4,7 @@ export type BriefSource = { kind: "personal_record" | "search" | "weather"; labe
 export type BriefSection = { title: string; body: string };
 
 const configSchema = z.object({
+  TAVILY_SEARCH_API_KEY: z.string().trim().optional(),
   BRAVE_SEARCH_API_KEY: z.string().trim().optional()
 });
 type ProviderConfig = z.infer<typeof configSchema>;
@@ -23,17 +24,38 @@ export class BriefProviders {
   async search(query: string): Promise<{ results: SearchResult[]; source: BriefSource | null }> {
     const cached = this.cache.get(query);
     if (cached && cached.expiresAt > Date.now()) return cached.value;
-    const value = this.config.BRAVE_SEARCH_API_KEY ? await this.searchBrave(query, this.config.BRAVE_SEARCH_API_KEY) : await this.searchGdelt(query);
+    const value = this.config.TAVILY_SEARCH_API_KEY
+      ? await this.searchTavily(query, this.config.TAVILY_SEARCH_API_KEY)
+      : this.config.BRAVE_SEARCH_API_KEY
+        ? await this.searchBrave(query, this.config.BRAVE_SEARCH_API_KEY)
+        : await this.searchGdelt(query);
     this.cache.set(query, { expiresAt: Date.now() + 60 * 60 * 1000, value });
     return value;
   }
 
   private async searchBrave(query: string, apiKey: string): Promise<{ results: SearchResult[]; source: BriefSource | null }> {
-    const response = await this.fetcher(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=3`, { headers: { Accept: "application/json", "X-Subscription-Token": apiKey }, signal: AbortSignal.timeout(8_000) });
-    if (!response.ok) return { results: [], source: null };
-    const data = await response.json() as { web?: { results?: SearchResult[] } };
-    const results = (data.web?.results ?? []).map(({ title, description, url }) => ({ title, description, url })).filter((item) => item.title && item.url);
-    return { results, source: { kind: "search", label: `Brave Search：${query}`, provider: "brave_search", retrievedAt: new Date().toISOString() } };
+    try {
+      const response = await this.fetcher(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=3`, { headers: { Accept: "application/json", "X-Subscription-Token": apiKey }, signal: AbortSignal.timeout(8_000) });
+      if (!response.ok) return { results: [], source: null };
+      const data = await response.json() as { web?: { results?: SearchResult[] } };
+      const results = (data.web?.results ?? []).map(({ title, description, url }) => ({ title, description, url })).filter((item) => item.title && item.url);
+      return { results, source: { kind: "search", label: `Brave Search：${query}`, provider: "brave_search", retrievedAt: new Date().toISOString() } };
+    } catch { return { results: [], source: null }; }
+  }
+
+  private async searchTavily(query: string, apiKey: string): Promise<{ results: SearchResult[]; source: BriefSource | null }> {
+    try {
+      const response = await this.fetcher("https://api.tavily.com/search", {
+        method: "POST",
+        headers: { Accept: "application/json", "content-type": "application/json" },
+        body: JSON.stringify({ api_key: apiKey, query, search_depth: "basic", max_results: 3, include_answer: false, include_raw_content: false }),
+        signal: AbortSignal.timeout(10_000)
+      });
+      if (!response.ok) return { results: [], source: null };
+      const data = await response.json() as { results?: Array<{ title?: string; content?: string; url?: string }> };
+      const results = (data.results ?? []).flatMap((item) => item.title && item.url ? [{ title: item.title, description: item.content ?? "", url: item.url }] : []);
+      return { results, source: { kind: "search", label: `Tavily Search：${query}`, provider: "tavily_search", retrievedAt: new Date().toISOString() } };
+    } catch { return { results: [], source: null }; }
   }
 
   private async searchGdelt(query: string): Promise<{ results: SearchResult[]; source: BriefSource | null }> {
