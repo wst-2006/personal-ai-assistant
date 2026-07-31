@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { BarChart3, Bot, BrainCircuit, CalendarDays, Check, CircleHelp, LoaderCircle, NotebookPen, Sparkles, Target, X } from "lucide-react";
+import { BarChart3, Bot, BrainCircuit, CalendarDays, Check, CircleHelp, Download, LoaderCircle, NotebookPen, Sparkles, Target, X } from "lucide-react";
 import { DiaryWorkspace } from "./DiaryWorkspace";
 import { FocusWorkspace } from "./FocusWorkspace";
 import { GrowthWorkspace } from "./GrowthWorkspace";
@@ -23,6 +23,15 @@ type NaturalLanguageTaskCandidate = {
   missingFields: string[];
 };
 type ApiErrorBody = { error?: string; conflictSetFingerprint?: string };
+type StandaloneBrief = {
+  id: string;
+  localDate: string;
+  reviewSessionId: null;
+  state: "confirmed";
+  content: { title: string; reflection: string; taskSummary: string; sections: Array<{ title: string; body: string }> };
+  sources: Array<{ label: string; url?: string }>;
+  createdAt: string;
+};
 
 class ApiError extends Error {
   constructor(readonly status: number, readonly body: ApiErrorBody) {
@@ -52,6 +61,12 @@ function displayDate() {
 function isThirtyMinuteBoundary(value: string) {
   const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Shanghai", minute: "2-digit" }).formatToParts(new Date(value));
   return Number(parts.find((part) => part.type === "minute")?.value ?? -1) % 30 === 0;
+}
+
+function standaloneBriefText(brief: StandaloneBrief) {
+  const sections = brief.content.sections.map((section) => `## ${section.title}\n${section.body}`).join("\n\n");
+  const sources = brief.sources.length ? `\n来源：\n${brief.sources.map((source) => `- ${source.label}${source.url ? `：${source.url}` : ""}`).join("\n")}` : "";
+  return `${brief.content.title}\n\n这是一份独立简报，不关联复盘或赛博日记。\n\n## 对话摘要\n${brief.content.reflection}\n\n## 说明\n${brief.content.taskSummary}\n\n${sections}${sources}\n`;
 }
 
 async function requestJson<T>(path: string, method: string, payload?: Record<string, unknown>): Promise<T> {
@@ -92,7 +107,29 @@ export function App() {
   const [aiLoading, setAiLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [aiCandidate, setAiCandidate] = useState<NaturalLanguageTaskCandidate | null>(null);
+  const [standaloneBriefs, setStandaloneBriefs] = useState<StandaloneBrief[]>([]);
+  const [selectedStandaloneBriefId, setSelectedStandaloneBriefId] = useState<string | null>(null);
+  const [standaloneLoading, setStandaloneLoading] = useState(false);
   const activeNavLabel = navItems.find((item) => item.id === view)?.label ?? "今日";
+  const selectedStandaloneBrief = standaloneBriefs.find((brief) => brief.id === selectedStandaloneBriefId) ?? standaloneBriefs[0] ?? null;
+
+  async function loadStandaloneBriefs() {
+    setStandaloneLoading(true);
+    try {
+      const result = await requestJson<{ briefs: StandaloneBrief[] }>(`/api/v1/briefs/standalone?date=${today}`, "GET");
+      setStandaloneBriefs(result.briefs);
+      setSelectedStandaloneBriefId((current) => result.briefs.some((brief) => brief.id === current) ? current : (result.briefs[0]?.id ?? null));
+    } catch {
+      setError("无法读取今天的独立简报，请确认 API 正在运行。");
+    } finally {
+      setStandaloneLoading(false);
+    }
+  }
+
+  function openAiDrawer() {
+    setAiOpen(true);
+    void loadStandaloneBriefs();
+  }
 
   async function parseWithAi() {
     const text = aiInput.trim();
@@ -148,6 +185,32 @@ export function App() {
     }
   }
 
+  async function generateStandaloneBrief() {
+    const conversation = aiInput.trim();
+    if (!conversation) return;
+    setSaving(true); setError(null);
+    try {
+      const result = await requestJson<{ brief: StandaloneBrief }>("/api/v1/briefs/standalone", "POST", { conversation, localDate: today });
+      setStandaloneBriefs((current) => [result.brief, ...current.filter((brief) => brief.id !== result.brief.id)]);
+      setSelectedStandaloneBriefId(result.brief.id);
+      setAiInput("");
+    } catch {
+      setError("独立简报没有生成，请检查网络后重试。原始内容仍保留在侧边层。");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function exportStandaloneBrief(brief: StandaloneBrief) {
+    const file = new Blob([standaloneBriefText(brief)], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(file);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${brief.localDate}-standalone-brief.txt`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
   return <main className="app-shell">
     <aside className="app-rail" aria-label="主要导航">
       <button className="brand-mark" type="button" aria-label="回到今日" onClick={() => setView("today")}><BrainCircuit /></button>
@@ -155,7 +218,7 @@ export function App() {
       <div className="rail-footer" title="只记录你主动输入的内容"><CircleHelp /></div>
     </aside>
     <section className="app-canvas">
-      <header className="topbar"><div className="context-line"><span className="live-dot" />{displayDate()}<span>/</span>{activeNavLabel}</div><div className="topbar-actions"><button className="ai-trigger" type="button" onClick={() => setAiOpen(true)}><Bot /> 与 AI 一起整理</button></div></header>
+      <header className="topbar"><div className="context-line"><span className="live-dot" />{displayDate()}<span>/</span>{activeNavLabel}</div><div className="topbar-actions"><button className="ai-trigger" type="button" onClick={openAiDrawer}><Bot /> 与 AI 一起整理</button></div></header>
       {error && <div className="error-banner" role="alert"><X />{error}<button type="button" aria-label="关闭错误提示" onClick={() => setError(null)}><X /></button></div>}
       {view === "today" && <TodayWorkspace refreshToken={todayRefreshToken} onFocus={(id) => { setSelectedTaskId(id); setView("focus"); }} />}
       {view === "focus" && <FocusWorkspace preferredTaskId={selectedTaskId} onBack={() => setView("today")} />}
@@ -165,7 +228,22 @@ export function App() {
     </section>
     <aside className={`ai-drawer ${aiOpen ? "open" : ""}`} aria-label="AI 助手" aria-hidden={!aiOpen}>
       <div className="drawer-header"><div><span className="bot-orb"><Bot /></span><div><p>AI 整理助手</p><strong>把一句话变得清楚</strong></div></div><button className="quiet-icon" type="button" aria-label="关闭 AI 助手" onClick={() => setAiOpen(false)}><X /></button></div>
-      {!aiCandidate ? <div className="drawer-entry"><div className="drawer-prompt"><p>说说你想记下什么。</p><small>我会整理成候选，确认后才会保存。</small></div><textarea value={aiInput} onChange={(event) => setAiInput(event.target.value)} placeholder="例如：明天上午九点用六十分钟学习线性代数" rows={7} maxLength={4000} /><button className="primary-button full-width" type="button" disabled={aiLoading || !aiInput.trim()} onClick={() => void parseWithAi()}>{aiLoading ? <LoaderCircle className="spin" /> : <Sparkles />}{aiLoading ? "正在整理" : "生成候选"}</button></div> : <div className="candidate-view"><p className="section-kicker">待你确认</p><div className="candidate-title"><span>{entryLabels[aiCandidate.entryType]}</span><h2>{aiCandidate.title}</h2></div><dl><div><dt>日期</dt><dd>{aiCandidate.date ?? "尚未确定"}</dd></div><div><dt>时间</dt><dd>{aiCandidate.startAt ? new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(aiCandidate.startAt)) : "尚未确定"}</dd></div><div><dt>预计投入</dt><dd>{aiCandidate.plannedEffortMinutes ? `${aiCandidate.plannedEffortMinutes} 分钟` : "尚未确定"}</dd></div><div><dt>难度</dt><dd>{aiCandidate.difficulty ? `${difficultyLabels[aiCandidate.difficulty]}量` : "尚未确定"}</dd></div></dl>{aiCandidate.missingFields.length > 0 && <p className="candidate-note">仍待确定：{aiCandidate.missingFields.map((field) => ({ taskType: "类型", requiresContinuousFocus: "连续专注", notes: "备注", date: "日期", startAt: "时间", endAt: "结束时间", plannedEffortMinutes: "预计投入", difficulty: "难度" }[field] ?? field)).join("、")}</p>}<button className="primary-button full-width" type="button" disabled={saving} onClick={() => void saveAiCandidate()}><Check />确认并保存</button><button className="text-button centered" type="button" onClick={() => setAiCandidate(null)}>返回修改原句</button></div>}
+      {!aiCandidate ? <div className="drawer-entry">
+        <div className="drawer-prompt"><p>说说你想记下什么。</p><small>可以整理成任务候选；或由你明确决定，用这段话生成独立简报。</small></div>
+        <textarea aria-label="AI 输入内容" value={aiInput} onChange={(event) => setAiInput(event.target.value)} placeholder="例如：明天上午九点用六十分钟学习线性代数" rows={7} maxLength={4000} />
+        <div className="drawer-actions">
+          <button className="primary-button full-width" type="button" disabled={aiLoading || saving || !aiInput.trim()} onClick={() => void parseWithAi()}>{aiLoading ? <LoaderCircle className="spin" /> : <Sparkles />}{aiLoading ? "正在整理" : "生成候选"}</button>
+          <button className="quiet-button full-width" type="button" disabled={aiLoading || saving || !aiInput.trim()} onClick={() => void generateStandaloneBrief()}>{saving ? <LoaderCircle className="spin" /> : <NotebookPen />}{saving ? "正在生成" : "用这段话生成独立简报"}</button>
+        </div>
+        <p className="standalone-note">独立简报不创建复盘，也不会生成赛博日记。</p>
+        <section className="standalone-briefs" aria-labelledby="standalone-briefs-title">
+          <div className="standalone-briefs-heading"><div><p className="section-kicker">已保存</p><h2 id="standalone-briefs-title">今日独立简报</h2></div>{standaloneLoading && <LoaderCircle className="spin" aria-label="正在读取独立简报" />}</div>
+          {standaloneBriefs.length === 0 && !standaloneLoading ? <p className="standalone-empty">还没有独立简报。它们只会在你按下生成按钮后出现。</p> : <>
+            <div className="standalone-brief-list">{standaloneBriefs.map((brief) => <button key={brief.id} className={brief.id === selectedStandaloneBrief?.id ? "active" : ""} type="button" onClick={() => setSelectedStandaloneBriefId(brief.id)}><span>{new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(brief.createdAt))}</span>{brief.content.title}</button>)}</div>
+            {selectedStandaloneBrief && <article className="standalone-brief-preview"><div><p>独立简报 · 已保存</p><button className="quiet-icon" type="button" aria-label="导出独立简报" onClick={() => exportStandaloneBrief(selectedStandaloneBrief)}><Download /></button></div><h3>{selectedStandaloneBrief.content.title}</h3><p>{selectedStandaloneBrief.content.reflection}</p><small>{selectedStandaloneBrief.content.taskSummary}</small></article>}
+          </>}
+        </section>
+      </div> : <div className="candidate-view"><p className="section-kicker">待你确认</p><div className="candidate-title"><span>{entryLabels[aiCandidate.entryType]}</span><h2>{aiCandidate.title}</h2></div><dl><div><dt>日期</dt><dd>{aiCandidate.date ?? "尚未确定"}</dd></div><div><dt>时间</dt><dd>{aiCandidate.startAt ? new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(aiCandidate.startAt)) : "尚未确定"}</dd></div><div><dt>预计投入</dt><dd>{aiCandidate.plannedEffortMinutes ? `${aiCandidate.plannedEffortMinutes} 分钟` : "尚未确定"}</dd></div><div><dt>难度</dt><dd>{aiCandidate.difficulty ? `${difficultyLabels[aiCandidate.difficulty]}量` : "尚未确定"}</dd></div></dl>{aiCandidate.missingFields.length > 0 && <p className="candidate-note">仍待确定：{aiCandidate.missingFields.map((field) => ({ taskType: "类型", requiresContinuousFocus: "连续专注", notes: "备注", date: "日期", startAt: "时间", endAt: "结束时间", plannedEffortMinutes: "预计投入", difficulty: "难度" }[field] ?? field)).join("、")}</p>}<button className="primary-button full-width" type="button" disabled={saving} onClick={() => void saveAiCandidate()}><Check />确认并保存</button><button className="text-button centered" type="button" onClick={() => setAiCandidate(null)}>返回修改原句</button></div>}
     </aside>
     {aiOpen && <button className="drawer-scrim" type="button" aria-label="关闭 AI 助手" onClick={() => setAiOpen(false)} />}
     <nav className="mobile-nav" aria-label="移动端主要导航">{navItems.map(({ id, label, icon: Icon }) => <button className={view === id ? "active" : ""} type="button" key={id} onClick={() => setView(id)}><Icon /><span>{label}</span></button>)}</nav>

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { reviewDateSchema } from "./review.js";
 
 export const dailyBriefContentSchema = z.object({
   title: z.string().trim().min(1).max(200),
@@ -20,6 +21,12 @@ export const dailyBriefContentSchema = z.object({
 }).strict();
 
 export const generateDailyBriefSchema = z.object({
+  locationName: z.string().trim().min(1).max(120).optional()
+}).strict();
+
+export const generateStandaloneBriefSchema = z.object({
+  conversation: z.string().trim().min(1).max(4000),
+  localDate: reviewDateSchema,
   locationName: z.string().trim().min(1).max(120).optional()
 }).strict();
 
