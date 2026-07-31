@@ -65,7 +65,7 @@ cloud-reminder requirements remain outstanding.
 | Exact-time conflict detection and retention | Product Spec, Task Lifecycle | Partially implemented | High for backend and browser core path | Spatial blocks, conflict prompt and explicit retention in Today | task create/update/accept APIs; `task_conflict_acceptances` | overlap, history, stale set, rollback and browser E2E tests | Add visual treatment for complex multi-lane conflict sets. |
 | Full manual task creation | Product Spec, Roadmap | Partially implemented | High for mapped core fields and browser path | Dedicated formal-task dialog with scheduling, effort, difficulty, type, focus and notes | `POST /tasks`; `tasks` | API/domain and browser E2E tests | Add accessibility and error-state coverage for all field combinations. |
 | Quick task capture | Product Spec, Design Review | Partially implemented | High for core path | Quick capture creates an unscheduled task with planned effort and can be completed later | `POST /tasks`; `tasks` | API and browser E2E coverage through Today | Add a distinct completion affordance in the unscheduled region. |
-| Independent ideas/questions | Product Spec | Fully implemented | Medium | Idea/question capture writes separate inbox entries; conversion requires confirmation | inbox routes; `inbox_entries`, `tasks.source_inbox_entry_id` | API/domain tests | Add browser conversion coverage. |
+| Independent ideas/questions | Product Spec | Fully implemented | High for the confirmed conversion path; medium for stale/error UI | Idea/question capture writes separate inbox entries; conversion requires confirmation, creates a formal task only after submit, links `source_inbox_entry_id`, and preserves the source with `converted_at` | inbox routes; `inbox_entries`, `tasks.source_inbox_entry_id` | API/domain tests and isolated PostgreSQL/browser conversion E2E | Add explicit stale-version and conversion-error browser messaging. |
 | AI candidate confirmation | Product Spec, Design Review | Partially implemented | Medium | AI drawer parses then asks for confirmation; formal tasks use the current task contract while ideas/questions use the independent inbox API | parse, task and inbox routes; `tasks`, `inbox_entries` | parser route and shared contract tests | Add browser confirmation/error coverage and an editable correction flow. |
 | Real Today timeline | Product Spec, Design Review | Partially implemented | High for core schedule editing; medium for full interaction | 24-hour coordinate axis, current-time marker, daypart/unscheduled areas, creation, drag/resize and spatial overlaps | task APIs; `tasks`, conflict acceptances | desktop and 390px browser E2E | Add keyboard-accessible movement and richer conflict explanations. |
 | Timeline persistence and cross-client reading | Product Spec, Architecture | Partially implemented | High for refresh and local database read | Timeline reads the database-backed task list | task list API; `tasks` | DB persistence and browser refresh tests | Cross-device/cloud synchronization remains unimplemented. |
@@ -369,9 +369,10 @@ Corrective audit findings fixed on 2026-07-29:
 
 Remaining gaps:
 
-1. **Ideas/questions need browser conversion coverage.** Their data model is
-   independent and conversion preserves the source inbox entry, but the user
-   flow lacks end-to-end automated acceptance.
+1. **Ideas/questions error recovery needs browser coverage.** The confirmed
+   conversion path is now verified end to end, including source retention and
+   task linkage; stale-version and failed-conversion messaging still need a
+   dedicated browser scenario.
 2. **Timeline keyboard accessibility remains incomplete.** Pointer creation,
    drag/resize and explicit conflict retention are verified; keyboard
    manipulation and complete accessible conflict detail are not yet implemented.
