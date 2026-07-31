@@ -123,5 +123,6 @@ function withOffset(localDateTime: string, timeZone: string): string | null {
 
 export function searchSection(title: string, result: { results: SearchResult[]; source: BriefSource | null }): { section: BriefSection; sources: BriefSource[] } {
   if (result.results.length === 0) return { section: { title, body: result.source ? "当前没有可用的可靠搜索结果。" : "未配置搜索服务，因此没有生成外部资讯。" }, sources: [] };
-  return { section: { title, body: result.results.map((item) => `${item.title}：${item.description}`).join("\n\n") }, sources: result.results.map((item) => ({ kind: "search", label: item.title, url: item.url, provider: result.source?.provider, retrievedAt: result.source?.retrievedAt })) };
+  const body = result.results.map((item) => `${item.title}：${item.description}`).join("\n\n").slice(0, 4000).trim();
+  return { section: { title, body }, sources: result.results.map((item) => ({ kind: "search", label: item.title, url: item.url, provider: result.source?.provider, retrievedAt: result.source?.retrievedAt })) };
 }

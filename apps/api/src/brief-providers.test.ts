@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { BriefProviders } from "./brief-providers.js";
+import { BriefProviders, searchSection } from "./brief-providers.js";
 
 describe("brief weather provider", () => {
   it("does not request or guess a location when the user leaves it empty", async () => {
@@ -43,6 +43,14 @@ describe("brief weather provider", () => {
 });
 
 describe("brief search provider", () => {
+  it("keeps generated search sections within the daily brief contract", () => {
+    const result = searchSection("AI", {
+      source: { kind: "search", label: "test", provider: "test" },
+      results: [{ title: "Long result", description: "x".repeat(10_000), url: "https://example.com" }]
+    });
+    expect(result.section.body.length).toBeLessThanOrEqual(4000);
+  });
+
   it("uses Tavily when its server-only key is configured", async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({
       results: [{ title: "Tavily result", content: "A concise result", url: "https://example.com/tavily" }]
