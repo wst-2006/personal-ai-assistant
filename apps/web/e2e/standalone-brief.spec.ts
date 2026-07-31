@@ -21,10 +21,13 @@ test("普通对话显式生成独立简报，刷新后保留且不创建复盘�
     await input.fill(`E2E 独立简报内容 ${suffix}：整理今天读到的研究想法。`);
     const create = page.waitForResponse((response) => response.url().endsWith("/api/v1/briefs/standalone") && response.request().method() === "POST" && response.status() === 201);
     await page.getByRole("button", { name: "用这段话生成独立简报", exact: true }).click();
-    const created = (await (await create).json()) as { brief: { id: string; reviewSessionId: string | null; state: string } };
+    const created = (await (await create).json()) as { brief: { id: string; reviewSessionId: string | null; state: string; sources: Array<{ provider?: string }> } };
     briefId = created.brief.id;
     expect(created.brief.reviewSessionId).toBeNull();
     expect(created.brief.state).toBe("confirmed");
+    if (process.env.TAVILY_SEARCH_API_KEY?.trim()) {
+      expect(created.brief.sources.some((source) => source.provider === "tavily_search")).toBe(true);
+    }
     await expect(page.getByText("独立简报 · 已保存", { exact: true })).toBeVisible();
     await expect(page.getByText(`E2E 独立简报内容 ${suffix}`, { exact: false })).toBeVisible();
 
