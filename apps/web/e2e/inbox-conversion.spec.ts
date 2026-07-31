@@ -83,3 +83,43 @@ test("想法确认转换为正式任务后保留 inbox 源记录并持久恢复"
     await client.end();
   }
 });
+
+test("转换时发现 inbox 版本过期会保留表单并给出明确提示", async ({ page }) => {
+  test.setTimeout(60_000);
+  const suffix = Date.now().toString(36);
+  const localDate = `2099-12-${String(20 + (Date.now() % 8)).padStart(2, "0")}`;
+  const sourceContent = `E2E 过期想法 ${suffix}`;
+  const { client, db } = await connectVerifiedDatabase(loadDatabaseConfig());
+  let entryId: string | null = null;
+
+  try {
+    await page.clock.setFixedTime(new Date(`${localDate}T09:00:00+08:00`));
+    await page.goto("/");
+    await page.getByRole("button", { name: "想法", exact: true }).click();
+    await page.getByLabel("快速记录内容", { exact: true }).fill(sourceContent);
+    const entryCreated = page.waitForResponse((response) => response.url().endsWith("/api/v1/inbox-entries") && response.request().method() === "POST" && response.status() === 201);
+    await page.getByRole("button", { name: "保存", exact: true }).click();
+    entryId = ((await (await entryCreated).json()) as { entry: { id: string } }).entry.id;
+
+    const entry = page.locator(".inbox-list article").filter({ hasText: sourceContent });
+    await entry.getByRole("button", { name: "转为任务", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "让这项安排足够清楚" });
+    await expect(dialog).toBeVisible();
+    await db.update(inboxEntries).set({ version: 2, updatedAt: new Date() }).where(eq(inboxEntries.id, entryId));
+
+    const rejected = page.waitForResponse((response) => response.url().endsWith(`/api/v1/inbox-entries/${entryId}/convert-to-task`) && response.request().method() === "POST" && response.status() === 409);
+    await dialog.getByRole("button", { name: "确认并转为任务", exact: true }).click();
+    await rejected;
+    await expect(page.getByText("这条想法已被其他位置更新或转换，请刷新后重新整理。", { exact: true })).toBeVisible();
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByLabel("任务标题", { exact: true })).toHaveValue(sourceContent);
+
+    const persistedEntry = await db.select().from(inboxEntries).where(eq(inboxEntries.id, entryId));
+    expect(persistedEntry).toHaveLength(1);
+    expect(persistedEntry[0]?.convertedAt).toBeNull();
+    expect(persistedEntry[0]?.version).toBe(2);
+  } finally {
+    if (entryId) await db.delete(inboxEntries).where(eq(inboxEntries.id, entryId));
+    await client.end();
+  }
+});
