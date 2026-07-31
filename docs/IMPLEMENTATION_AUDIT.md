@@ -91,7 +91,7 @@ local reminder recovery requirements remain outstanding.
 | Diary | Reads its review/brief prerequisites, supports database-backed month navigation and historical selection, saves, restores, edits and exports a persisted diary with server-side link validation. Real task/focus cards, weather/location, six metrics, daily state color and tree feedback are API-derived. | Product decision on an immutable final export snapshot remains | Partially implemented |
 | Growth | Reads seven-day database-derived focus, outcomes, feedback and review signals | No month/year exploration or dedicated automated acceptance yet | Partially implemented |
 | AI drawer | Server-side model parsing returns a candidate without an immediate write; user confirms before save. A separate explicit standalone-brief action persists a confirmed brief and restores it on reopen/refresh without creating a review or diary | no durable conversation context or long-range task-tree confirmation flow | Partially implemented |
-| Desktop shell/Tauri | Shared React interface and Tauri wrapper exist | no separately verified desktop-native workflow or background behavior | Partially implemented |
+| Desktop shell/Tauri | Tauri development command now starts the local API, web app, and worker; the native Windows executable builds and launches in a smoke test | The distributable installer still needs a local WiX/NSIS packaging tool, and the Node API/worker runtime is not bundled into the executable yet | Partially implemented |
 | 390px mobile | responsive timeline and formal-task dialog; mobile smoke test passes | cross-device/cloud persistence and focus/review/mobile visual acceptance | Partially implemented |
 
 ## 5. Field-to-Storage Contract

@@ -1,8 +1,8 @@
 # Personal AI Assistant
 
 A single-user, desktop-first task management and learning companion. The first
-release uses a React PWA for the shared interface, a Fastify API, PostgreSQL,
-and a future Tauri Windows shell.
+release uses a React interface inside a Tauri Windows shell, a Fastify API,
+PostgreSQL, and an optional local reminder worker.
 
 ## Prerequisites
 
@@ -27,6 +27,12 @@ review, brief, diary, and growth features do not require a cloud server.
 Open the web app at `http://127.0.0.1:5173` and the API health check at
 `http://127.0.0.1:3000/health`. To run one process separately, use
 `pnpm dev:api`, `pnpm dev:web`, or `pnpm dev:worker`.
+
+For the Windows desktop shell during development, use `pnpm dev:desktop`.
+Tauri starts the same local API, web app, and worker before opening the native
+window. This is the desktop application development path; a distributable
+installer still needs a separate packaging step for the Node API and worker
+runtime.
 
 The current release is intentionally local-first. Do not create a cloud
 database, purchase a server, or copy the local PostgreSQL data directory.

@@ -17,6 +17,16 @@ describe("health endpoint", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json()).toEqual({ status: "ok", service: "personal-ai-api" });
   });
+
+  it("allows the Tauri desktop origin to call the local API", async () => {
+    const response = await app.inject({
+      method: "GET",
+      url: "/health",
+      headers: { origin: "http://tauri.localhost" }
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.headers["access-control-allow-origin"]).toBe("http://tauri.localhost");
+  });
 });
 
 describe("task endpoints", () => {

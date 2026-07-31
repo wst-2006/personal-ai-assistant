@@ -45,7 +45,12 @@ export function buildApp(options: AppOptions = {}) {
   });
 
   app.register(cors, {
-    origin: ["http://localhost:5173", "http://127.0.0.1:5173"]
+    origin: [
+      "http://localhost:5173",
+      "http://127.0.0.1:5173",
+      "http://tauri.localhost",
+      "https://tauri.localhost"
+    ]
   });
 
   app.get("/health", async () => ({

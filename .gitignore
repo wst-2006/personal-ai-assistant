@@ -18,3 +18,4 @@ Thumbs.db
 .idea/
 .vscode/
 apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/

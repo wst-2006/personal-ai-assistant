@@ -8,6 +8,8 @@
     "dev:api": "pnpm --filter @personal-ai/api dev",
     "dev:worker": "pnpm --filter @personal-ai/worker dev",
     "dev:local": "pnpm --parallel --filter @personal-ai/api --filter @personal-ai/web --filter @personal-ai/worker dev",
+    "dev:desktop": "pnpm --filter @personal-ai/desktop dev",
+    "build:desktop": "pnpm --filter @personal-ai/desktop build",
     "local:verify": "pnpm db:verify && pnpm check && pnpm test && pnpm build",
     "build": "pnpm --filter @personal-ai/domain --filter @personal-ai/db --filter @personal-ai/api --filter @personal-ai/web -r --if-present run build",
     "check": "pnpm -r --if-present run check",
