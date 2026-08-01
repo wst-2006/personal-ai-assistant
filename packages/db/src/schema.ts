@@ -107,11 +107,82 @@ export const tasks = pgTable(
   ]
 );
 
+export const taskLegacyMetadata = pgTable(
+  "task_legacy_metadata",
+  {
+    id: uuid("id").primaryKey(),
+    taskId: uuid("task_id").notNull().references(() => tasks.id),
+    plannedEffortMinutes: integer("planned_effort_minutes"),
+    difficulty: varchar("difficulty", { length: 16 }),
+    taskType: varchar("task_type", { length: 80 }),
+    requiresContinuousFocus: boolean("requires_continuous_focus"),
+    archivedAt: timestamp("archived_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    uniqueIndex("task_legacy_metadata_task_unique").on(table.taskId),
+    check("task_legacy_metadata_planned_effort_check", sql`${table.plannedEffortMinutes} is null or (${table.plannedEffortMinutes} between 1 and 1440)`)
+  ]
+);
+
+export const focusStructures = pgTable(
+  "focus_structures",
+  {
+    id: uuid("id").primaryKey(),
+    taskId: uuid("task_id").notNull().references(() => tasks.id),
+    taskScheduleRevision: integer("task_schedule_revision").notNull(),
+    state: varchar("state", { length: 20 }).notNull().default("candidate"),
+    source: varchar("source", { length: 16 }).notNull(),
+    version: integer("version").notNull().default(1),
+    totalStartAt: timestamp("total_start_at", { withTimezone: true }).notNull(),
+    totalEndAt: timestamp("total_end_at", { withTimezone: true }).notNull(),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+    supersededAt: timestamp("superseded_at", { withTimezone: true }),
+    invalidatedAt: timestamp("invalidated_at", { withTimezone: true }),
+    invalidationReason: text("invalidation_reason"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    index("focus_structures_task_idx").on(table.taskId, table.createdAt),
+    uniqueIndex("focus_structures_active_task_unique").on(table.taskId).where(sql`${table.state} = 'active'`),
+    check("focus_structures_state_check", sql`${table.state} in ('candidate', 'active', 'superseded', 'invalidated', 'cancelled')`),
+    check("focus_structures_source_check", sql`${table.source} in ('ai', 'template', 'manual')`),
+    check("focus_structures_revision_check", sql`${table.taskScheduleRevision} > 0`),
+    check("focus_structures_version_check", sql`${table.version} > 0`),
+    check("focus_structures_interval_check", sql`${table.totalEndAt} > ${table.totalStartAt}`)
+  ]
+);
+
+export const focusStructureSegments = pgTable(
+  "focus_structure_segments",
+  {
+    id: uuid("id").primaryKey(),
+    focusStructureId: uuid("focus_structure_id").notNull().references(() => focusStructures.id),
+    position: integer("position").notNull(),
+    segmentType: varchar("segment_type", { length: 16 }).notNull(),
+    durationMinutes: integer("duration_minutes").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    uniqueIndex("focus_structure_segments_position_unique").on(table.focusStructureId, table.position),
+    index("focus_structure_segments_structure_idx").on(table.focusStructureId, table.position),
+    check("focus_structure_segments_position_check", sql`${table.position} >= 0`),
+    check("focus_structure_segments_type_check", sql`${table.segmentType} in ('focus', 'break')`),
+    check(
+      "focus_structure_segments_duration_check",
+      sql`(${table.segmentType} = 'focus' and ${table.durationMinutes} >= 30) or (${table.segmentType} = 'break' and ${table.durationMinutes} between 5 and 15)`
+    )
+  ]
+);
+
 export const focusSessions = pgTable(
   "focus_sessions",
   {
     id: uuid("id").primaryKey(),
     taskId: uuid("task_id").notNull().references(() => tasks.id),
+    focusStructureId: uuid("focus_structure_id").references(() => focusStructures.id),
+    focusStructureVersion: integer("focus_structure_version"),
+    focusStructureScheduleRevision: integer("focus_structure_schedule_revision"),
     state: varchar("state", { length: 32 }).notNull(),
     plannedStartAt: timestamp("planned_start_at", { withTimezone: true }),
     remindedAt: timestamp("reminded_at", { withTimezone: true }),
@@ -120,6 +191,10 @@ export const focusSessions = pgTable(
     activeSinceAt: timestamp("active_since_at", { withTimezone: true }),
     pausedAt: timestamp("paused_at", { withTimezone: true }),
     endedAt: timestamp("ended_at", { withTimezone: true }),
+    currentSegmentPosition: integer("current_segment_position"),
+    currentSegmentStartedAt: timestamp("current_segment_started_at", { withTimezone: true }),
+    currentSegmentElapsedSeconds: integer("current_segment_elapsed_seconds").notNull().default(0),
+    confirmationDeadlineAt: timestamp("confirmation_deadline_at", { withTimezone: true }),
     stoppedReason: text("stopped_reason"),
     rawActiveSeconds: integer("raw_active_seconds").notNull().default(0),
     effectiveFocusSeconds: integer("effective_focus_seconds").notNull().default(0),
@@ -134,7 +209,60 @@ export const focusSessions = pgTable(
     check("focus_sessions_state_check", sql`${table.state} in ('scheduled', 'reminded', 'preparing', 'awaiting_start', 'running', 'paused', 'ended', 'evaluated', 'stopped_no_response', 'stopped_for_change')`),
     check("focus_sessions_raw_seconds_check", sql`${table.rawActiveSeconds} >= 0`),
     check("focus_sessions_effective_seconds_check", sql`${table.effectiveFocusSeconds} >= 0`),
+    check("focus_sessions_segment_position_check", sql`${table.currentSegmentPosition} is null or ${table.currentSegmentPosition} >= 0`),
+    check("focus_sessions_segment_elapsed_check", sql`${table.currentSegmentElapsedSeconds} >= 0`),
+    check("focus_sessions_structure_version_check", sql`${table.focusStructureVersion} is null or ${table.focusStructureVersion} > 0`),
+    check("focus_sessions_structure_revision_check", sql`${table.focusStructureScheduleRevision} is null or ${table.focusStructureScheduleRevision} > 0`),
     check("focus_sessions_version_check", sql`${table.version} > 0`)
+  ]
+);
+
+export const focusSessionSegmentRuns = pgTable(
+  "focus_session_segment_runs",
+  {
+    id: uuid("id").primaryKey(),
+    focusSessionId: uuid("focus_session_id").notNull().references(() => focusSessions.id),
+    position: integer("position").notNull(),
+    segmentType: varchar("segment_type", { length: 16 }).notNull(),
+    plannedDurationSeconds: integer("planned_duration_seconds").notNull(),
+    elapsedSeconds: integer("elapsed_seconds").notNull().default(0),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    skippedAt: timestamp("skipped_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    uniqueIndex("focus_session_segment_runs_position_unique").on(table.focusSessionId, table.position),
+    index("focus_session_segment_runs_session_idx").on(table.focusSessionId, table.position),
+    check("focus_session_segment_runs_position_check", sql`${table.position} >= 0`),
+    check("focus_session_segment_runs_type_check", sql`${table.segmentType} in ('focus', 'break')`),
+    check("focus_session_segment_runs_duration_check", sql`${table.plannedDurationSeconds} > 0`),
+    check("focus_session_segment_runs_elapsed_check", sql`${table.elapsedSeconds} >= 0`)
+  ]
+);
+
+export const focusTimerJobs = pgTable(
+  "focus_timer_jobs",
+  {
+    id: uuid("id").primaryKey(),
+    focusSessionId: uuid("focus_session_id").notNull().references(() => focusSessions.id),
+    kind: varchar("kind", { length: 32 }).notNull(),
+    expectedSessionVersion: integer("expected_session_version").notNull(),
+    dueAt: timestamp("due_at", { withTimezone: true }).notNull(),
+    status: varchar("status", { length: 20 }).notNull().default("pending"),
+    attempts: integer("attempts").notNull().default(0),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    index("focus_timer_jobs_due_idx").on(table.status, table.dueAt),
+    uniqueIndex("focus_timer_jobs_open_unique").on(table.focusSessionId, table.kind).where(sql`${table.status} in ('pending', 'processing')`),
+    check("focus_timer_jobs_kind_check", sql`${table.kind} in ('preparation_complete', 'confirmation_timeout', 'segment_transition')`),
+    check("focus_timer_jobs_status_check", sql`${table.status} in ('pending', 'processing', 'completed', 'failed', 'cancelled')`),
+    check("focus_timer_jobs_version_check", sql`${table.expectedSessionVersion} > 0`),
+    check("focus_timer_jobs_attempts_check", sql`${table.attempts} >= 0`)
   ]
 );
 

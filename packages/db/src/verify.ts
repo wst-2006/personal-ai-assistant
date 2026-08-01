@@ -64,11 +64,29 @@ try {
       AND indexname = 'reminder_jobs_task_channel_kind_unique'
     ORDER BY name
   `);
+  const focusTablesResult = await client.query<{ table_name: string }>(`
+    SELECT table_name
+    FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name IN ('task_legacy_metadata', 'focus_structures', 'focus_structure_segments', 'focus_session_segment_runs', 'focus_timer_jobs')
+    ORDER BY table_name
+  `);
+  const focusColumnsResult = await client.query<{ table_name: string; column_name: string }>(`
+    SELECT table_name, column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND ((table_name = 'focus_structures' AND column_name IN ('task_schedule_revision', 'state', 'source', 'total_start_at', 'total_end_at'))
+        OR (table_name = 'focus_sessions' AND column_name IN ('focus_structure_id', 'current_segment_position', 'confirmation_deadline_at'))
+        OR (table_name = 'focus_timer_jobs' AND column_name IN ('expected_session_version', 'due_at', 'status')))
+    ORDER BY table_name, column_name
+  `);
   const tableNames = tablesResult.rows.map((row) => row.table_name);
   const taskColumns = taskColumnsResult.rows.map((row) => row.column_name);
   const taskConstraints = taskConstraintsResult.rows.map((row) => row.conname);
   const reminderColumns = reminderColumnsResult.rows.map((row) => row.column_name);
   const reminderContract = reminderContractResult.rows.map((row) => row.name);
+  const focusTables = focusTablesResult.rows.map((row) => row.table_name);
+  const focusColumns = focusColumnsResult.rows.map((row) => `${row.table_name}.${row.column_name}`);
   const expectedTables = ["inbox_entries", "tasks"];
   const expectedColumns = ["planned_effort_minutes", "source_inbox_entry_id"];
   const expectedConstraints = [
@@ -79,13 +97,29 @@ try {
   ];
   const expectedReminderColumns = ["available_at", "payload", "schedule_revision", "scheduled_at"];
   const expectedReminderContract = ["reminder_jobs_schedule_revision_check", "reminder_jobs_task_channel_kind_unique"];
+  const expectedFocusTables = ["focus_session_segment_runs", "focus_structure_segments", "focus_structures", "focus_timer_jobs", "task_legacy_metadata"];
+  const expectedFocusColumns = [
+    "focus_structures.task_schedule_revision",
+    "focus_structures.state",
+    "focus_structures.source",
+    "focus_structures.total_start_at",
+    "focus_structures.total_end_at",
+    "focus_sessions.focus_structure_id",
+    "focus_sessions.current_segment_position",
+    "focus_sessions.confirmation_deadline_at",
+    "focus_timer_jobs.expected_session_version",
+    "focus_timer_jobs.due_at",
+    "focus_timer_jobs.status"
+  ];
 
   if (expectedTables.some((name) => !tableNames.includes(name))
     || expectedColumns.some((name) => !taskColumns.includes(name))
     || expectedConstraints.some((name) => !taskConstraints.includes(name))
     || expectedReminderColumns.some((name) => !reminderColumns.includes(name))
-    || expectedReminderContract.some((name) => !reminderContract.includes(name))) {
-    throw new Error("Database schema is missing the task, inbox, or reminder migration contract.");
+    || expectedReminderContract.some((name) => !reminderContract.includes(name))
+    || expectedFocusTables.some((name) => !focusTables.includes(name))
+    || expectedFocusColumns.some((name) => !focusColumns.includes(name))) {
+    throw new Error("Database schema is missing the task, focus structure, inbox, or reminder migration contract.");
   }
 
   console.log(JSON.stringify({
@@ -95,7 +129,9 @@ try {
     taskColumns,
     taskConstraints,
     reminderColumns,
-    reminderContract
+    reminderContract,
+    focusTables,
+    focusColumns
   }, null, 2));
 } finally {
   await client.end();
