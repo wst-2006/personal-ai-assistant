@@ -4,7 +4,10 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 const sourceDirectory = dirname(fileURLToPath(import.meta.url));
-config({ path: resolve(sourceDirectory, "../../../.env") });
+const configuredEnvFile = process.env.PERSONAL_AI_ENV_FILE;
+config({
+  path: configuredEnvFile ? resolve(configuredEnvFile) : resolve(sourceDirectory, "../../../.env")
+});
 
 const databaseConfigSchema = z.object({
   DATABASE_URL: z.string().url(),

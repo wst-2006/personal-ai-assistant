@@ -25,6 +25,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"]
+    "targets": ["nsis"],
+    "resources": ["runtime/**/*"]
   }
 }
