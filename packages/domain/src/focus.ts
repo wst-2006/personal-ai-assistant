@@ -106,6 +106,36 @@ export type FocusStructure = {
   effectiveFocusMinutes: number;
 };
 
+export function calculateEffectiveFocusSeconds(input: {
+  structureStartAt: Date | string;
+  actualStartAt: Date | string;
+  fixedEndAt: Date | string;
+  now?: Date | string;
+  segments: FocusSegment[];
+}): number {
+  const structureStart = toValidDate(input.structureStartAt, "structureStartAt");
+  const actualStart = toValidDate(input.actualStartAt, "actualStartAt");
+  const fixedEnd = toValidDate(input.fixedEndAt, "fixedEndAt");
+  const now = toValidDate(input.now ?? new Date(), "now");
+  const rangeStart = Math.max(actualStart.getTime(), structureStart.getTime());
+  const rangeEnd = Math.min(now.getTime(), fixedEnd.getTime());
+  if (rangeEnd <= rangeStart) return 0;
+
+  let cursor = structureStart.getTime();
+  let effectiveSeconds = 0;
+  for (const segment of input.segments) {
+    const segmentStart = cursor;
+    const segmentEnd = cursor + segment.durationMinutes * 60_000;
+    if (segment.segmentType === "focus") {
+      const overlapStart = Math.max(rangeStart, segmentStart);
+      const overlapEnd = Math.min(rangeEnd, segmentEnd);
+      if (overlapEnd > overlapStart) effectiveSeconds += Math.floor((overlapEnd - overlapStart) / 1000);
+    }
+    cursor = segmentEnd;
+  }
+  return effectiveSeconds;
+}
+
 /**
  * Allocates a continuous focus block without changing its fixed end time.
  * A task shorter than one hour is uninterrupted. Longer blocks reserve only

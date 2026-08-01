@@ -1,5 +1,6 @@
 import type { AppDatabase } from "@personal-ai/db/client";
 import {
+  focusStructures,
   inboxEntries,
   taskConflictAcceptances,
   taskLifecycleEvents,
@@ -7,7 +8,7 @@ import {
   tasks
 } from "@personal-ai/db/schema";
 import type { TaskEventSource, TaskLifecycle, TaskOutcome, TaskScheduleKind } from "@personal-ai/domain/task";
-import { and, asc, desc, eq, gt, inArray, isNull, lt, ne } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, ne, sql } from "drizzle-orm";
 import { syncTaskStartReminder } from "./reminder-scheduler.js";
 
 export type StoredTask = typeof tasks.$inferSelect;
@@ -78,6 +79,7 @@ export interface TaskStoreTransaction {
   insertConflictAcceptances(records: ConflictAcceptanceRecord[]): Promise<void>;
   insertLifecycleEvent(record: LifecycleEventRecord): Promise<void>;
   insertOutcome(record: TaskOutcomeRecord): Promise<StoredTaskOutcome>;
+  invalidateFocusStructures(taskId: string, currentScheduleRevision: number, reason: string): Promise<void>;
   syncReminderForTask(task: StoredTask): Promise<void>;
 }
 
@@ -180,6 +182,21 @@ class PostgresTaskTransaction implements TaskStoreTransaction {
     const [created] = await this.db.insert(taskOutcomes).values(record).returning();
     if (!created) throw new Error("PostgreSQL did not return the created task outcome.");
     return created;
+  }
+
+  async invalidateFocusStructures(taskId: string, currentScheduleRevision: number, reason: string): Promise<void> {
+    const now = new Date();
+    await this.db.update(focusStructures).set({
+      state: "invalidated",
+      invalidatedAt: now,
+      invalidationReason: reason,
+      version: sql`${focusStructures.version} + 1`,
+      updatedAt: now
+    }).where(and(
+      eq(focusStructures.taskId, taskId),
+      ne(focusStructures.taskScheduleRevision, currentScheduleRevision),
+      inArray(focusStructures.state, ["candidate", "active"])
+    ));
   }
 
   async syncReminderForTask(task: StoredTask): Promise<void> {

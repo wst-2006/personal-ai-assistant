@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   allocateContinuousFocusStructure,
+  calculateEffectiveFocusSeconds,
   createFocusSessionSchema,
   evaluateFocusSessionSchema,
   validateSegmentedFocusStructure
@@ -43,6 +44,20 @@ describe("focus structure allocation", () => {
     expect(result.segments).toEqual(rest === 0
       ? [{ segmentType: "focus", durationMinutes: focus }]
       : [{ segmentType: "focus", durationMinutes: focus }, { segmentType: "break", durationMinutes: rest }]);
+  });
+
+  it("counts only focus segments and clips a late start at the fixed end", () => {
+    const structure = allocateContinuousFocusStructure({
+      totalStartAt: start,
+      totalEndAt: "2026-07-27T10:00:00+08:00"
+    });
+    expect(calculateEffectiveFocusSeconds({
+      structureStartAt: structure.totalStartAt,
+      actualStartAt: "2026-07-27T09:30:00+08:00",
+      fixedEndAt: structure.totalEndAt,
+      now: "2026-07-27T10:30:00+08:00",
+      segments: structure.segments
+    })).toBe(25 * 60);
   });
 
   it("allows a final rest adjustment from five through fifteen minutes", () => {

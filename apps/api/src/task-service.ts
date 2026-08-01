@@ -208,6 +208,9 @@ export class TaskService {
         updatedAt: new Date()
       });
       if (!updated) throw await this.versionOrMissing(transaction, id);
+      if (scheduleChanged) {
+        await transaction.invalidateFocusStructures(updated.id, updated.scheduleRevision, "task schedule changed");
+      }
       await transaction.syncReminderForTask(updated);
       if (patch.conflictDecision === "keep") {
         await transaction.insertConflictAcceptances(blocking.map((conflict) => canonicalAcceptance(updated, conflict)));
@@ -244,6 +247,7 @@ export class TaskService {
         updatedAt: new Date()
       });
       if (!updated) throw await this.versionOrMissing(transaction, id);
+      await transaction.invalidateFocusStructures(updated.id, updated.scheduleRevision, "task soft-deleted");
       await transaction.syncReminderForTask(updated);
       await transaction.insertLifecycleEvent({
         id: randomUUID(), taskId: id, fromStatus: current.lifecycleStatus as TaskLifecycle,
@@ -281,6 +285,7 @@ export class TaskService {
         updatedAt: new Date()
       });
       if (!updated) throw await this.versionOrMissing(transaction, id);
+      await transaction.invalidateFocusStructures(updated.id, updated.scheduleRevision, "task reopened");
       await transaction.syncReminderForTask(updated);
       await transaction.insertLifecycleEvent({
         id: randomUUID(), taskId: id, fromStatus: current.lifecycleStatus as TaskLifecycle,
@@ -318,6 +323,7 @@ export class TaskService {
         updatedAt: new Date()
       });
       if (!updated) throw await this.versionOrMissing(transaction, id);
+      await transaction.invalidateFocusStructures(updated.id, updated.scheduleRevision, "task closed");
       await transaction.syncReminderForTask(updated);
       await transaction.insertLifecycleEvent({
         id: randomUUID(), taskId: id, fromStatus: current.lifecycleStatus as TaskLifecycle,
@@ -384,6 +390,9 @@ export class TaskService {
         updatedAt: new Date()
       });
       if (!updated) throw await this.versionOrMissing(transaction, id);
+      if (scheduleRevisionChanges) {
+        await transaction.invalidateFocusStructures(updated.id, updated.scheduleRevision, `task transitioned to ${toStatus}`);
+      }
       await transaction.syncReminderForTask(updated);
       await transaction.insertLifecycleEvent({
         id: randomUUID(), taskId: id, fromStatus: current.lifecycleStatus as TaskLifecycle,

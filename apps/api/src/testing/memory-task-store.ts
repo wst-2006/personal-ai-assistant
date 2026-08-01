@@ -162,6 +162,10 @@ export class MemoryTaskStore implements TaskStore, TaskStoreTransaction {
     return outcome;
   }
 
+  async invalidateFocusStructures(_taskId: string, _currentScheduleRevision: number, _reason: string): Promise<void> {
+    // The in-memory task store intentionally has no focus-structure projection.
+  }
+
   async syncReminderForTask(task: StoredTask): Promise<void> {
     const index = this.reminderJobs.findIndex((job) => job.taskId === task.id);
     const shouldSchedule = !task.deletedAt

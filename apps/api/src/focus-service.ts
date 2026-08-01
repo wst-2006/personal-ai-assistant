@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { AppDatabase } from "@personal-ai/db/client";
-import { focusSessions, taskFeedback, taskLifecycleEvents, taskOutcomes, tasks } from "@personal-ai/db/schema";
-import type { FocusSatisfaction, FocusSessionState } from "@personal-ai/domain/focus";
+import { focusSessionSegmentRuns, focusSessions, focusStructureSegments, focusStructures, taskFeedback, taskLifecycleEvents, taskOutcomes, tasks } from "@personal-ai/db/schema";
+import { calculateEffectiveFocusSeconds, type FocusSatisfaction, type FocusSessionState } from "@personal-ai/domain/focus";
 import type { TaskOutcome } from "@personal-ai/domain/task";
 import { syncTaskStartReminder } from "./reminder-scheduler.js";
 
@@ -49,14 +49,30 @@ export class FocusService {
         .where(inArray(focusSessions.state, recoverableStates)).limit(1);
       if (existing) throw new FocusBusyError();
 
+      const execution = await this.activeStructure(transaction as AppDatabase, task.id, task.scheduleRevision);
+
       const [created] = await transaction.insert(focusSessions).values({
         id: randomUUID(), taskId, state: mode === "remind" ? "reminded" : "preparing",
         plannedStartAt: task.startAt, plannedEndAt: task.endAt, remindedAt: mode === "remind" ? now : null,
         preparingEndsAt: mode === "remind" ? null : new Date(now.getTime() + 60_000),
         startedAt: null, activeSinceAt: null,
+        focusStructureId: execution?.structure.id ?? null,
+        focusStructureVersion: execution?.structure.version ?? null,
+        focusStructureScheduleRevision: execution?.structure.taskScheduleRevision ?? null,
+        currentSegmentPosition: execution ? 0 : null,
+        currentSegmentStartedAt: execution?.structure.totalStartAt ?? null,
+        currentSegmentElapsedSeconds: 0,
         rawActiveSeconds: 0, effectiveFocusSeconds: 0, version: 1
       }).returning();
       if (!created) throw new Error("PostgreSQL did not return focus session.");
+      if (execution) {
+        await transaction.insert(focusSessionSegmentRuns).values(execution.segments.map((segment, position) => ({
+          id: randomUUID(), focusSessionId: created.id, position,
+          segmentType: segment.segmentType, plannedDurationSeconds: segment.durationMinutes * 60,
+          elapsedSeconds: 0, startedAt: null, completedAt: null, skippedAt: null,
+          createdAt: now, updatedAt: now
+        })));
+      }
       return created;
     });
   }
@@ -78,10 +94,27 @@ export class FocusService {
         if (!stopped) throw new FocusVersionConflictError(await this.requireCurrent(transaction as AppDatabase, id));
         return stopped;
       }
+      const execution = current.focusStructureId
+        ? await this.structureById(transaction as AppDatabase, current.focusStructureId)
+        : null;
+      const position = execution ? locateSegment(execution.structure.totalStartAt, execution.segments, now) : null;
       const [updated] = await transaction.update(focusSessions).set({ state: "running", startedAt: now, activeSinceAt: now, version: current.version + 1, updatedAt: now })
         .where(and(eq(focusSessions.id, id), eq(focusSessions.version, expectedVersion))).returning();
       if (!updated) throw new FocusVersionConflictError(await this.requireCurrent(transaction as AppDatabase, id));
       await this.activateTask(transaction as AppDatabase, task, now);
+      if (position) {
+        const [positioned] = await transaction.update(focusSessions).set({
+          currentSegmentPosition: position.position,
+          currentSegmentStartedAt: position.startedAt,
+          currentSegmentElapsedSeconds: position.elapsedSeconds,
+          updatedAt: now
+        }).where(and(eq(focusSessions.id, id), eq(focusSessions.version, expectedVersion + 1))).returning();
+        if (positioned) {
+          await transaction.update(focusSessionSegmentRuns).set({ startedAt: now, updatedAt: now })
+            .where(and(eq(focusSessionSegmentRuns.focusSessionId, id), eq(focusSessionSegmentRuns.position, position.position)));
+          return positioned;
+        }
+      }
       return updated;
     });
   }
@@ -147,7 +180,23 @@ export class FocusService {
       const [task] = await transaction.select().from(tasks).where(and(eq(tasks.id, current.taskId), isNull(tasks.deletedAt))).limit(1);
       if (!task) throw new FocusNotFoundError();
       if (task.lifecycleStatus !== "awaiting_outcome") throw new FocusTransitionError(task.lifecycleStatus, "record focus outcome for");
-      const effective = outcome === "partial" || outcome === "complete" ? current.rawActiveSeconds : 0;
+      const execution = current.focusStructureId
+        ? await this.structureById(transaction as AppDatabase, current.focusStructureId)
+        : null;
+      const effective = outcome === "partial" || outcome === "complete"
+        ? execution && current.startedAt && current.plannedEndAt
+          ? calculateEffectiveFocusSeconds({
+              structureStartAt: execution.structure.totalStartAt,
+              actualStartAt: current.startedAt,
+              fixedEndAt: current.plannedEndAt,
+              now: current.endedAt ?? now,
+              segments: execution.segments.map((segment) => ({
+                segmentType: segment.segmentType as "focus" | "break",
+                durationMinutes: segment.durationMinutes
+              }))
+            })
+          : current.rawActiveSeconds
+        : 0;
       const [updated] = await transaction.update(focusSessions).set({ state: "evaluated", effectiveFocusSeconds: effective, version: current.version + 1, updatedAt: now })
         .where(and(eq(focusSessions.id, id), eq(focusSessions.version, expectedVersion))).returning();
       if (!updated) throw new FocusVersionConflictError(await this.requireCurrent(transaction as AppDatabase, id));
@@ -167,6 +216,28 @@ export class FocusService {
     if (!current) throw new FocusNotFoundError();
     if (expectedVersion !== undefined && current.version !== expectedVersion) throw new FocusVersionConflictError(current);
     return current;
+  }
+
+  private async activeStructure(db: AppDatabase, taskId: string, scheduleRevision: number) {
+    const [structure] = await db.select().from(focusStructures).where(and(
+      eq(focusStructures.taskId, taskId),
+      eq(focusStructures.taskScheduleRevision, scheduleRevision),
+      eq(focusStructures.state, "active")
+    )).limit(1);
+    if (!structure) return null;
+    return { structure, segments: await this.listStructureSegments(db, structure.id) };
+  }
+
+  private async structureById(db: AppDatabase, id: string) {
+    const [structure] = await db.select().from(focusStructures).where(eq(focusStructures.id, id)).limit(1);
+    if (!structure) return null;
+    return { structure, segments: await this.listStructureSegments(db, id) };
+  }
+
+  private listStructureSegments(db: AppDatabase, id: string) {
+    return db.select().from(focusStructureSegments)
+      .where(eq(focusStructureSegments.focusStructureId, id))
+      .orderBy(asc(focusStructureSegments.position));
   }
 
   private async materializePreparation(db: AppDatabase, current: StoredFocusSession, now: Date): Promise<StoredFocusSession> {
@@ -190,6 +261,23 @@ export class FocusService {
       .where(and(eq(focusSessions.id, current.id), eq(focusSessions.version, current.version))).returning();
     if (!updated) return current;
     await this.activateTask(db, task, now);
+    if (updated.focusStructureId) {
+      const execution = await this.structureById(db, updated.focusStructureId);
+      const position = execution ? locateSegment(execution.structure.totalStartAt, execution.segments, now) : null;
+      if (position) {
+        const [positioned] = await db.update(focusSessions).set({
+          currentSegmentPosition: position.position,
+          currentSegmentStartedAt: position.startedAt,
+          currentSegmentElapsedSeconds: position.elapsedSeconds,
+          updatedAt: now
+        }).where(and(eq(focusSessions.id, updated.id), eq(focusSessions.version, updated.version))).returning();
+        if (positioned) {
+          await db.update(focusSessionSegmentRuns).set({ startedAt: now, updatedAt: now })
+            .where(and(eq(focusSessionSegmentRuns.focusSessionId, updated.id), eq(focusSessionSegmentRuns.position, position.position)));
+          return positioned;
+        }
+      }
+    }
     return updated;
   }
 
@@ -227,4 +315,24 @@ export function elapsedSeconds(session: StoredFocusSession, now = new Date()): n
   if (session.state !== "running" || !session.activeSinceAt) return session.rawActiveSeconds;
   const cappedNow = session.plannedEndAt && session.plannedEndAt < now ? session.plannedEndAt : now;
   return session.rawActiveSeconds + Math.max(0, Math.floor((cappedNow.getTime() - session.activeSinceAt.getTime()) / 1000));
+}
+
+function locateSegment(
+  structureStartAt: Date,
+  segments: Array<{ segmentType: string; durationMinutes: number }>,
+  now: Date
+): { position: number; startedAt: Date; elapsedSeconds: number } | null {
+  let cursor = structureStartAt.getTime();
+  for (let position = 0; position < segments.length; position += 1) {
+    const end = cursor + segments[position]!.durationMinutes * 60_000;
+    if (now.getTime() < end) {
+      return {
+        position,
+        startedAt: new Date(cursor),
+        elapsedSeconds: Math.max(0, Math.floor((now.getTime() - cursor) / 1000))
+      };
+    }
+    cursor = end;
+  }
+  return null;
 }
