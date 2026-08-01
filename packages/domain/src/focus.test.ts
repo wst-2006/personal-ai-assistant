@@ -1,14 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { createFocusSessionSchema, evaluateFocusSessionSchema } from "./focus.js";
+import {
+  allocateContinuousFocusStructure,
+  createFocusSessionSchema,
+  evaluateFocusSessionSchema,
+  validateSegmentedFocusStructure
+} from "./focus.js";
 
 describe("focus input contracts", () => {
-  it("accepts durable start modes", () => {
+  it("accepts preparation/reminder starts but rejects manual restart", () => {
     expect(createFocusSessionSchema.safeParse({
       taskId: "00000000-0000-4000-8000-000000000001", expectedTaskVersion: 2, mode: "prepare"
     }).success).toBe(true);
     expect(createFocusSessionSchema.safeParse({
       taskId: "00000000-0000-4000-8000-000000000001", expectedTaskVersion: 2, mode: "restart"
-    }).success).toBe(true);
+    }).success).toBe(false);
   });
 
   it.each([
@@ -16,5 +21,72 @@ describe("focus input contracts", () => {
   ] as const)("validates %s evaluation percentages", (outcome, progressPercent, valid) => {
     const result = evaluateFocusSessionSchema.safeParse({ expectedVersion: 1, outcome, progressPercent, satisfaction: "neutral" });
     expect(result.success).toBe(valid);
+  });
+});
+
+describe("focus structure allocation", () => {
+  const start = "2026-07-27T09:00:00+08:00";
+
+  it.each([
+    [30, "09:30", 30, 0],
+    [60, "10:00", 55, 5],
+    [90, "10:30", 85, 5],
+    [120, "11:00", 115, 5]
+  ] as const)("allocates %i minutes as %i focus + %i rest", (total, endTime, focus, rest) => {
+    const result = allocateContinuousFocusStructure({
+      totalStartAt: start,
+      totalEndAt: `2026-07-27T${endTime}:00+08:00`
+    });
+    expect(result.totalMinutes).toBe(total);
+    expect(result.effectiveFocusMinutes).toBe(focus);
+    expect(result.breakMinutes).toBe(rest);
+    expect(result.segments).toEqual(rest === 0
+      ? [{ segmentType: "focus", durationMinutes: focus }]
+      : [{ segmentType: "focus", durationMinutes: focus }, { segmentType: "break", durationMinutes: rest }]);
+  });
+
+  it("allows a final rest adjustment from five through fifteen minutes", () => {
+    const result = allocateContinuousFocusStructure({
+      totalStartAt: start,
+      totalEndAt: "2026-07-27T11:00:00+08:00",
+      breakMinutes: 15
+    });
+    expect(result.effectiveFocusMinutes).toBe(105);
+    expect(result.breakMinutes).toBe(15);
+  });
+
+  it.each([0, 4, 16])("rejects a rest value outside 5-15 minutes for long tasks", (breakMinutes) => {
+    expect(() => allocateContinuousFocusStructure({
+      totalStartAt: start,
+      totalEndAt: "2026-07-27T10:00:00+08:00",
+      breakMinutes
+    })).toThrow();
+  });
+
+  it("does not allow a segmented structure to overrun its fixed end", () => {
+    expect(() => validateSegmentedFocusStructure({
+      totalStartAt: start,
+      totalEndAt: "2026-07-27T11:00:00+08:00",
+      segments: [
+        { segmentType: "focus", durationMinutes: 30 },
+        { segmentType: "break", durationMinutes: 5 },
+        { segmentType: "focus", durationMinutes: 60 }
+      ]
+    })).toThrow("exactly fill");
+  });
+
+  it("accepts alternating segments that exactly fill the task interval", () => {
+    const result = validateSegmentedFocusStructure({
+      totalStartAt: start,
+      totalEndAt: "2026-07-27T11:00:00+08:00",
+      segments: [
+        { segmentType: "focus", durationMinutes: 30 },
+        { segmentType: "break", durationMinutes: 5 },
+        { segmentType: "focus", durationMinutes: 50 },
+        { segmentType: "break", durationMinutes: 5 },
+        { segmentType: "focus", durationMinutes: 30 }
+      ]
+    });
+    expect(result.effectiveFocusMinutes).toBe(110);
   });
 });

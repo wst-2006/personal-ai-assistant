@@ -76,7 +76,7 @@ try {
     FROM information_schema.columns
     WHERE table_schema = 'public'
       AND ((table_name = 'focus_structures' AND column_name IN ('task_schedule_revision', 'state', 'source', 'total_start_at', 'total_end_at'))
-        OR (table_name = 'focus_sessions' AND column_name IN ('focus_structure_id', 'current_segment_position', 'confirmation_deadline_at'))
+        OR (table_name = 'focus_sessions' AND column_name IN ('focus_structure_id', 'planned_end_at', 'current_segment_position', 'confirmation_deadline_at'))
         OR (table_name = 'focus_timer_jobs' AND column_name IN ('expected_session_version', 'due_at', 'status')))
     ORDER BY table_name, column_name
   `);
@@ -105,6 +105,7 @@ try {
     "focus_structures.total_start_at",
     "focus_structures.total_end_at",
     "focus_sessions.focus_structure_id",
+    "focus_sessions.planned_end_at",
     "focus_sessions.current_segment_position",
     "focus_sessions.confirmation_deadline_at",
     "focus_timer_jobs.expected_session_version",

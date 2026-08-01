@@ -26,14 +26,22 @@ subjective satisfaction.
 
 ## Focus Session
 
-`scheduled -> reminded -> preparing -> awaiting_start -> running <-> paused ->
-ended -> evaluated`
+`scheduled -> reminded -> preparing -> awaiting_start -> running -> ended ->
+evaluated`
 
 "Other arrangement" ends the session and opens a plan-change conversation. A
 five-minute non-response ends the session with a provisional `not_completed`
-outcome. A manual restart skips preparation and begins from the current time.
-Only `partial` and `complete` evaluations count accumulated active minutes as
-effective focus time.
+outcome. There is no pause, soft start, or manual restart. Once preparation
+begins, the focus structure is immutable. A late start is clipped to the
+task's fixed `endAt`; it never extends the task or creates a new session after
+the fixed end. Only `partial` and `complete` evaluations count accumulated
+active minutes as effective focus time.
+
+Focus structures are durable candidates tied to the task version and
+`scheduleRevision`. A continuous block of 30 minutes is one uninterrupted
+focus segment. A block of 60 minutes or longer reserves a final rest segment,
+defaulting to 5 minutes and allowing 5-15 minutes. Segmented structures must
+alternate focus and rest and exactly fill the fixed task interval.
 
 ## Review, Brief, and Diary
 

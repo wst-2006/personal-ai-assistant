@@ -6,9 +6,9 @@ import type { FocusSatisfaction, FocusSessionState } from "@personal-ai/domain/f
 import type { TaskOutcome } from "@personal-ai/domain/task";
 import { syncTaskStartReminder } from "./reminder-scheduler.js";
 
-const recoverableStates: FocusSessionState[] = ["reminded", "preparing", "running", "paused"];
+const recoverableStates: FocusSessionState[] = ["reminded", "preparing", "running"];
 const currentStates: FocusSessionState[] = [...recoverableStates, "ended", "stopped_no_response", "stopped_for_change"];
-const activeTimerStates: FocusSessionState[] = ["running", "paused"];
+const activeTimerStates: FocusSessionState[] = ["running"];
 
 export type StoredFocusSession = typeof focusSessions.$inferSelect;
 
@@ -29,34 +29,34 @@ export class FocusService {
       const [session] = await transaction.select().from(focusSessions)
         .where(inArray(focusSessions.state, currentStates)).orderBy(desc(focusSessions.updatedAt)).limit(1);
       if (!session) return null;
-      return this.materializePreparation(transaction as AppDatabase, session, new Date());
+      const now = new Date();
+      const prepared = await this.materializePreparation(transaction as AppDatabase, session, now);
+      return this.materializeFixedEnd(transaction as AppDatabase, prepared, now);
     });
   }
 
-  async create(taskId: string, expectedTaskVersion: number, mode: "remind" | "prepare" | "restart"): Promise<StoredFocusSession> {
+  async create(taskId: string, expectedTaskVersion: number, mode: "remind" | "prepare" = "prepare"): Promise<StoredFocusSession> {
     return this.db.transaction(async (transaction) => {
       const now = new Date();
       const [task] = await transaction.select().from(tasks).where(and(eq(tasks.id, taskId), isNull(tasks.deletedAt))).limit(1);
       if (!task) throw new FocusNotFoundError();
       if (task.version !== expectedTaskVersion) throw new Error("task_version_conflict");
-      if (task.lifecycleStatus !== "open" && !(mode === "restart" && task.lifecycleStatus === "awaiting_outcome")) {
+      if (task.lifecycleStatus !== "open") {
         throw new FocusTransitionError(task.lifecycleStatus, "start focus for");
       }
+      if (task.endAt && task.endAt <= now) throw new FocusTransitionError(task.lifecycleStatus, "start focus after its fixed end");
       const [existing] = await transaction.select({ id: focusSessions.id }).from(focusSessions)
         .where(inArray(focusSessions.state, recoverableStates)).limit(1);
       if (existing) throw new FocusBusyError();
 
-      const startsNow = mode === "restart";
-      const reminds = mode === "remind";
       const [created] = await transaction.insert(focusSessions).values({
-        id: randomUUID(), taskId, state: startsNow ? "running" : reminds ? "reminded" : "preparing",
-        plannedStartAt: task.startAt, remindedAt: reminds ? now : null,
-        preparingEndsAt: startsNow || reminds ? null : new Date(now.getTime() + 60_000),
-        startedAt: startsNow ? now : null, activeSinceAt: startsNow ? now : null,
+        id: randomUUID(), taskId, state: mode === "remind" ? "reminded" : "preparing",
+        plannedStartAt: task.startAt, plannedEndAt: task.endAt, remindedAt: mode === "remind" ? now : null,
+        preparingEndsAt: mode === "remind" ? null : new Date(now.getTime() + 60_000),
+        startedAt: null, activeSinceAt: null,
         rawActiveSeconds: 0, effectiveFocusSeconds: 0, version: 1
       }).returning();
       if (!created) throw new Error("PostgreSQL did not return focus session.");
-      if (startsNow) await this.activateTask(transaction as AppDatabase, task, now);
       return created;
     });
   }
@@ -70,6 +70,14 @@ export class FocusService {
       const [task] = await transaction.select().from(tasks).where(and(eq(tasks.id, current.taskId), isNull(tasks.deletedAt))).limit(1);
       if (!task) throw new FocusNotFoundError();
       if (task.lifecycleStatus !== "open") throw new FocusTransitionError(task.lifecycleStatus, "begin focus for");
+      if (task.endAt && task.endAt <= now) {
+        const [stopped] = await transaction.update(focusSessions).set({
+          state: "stopped_no_response", endedAt: now, stoppedReason: "固定结束时间已过",
+          version: current.version + 1, updatedAt: now
+        }).where(and(eq(focusSessions.id, id), eq(focusSessions.version, expectedVersion))).returning();
+        if (!stopped) throw new FocusVersionConflictError(await this.requireCurrent(transaction as AppDatabase, id));
+        return stopped;
+      }
       const [updated] = await transaction.update(focusSessions).set({ state: "running", startedAt: now, activeSinceAt: now, version: current.version + 1, updatedAt: now })
         .where(and(eq(focusSessions.id, id), eq(focusSessions.version, expectedVersion))).returning();
       if (!updated) throw new FocusVersionConflictError(await this.requireCurrent(transaction as AppDatabase, id));
@@ -91,18 +99,6 @@ export class FocusService {
       if (!updated) throw new FocusVersionConflictError(await this.requireCurrent(transaction as AppDatabase, id));
       return updated;
     });
-  }
-
-  async pause(id: string, expectedVersion: number): Promise<StoredFocusSession> {
-    return this.updateTimer(id, expectedVersion, "pause", (current, now, raw) => ({
-      state: "paused", rawActiveSeconds: raw, activeSinceAt: null, pausedAt: now
-    }));
-  }
-
-  async resume(id: string, expectedVersion: number): Promise<StoredFocusSession> {
-    return this.updateTimer(id, expectedVersion, "resume", (current, now) => ({
-      state: "running", activeSinceAt: now, pausedAt: null
-    }));
   }
 
   async end(id: string, expectedVersion: number, reason?: string): Promise<StoredFocusSession> {
@@ -166,22 +162,6 @@ export class FocusService {
     });
   }
 
-  private async updateTimer(
-    id: string, expectedVersion: number, operation: "pause" | "resume",
-    changes: (current: StoredFocusSession, now: Date, raw: number) => Record<string, unknown>
-  ): Promise<StoredFocusSession> {
-    return this.db.transaction(async (transaction) => {
-      const now = new Date();
-      const current = await this.requireCurrent(transaction as AppDatabase, id, expectedVersion);
-      const valid = operation === "pause" ? current.state === "running" : current.state === "paused";
-      if (!valid) throw new FocusTransitionError(current.state, operation);
-      const [updated] = await transaction.update(focusSessions).set({ ...changes(current, now, elapsedSeconds(current, now)), version: current.version + 1, updatedAt: now })
-        .where(and(eq(focusSessions.id, id), eq(focusSessions.version, expectedVersion))).returning();
-      if (!updated) throw new FocusVersionConflictError(await this.requireCurrent(transaction as AppDatabase, id));
-      return updated;
-    });
-  }
-
   private async requireCurrent(db: AppDatabase, id: string, expectedVersion?: number): Promise<StoredFocusSession> {
     const [current] = await db.select().from(focusSessions).where(eq(focusSessions.id, id)).limit(1);
     if (!current) throw new FocusNotFoundError();
@@ -199,11 +179,29 @@ export class FocusService {
     if (current.state !== "preparing" || !current.preparingEndsAt || current.preparingEndsAt > now) return current;
     const [task] = await db.select().from(tasks).where(and(eq(tasks.id, current.taskId), isNull(tasks.deletedAt))).limit(1);
     if (!task || task.lifecycleStatus !== "open") return current;
+    if (task.endAt && task.endAt <= now) {
+      const [stopped] = await db.update(focusSessions).set({
+        state: "stopped_no_response", endedAt: now, stoppedReason: "固定结束时间已过",
+        version: current.version + 1, updatedAt: now
+      }).where(and(eq(focusSessions.id, current.id), eq(focusSessions.version, current.version))).returning();
+      return stopped ?? current;
+    }
     const [updated] = await db.update(focusSessions).set({ state: "running", startedAt: now, activeSinceAt: now, version: current.version + 1, updatedAt: now })
       .where(and(eq(focusSessions.id, current.id), eq(focusSessions.version, current.version))).returning();
     if (!updated) return current;
     await this.activateTask(db, task, now);
     return updated;
+  }
+
+  private async materializeFixedEnd(db: AppDatabase, current: StoredFocusSession, now: Date): Promise<StoredFocusSession> {
+    if (current.state !== "running" || !current.plannedEndAt || current.plannedEndAt > now) return current;
+    const [ended] = await db.update(focusSessions).set({
+      state: "ended", rawActiveSeconds: elapsedSeconds(current, now), activeSinceAt: null,
+      endedAt: current.plannedEndAt, version: current.version + 1, updatedAt: now
+    }).where(and(eq(focusSessions.id, current.id), eq(focusSessions.version, current.version))).returning();
+    if (!ended) return current;
+    await this.awaitTaskOutcome(db, current.taskId, now, "固定结束时间到达");
+    return ended;
   }
 
   private async activateTask(db: AppDatabase, task: typeof tasks.$inferSelect, now: Date): Promise<void> {
@@ -227,5 +225,6 @@ export class FocusService {
 
 export function elapsedSeconds(session: StoredFocusSession, now = new Date()): number {
   if (session.state !== "running" || !session.activeSinceAt) return session.rawActiveSeconds;
-  return session.rawActiveSeconds + Math.max(0, Math.floor((now.getTime() - session.activeSinceAt.getTime()) / 1000));
+  const cappedNow = session.plannedEndAt && session.plannedEndAt < now ? session.plannedEndAt : now;
+  return session.rawActiveSeconds + Math.max(0, Math.floor((cappedNow.getTime() - session.activeSinceAt.getTime()) / 1000));
 }

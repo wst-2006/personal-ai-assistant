@@ -5,9 +5,7 @@ import {
   ChevronLeft,
   CircleDashed,
   Clock3,
-  Pause,
   Play,
-  RotateCcw,
   XCircle,
 } from "lucide-react";
 
@@ -30,7 +28,6 @@ type FocusState =
   | "reminded"
   | "preparing"
   | "running"
-  | "paused"
   | "ended"
   | "evaluated"
   | "stopped_no_response"
@@ -177,7 +174,7 @@ export function FocusWorkspace({
     return () => { cancelled = true; };
   }, [session, tasks]);
 
-  async function begin(mode: "prepare" | "restart" = "prepare") {
+  async function begin(mode: "prepare" | "remind" = "prepare") {
     if (!selected) return;
     setBusy(true);
     setError(null);
@@ -202,8 +199,6 @@ export function FocusWorkspace({
   async function transition(
     action:
       | "begin"
-      | "pause"
-      | "resume"
       | "end"
       | "other-arrangement"
       | "respond-start",
@@ -300,9 +295,7 @@ export function FocusWorkspace({
           <span>
             {stage === "running"
               ? "正在专注"
-              : stage === "paused"
-                ? "已暂停"
-                : stage === "preparing"
+              : stage === "preparing"
                   ? "准备开始"
                   : stage === "ended"
                     ? "记录结果"
@@ -383,34 +376,6 @@ export function FocusWorkspace({
             {stage === "running" && (
               <>
                 <button
-                  className="round-control"
-                  disabled={busy}
-                  aria-label="暂停专注"
-                  onClick={() => void transition("pause")}
-                >
-                  <Pause />
-                </button>
-                <button
-                  className="focus-main-action"
-                  disabled={busy}
-                  onClick={() => void transition("end")}
-                >
-                  <CheckCircle2 />
-                  结束并记录
-                </button>
-              </>
-            )}
-            {stage === "paused" && (
-              <>
-                <button
-                  className="round-control"
-                  disabled={busy}
-                  aria-label="继续专注"
-                  onClick={() => void transition("resume")}
-                >
-                  <Play />
-                </button>
-                <button
                   className="focus-main-action"
                   disabled={busy}
                   onClick={() => void transition("end")}
@@ -431,24 +396,7 @@ export function FocusWorkspace({
               </button>
             )}
             {stage === "ended" && (
-              <button
-                className="focus-main-action"
-                disabled={busy}
-                onClick={() => void begin("restart")}
-              >
-                <RotateCcw />
-                重新启动
-              </button>
-            )}
-            {(stage === "stopped_for_change" || stage === "stopped_no_response") && (
-              <button
-                className="focus-main-action"
-                disabled={!selected || busy}
-                onClick={() => { setSession(null); void begin(stage === "stopped_no_response" ? "restart" : "prepare"); }}
-              >
-                <RotateCcw />
-                手动重新开始
-              </button>
+              <p className="focus-stopped">专注已结束，请记录本次结果。</p>
             )}
           </div>
         </div>

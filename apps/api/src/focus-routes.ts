@@ -47,9 +47,6 @@ export async function focusRoutes(app: FastifyInstance, options: { focusService:
     catch (error) { return focusError(reply, error); }
   });
 
-  app.post("/focus-sessions/:id/pause", async (request, reply) => timerAction(request, reply, "pause", focusService));
-  app.post("/focus-sessions/:id/resume", async (request, reply) => timerAction(request, reply, "resume", focusService));
-
   app.post("/focus-sessions/:id/end", async (request, reply) => {
     const params = paramsSchema.safeParse(request.params); const input = stopFocusSessionSchema.safeParse(request.body);
     if (!params.success || !input.success) return reply.status(400).send({ error: "invalid_focus_session" });
@@ -71,17 +68,6 @@ export async function focusRoutes(app: FastifyInstance, options: { focusService:
       return { session: serialize(await focusService.evaluate(params.data.id, input.data.expectedVersion, input.data.outcome, input.data.progressPercent, input.data.satisfaction, input.data.note)) };
     } catch (error) { return focusError(reply, error); }
   });
-}
-
-async function timerAction(request: { params: unknown; body: unknown }, reply: { status: (statusCode: number) => { send: (body: unknown) => unknown } }, action: "pause" | "resume", focusService: FocusService) {
-  const params = paramsSchema.safeParse(request.params); const input = focusSessionVersionSchema.safeParse(request.body);
-  if (!params.success || !input.success) return reply.status(400).send({ error: "invalid_focus_session" });
-  try {
-    const session = action === "pause"
-      ? await focusService.pause(params.data.id, input.data.expectedVersion)
-      : await focusService.resume(params.data.id, input.data.expectedVersion);
-    return { session: serialize(session) };
-  } catch (error) { return focusError(reply, error); }
 }
 
 function serialize(session: StoredFocusSession) {

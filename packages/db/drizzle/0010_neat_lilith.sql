@@ -1,0 +1,2 @@
+ALTER TABLE "focus_sessions" ADD COLUMN "planned_end_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "focus_sessions" ADD CONSTRAINT "focus_sessions_planned_interval_check" CHECK ("focus_sessions"."planned_start_at" is null or "focus_sessions"."planned_end_at" is null or "focus_sessions"."planned_end_at" > "focus_sessions"."planned_start_at");

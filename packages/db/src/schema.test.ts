@@ -43,6 +43,7 @@ describe("formal task and inbox schema contract", () => {
 
   it("keeps execution position and durable timer jobs separate from task scheduling", () => {
     expect(focusSessions.focusStructureId.name).toBe("focus_structure_id");
+    expect(focusSessions.plannedEndAt.name).toBe("planned_end_at");
     expect(focusSessions.currentSegmentPosition.name).toBe("current_segment_position");
     expect(focusSessions.confirmationDeadlineAt.name).toBe("confirmation_deadline_at");
     expect(focusSessionSegmentRuns.plannedDurationSeconds.name).toBe("planned_duration_seconds");

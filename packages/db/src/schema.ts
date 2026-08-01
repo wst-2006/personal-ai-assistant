@@ -185,6 +185,7 @@ export const focusSessions = pgTable(
     focusStructureScheduleRevision: integer("focus_structure_schedule_revision"),
     state: varchar("state", { length: 32 }).notNull(),
     plannedStartAt: timestamp("planned_start_at", { withTimezone: true }),
+    plannedEndAt: timestamp("planned_end_at", { withTimezone: true }),
     remindedAt: timestamp("reminded_at", { withTimezone: true }),
     preparingEndsAt: timestamp("preparing_ends_at", { withTimezone: true }),
     startedAt: timestamp("started_at", { withTimezone: true }),
@@ -213,6 +214,7 @@ export const focusSessions = pgTable(
     check("focus_sessions_segment_elapsed_check", sql`${table.currentSegmentElapsedSeconds} >= 0`),
     check("focus_sessions_structure_version_check", sql`${table.focusStructureVersion} is null or ${table.focusStructureVersion} > 0`),
     check("focus_sessions_structure_revision_check", sql`${table.focusStructureScheduleRevision} is null or ${table.focusStructureScheduleRevision} > 0`),
+    check("focus_sessions_planned_interval_check", sql`${table.plannedStartAt} is null or ${table.plannedEndAt} is null or ${table.plannedEndAt} > ${table.plannedStartAt}`),
     check("focus_sessions_version_check", sql`${table.version} > 0`)
   ]
 );
