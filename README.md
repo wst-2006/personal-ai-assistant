@@ -34,6 +34,12 @@ window. This is the desktop application development path; a distributable
 installer still needs a separate packaging step for the Node API and worker
 runtime.
 
+The Release executable built inside this repository also starts the local API
+and worker automatically when it can find the repository `.env` and
+`pnpm-workspace.yaml`. It stops the child process tree when the desktop app
+exits. A copied executable outside the repository will not have that runtime
+until the backend resources are bundled into a future installer.
+
 The current release is intentionally local-first. Do not create a cloud
 database, purchase a server, or copy the local PostgreSQL data directory.
 Remote deployment is deferred until a separate product decision explicitly
