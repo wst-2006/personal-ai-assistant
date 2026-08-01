@@ -50,4 +50,24 @@ describe("FocusTimerWorker", () => {
     await expect(worker.processNext(now)).resolves.toBe("cancelled");
     expect(execute).toHaveBeenCalledTimes(3);
   });
+
+  it("advances a structure segment and schedules the next boundary", async () => {
+    const job: FocusTimerJob = {
+      id: "job-4", focusSessionId: "session-4", kind: "segment_transition",
+      expectedSessionVersion: 4, dueAt: now, attempts: 1
+    };
+    const execute = vi.fn()
+      .mockResolvedValueOnce({ rows: [job] })
+      .mockResolvedValueOnce({ rows: [{ id: "session-4", taskId: "task-4", state: "running", version: 4, startedAt: new Date("2026-07-29T01:00:00.000Z"), activeSinceAt: new Date("2026-07-29T01:00:00.000Z"), plannedEndAt: new Date("2026-07-29T03:00:00.000Z"), rawActiveSeconds: 0, focusStructureId: "structure-4", currentSegmentPosition: 0 }] })
+      .mockResolvedValueOnce({ rows: [{ totalStartAt: new Date("2026-07-29T01:00:00.000Z") }] })
+      .mockResolvedValueOnce({ rows: [{ position: 0, segmentType: "focus", durationMinutes: 55 }, { position: 1, segmentType: "break", durationMinutes: 5 }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+    const worker = new FocusTimerWorker({ execute } as unknown as AppDatabase);
+    await expect(worker.processNext(now)).resolves.toBe("completed");
+    expect(execute).toHaveBeenCalledTimes(9);
+  });
 });

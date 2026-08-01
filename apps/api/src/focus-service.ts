@@ -124,6 +124,7 @@ export class FocusService {
         if (positioned) {
           await transaction.update(focusSessionSegmentRuns).set({ startedAt: now, updatedAt: now })
             .where(and(eq(focusSessionSegmentRuns.focusSessionId, id), eq(focusSessionSegmentRuns.position, position.position)));
+          await this.scheduleSegmentTransition(transaction as AppDatabase, positioned, execution!, position.position, now);
           return positioned;
         }
       }
@@ -265,6 +266,28 @@ export class FocusService {
       .orderBy(asc(focusStructureSegments.position));
   }
 
+  private async scheduleSegmentTransition(
+    db: AppDatabase,
+    session: StoredFocusSession,
+    execution: { structure: typeof focusStructures.$inferSelect; segments: Array<{ position: number; durationMinutes: number }> },
+    position: number,
+    now: Date
+  ): Promise<void> {
+    const dueAt = segmentEndAt(execution.structure.totalStartAt, execution.segments, position);
+    if (!dueAt || dueAt <= now) return;
+    await db.insert(focusTimerJobs).values({
+      id: randomUUID(),
+      focusSessionId: session.id,
+      kind: "segment_transition",
+      expectedSessionVersion: session.version,
+      dueAt,
+      status: "pending",
+      attempts: 0,
+      createdAt: now,
+      updatedAt: now
+    }).onConflictDoNothing();
+  }
+
   private async materializePreparation(db: AppDatabase, current: StoredFocusSession, now: Date): Promise<StoredFocusSession> {
     if (current.state === "reminded" && current.remindedAt && now.getTime() - current.remindedAt.getTime() >= 300_000) {
       const [stopped] = await db.update(focusSessions).set({ state: "stopped_no_response", endedAt: now, stoppedReason: "5 分钟未响应", version: current.version + 1, updatedAt: now })
@@ -299,6 +322,7 @@ export class FocusService {
         if (positioned) {
           await db.update(focusSessionSegmentRuns).set({ startedAt: now, updatedAt: now })
             .where(and(eq(focusSessionSegmentRuns.focusSessionId, updated.id), eq(focusSessionSegmentRuns.position, position.position)));
+          await this.scheduleSegmentTransition(db, positioned, execution!, position.position, now);
           return positioned;
         }
       }
@@ -360,4 +384,14 @@ function locateSegment(
     cursor = end;
   }
   return null;
+}
+
+function segmentEndAt(
+  structureStartAt: Date,
+  segments: Array<{ durationMinutes: number }>,
+  position: number
+): Date | null {
+  if (position < 0 || position >= segments.length) return null;
+  const minutes = segments.slice(0, position + 1).reduce((sum, segment) => sum + segment.durationMinutes, 0);
+  return new Date(structureStartAt.getTime() + minutes * 60_000);
 }

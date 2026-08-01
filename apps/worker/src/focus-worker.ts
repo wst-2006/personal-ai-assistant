@@ -38,12 +38,15 @@ export class FocusTimerWorker {
     try {
       const sessionResult = await this.db.execute(sql`
         SELECT id, task_id AS "taskId", state, version,
-          started_at AS "startedAt", active_since_at AS "activeSinceAt"
+          started_at AS "startedAt", active_since_at AS "activeSinceAt",
+          planned_end_at AS "plannedEndAt", raw_active_seconds AS "rawActiveSeconds",
+          focus_structure_id AS "focusStructureId", current_segment_position AS "currentSegmentPosition"
         FROM focus_sessions WHERE id = ${job.focusSessionId} LIMIT 1
       `);
       const session = sessionResult.rows[0] as {
         id: string; taskId: string; state: string; version: number;
-        startedAt: Date | null; activeSinceAt: Date | null;
+        startedAt: Date | null; activeSinceAt: Date | null; plannedEndAt: Date | null;
+        rawActiveSeconds: number; focusStructureId: string | null; currentSegmentPosition: number | null;
       } | undefined;
       if (!session || session.version !== job.expectedSessionVersion) {
         await this.cancelJob(job.id, "focus session version changed", now);
@@ -90,11 +93,119 @@ export class FocusTimerWorker {
           SET lifecycle_status = 'active', version = version + 1, updated_at = ${now}
           WHERE id = ${task.id} AND lifecycle_status = 'open'
         `);
+        if (session.focusStructureId) {
+          const structureResult = await this.db.execute(sql`
+            SELECT total_start_at AS "totalStartAt"
+            FROM focus_structures WHERE id = ${session.focusStructureId} AND state = 'active' LIMIT 1
+          `);
+          const segmentsResult = await this.db.execute(sql`
+            SELECT position, segment_type AS "segmentType", duration_minutes AS "durationMinutes"
+            FROM focus_structure_segments WHERE focus_structure_id = ${session.focusStructureId}
+            ORDER BY position
+          `);
+          const structure = structureResult.rows[0] as { totalStartAt: Date } | undefined;
+          const segments = segmentsResult.rows as Array<{ position: number; segmentType: string; durationMinutes: number }>;
+          const position = structure ? locateSegment(new Date(structure.totalStartAt), segments, now) : null;
+          if (position) {
+            await this.db.execute(sql`
+              UPDATE focus_sessions
+              SET current_segment_position = ${position.position}, current_segment_started_at = ${position.startedAt},
+                current_segment_elapsed_seconds = ${position.elapsedSeconds}, updated_at = ${now}
+              WHERE id = ${session.id} AND version = ${job.expectedSessionVersion + 1} AND state = 'running'
+            `);
+            await this.db.execute(sql`
+              UPDATE focus_session_segment_runs SET started_at = ${now}, updated_at = ${now}
+              WHERE focus_session_id = ${session.id} AND position = ${position.position}
+            `);
+            const dueAt = segmentEndAt(new Date(structure!.totalStartAt), segments, position.position);
+            if (dueAt && dueAt > now) {
+              await this.db.execute(sql`
+                INSERT INTO focus_timer_jobs (id, focus_session_id, kind, expected_session_version, due_at, status, attempts, created_at, updated_at)
+                VALUES (gen_random_uuid(), ${session.id}, 'segment_transition', ${job.expectedSessionVersion + 1}, ${dueAt}, 'pending', 0, ${now}, ${now})
+                ON CONFLICT (focus_session_id, kind) WHERE status IN ('pending', 'processing') DO NOTHING
+              `);
+            }
+          }
+        }
         await this.completeJob(job.id, now);
         return "completed";
       }
 
-      await this.cancelJob(job.id, "segment transitions are handled by the session executor", now);
+      if (job.kind === "segment_transition") {
+        if (session.state !== "running" || !session.focusStructureId || session.currentSegmentPosition === null) {
+          await this.cancelJob(job.id, "focus session is no longer running a structure", now);
+          return "cancelled";
+        }
+        const structureResult = await this.db.execute(sql`
+          SELECT total_start_at AS "totalStartAt"
+          FROM focus_structures WHERE id = ${session.focusStructureId} AND state = 'active' LIMIT 1
+        `);
+        const structure = structureResult.rows[0] as { totalStartAt: Date } | undefined;
+        const segmentsResult = await this.db.execute(sql`
+          SELECT position, segment_type AS "segmentType", duration_minutes AS "durationMinutes"
+          FROM focus_structure_segments WHERE focus_structure_id = ${session.focusStructureId}
+          ORDER BY position
+        `);
+        const segments = segmentsResult.rows as Array<{ position: number; segmentType: string; durationMinutes: number }>;
+        if (!structure || segments.length === 0) {
+          await this.cancelJob(job.id, "focus structure is missing", now);
+          return "cancelled";
+        }
+        const currentPosition = session.currentSegmentPosition;
+        const boundary = segmentEndAt(new Date(structure.totalStartAt), segments, currentPosition);
+        const nextPosition = currentPosition + 1;
+        if (!boundary || nextPosition >= segments.length) {
+          const raw = session.activeSinceAt && session.plannedEndAt
+            ? session.rawActiveSeconds + Math.max(0, Math.floor((Math.min(now.getTime(), new Date(session.plannedEndAt).getTime()) - new Date(session.activeSinceAt).getTime()) / 1000))
+            : session.rawActiveSeconds;
+          await this.db.execute(sql`
+            UPDATE focus_sessions
+            SET state = 'ended', raw_active_seconds = ${raw}, active_since_at = NULL,
+              ended_at = ${boundary ?? now}, version = version + 1, updated_at = ${now}
+            WHERE id = ${session.id} AND version = ${job.expectedSessionVersion} AND state = 'running'
+          `);
+          await this.db.execute(sql`
+            UPDATE tasks SET lifecycle_status = 'awaiting_outcome', version = version + 1, updated_at = ${now}
+            WHERE id = ${session.taskId} AND lifecycle_status = 'active'
+          `);
+          await this.db.execute(sql`
+            INSERT INTO task_lifecycle_events (id, task_id, from_status, to_status, source, reason)
+            SELECT gen_random_uuid(), ${session.taskId}, 'active', 'awaiting_outcome', 'system', 'focus structure completed'
+            WHERE EXISTS (SELECT 1 FROM tasks WHERE id = ${session.taskId} AND lifecycle_status = 'awaiting_outcome')
+          `);
+          await this.completeJob(job.id, now);
+          return "completed";
+        }
+
+        const nextDueAt = segmentEndAt(new Date(structure.totalStartAt), segments, nextPosition);
+        await this.db.execute(sql`
+          UPDATE focus_session_segment_runs
+          SET completed_at = ${boundary}, elapsed_seconds = planned_duration_seconds, updated_at = ${now}
+          WHERE focus_session_id = ${session.id} AND position = ${currentPosition}
+        `);
+        await this.db.execute(sql`
+          UPDATE focus_session_segment_runs
+          SET started_at = ${boundary}, updated_at = ${now}
+          WHERE focus_session_id = ${session.id} AND position = ${nextPosition}
+        `);
+        await this.db.execute(sql`
+          UPDATE focus_sessions
+          SET current_segment_position = ${nextPosition}, current_segment_started_at = ${boundary},
+            current_segment_elapsed_seconds = 0, version = version + 1, updated_at = ${now}
+          WHERE id = ${session.id} AND version = ${job.expectedSessionVersion} AND state = 'running'
+        `);
+        if (nextDueAt) {
+          await this.db.execute(sql`
+            INSERT INTO focus_timer_jobs (id, focus_session_id, kind, expected_session_version, due_at, status, attempts, created_at, updated_at)
+            VALUES (gen_random_uuid(), ${session.id}, 'segment_transition', ${job.expectedSessionVersion + 1}, ${nextDueAt}, 'pending', 0, ${now}, ${now})
+            ON CONFLICT (focus_session_id, kind) WHERE status IN ('pending', 'processing') DO NOTHING
+          `);
+        }
+        await this.completeJob(job.id, now);
+        return "completed";
+      }
+
+      await this.cancelJob(job.id, "unsupported focus timer job", now);
       return "cancelled";
     } catch (error) {
       await this.failJob(job.id, error instanceof Error ? error.message : "unknown focus timer error", job.attempts, now);
@@ -118,4 +229,30 @@ export class FocusTimerWorker {
       WHERE id = ${id} AND status = 'processing'
     `);
   }
+}
+
+function segmentEndAt(
+  structureStartAt: Date,
+  segments: Array<{ durationMinutes: number }>,
+  position: number
+): Date | null {
+  if (position < 0 || position >= segments.length) return null;
+  const minutes = segments.slice(0, position + 1).reduce((sum, segment) => sum + segment.durationMinutes, 0);
+  return new Date(structureStartAt.getTime() + minutes * 60_000);
+}
+
+function locateSegment(
+  structureStartAt: Date,
+  segments: Array<{ position: number; durationMinutes: number }>,
+  now: Date
+): { position: number; startedAt: Date; elapsedSeconds: number } | null {
+  let cursor = structureStartAt.getTime();
+  for (const segment of segments) {
+    const end = cursor + segment.durationMinutes * 60_000;
+    if (now.getTime() < end) {
+      return { position: segment.position, startedAt: new Date(cursor), elapsedSeconds: Math.max(0, Math.floor((now.getTime() - cursor) / 1000)) };
+    }
+    cursor = end;
+  }
+  return null;
 }
