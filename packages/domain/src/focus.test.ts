@@ -46,6 +46,15 @@ describe("focus structure allocation", () => {
       : [{ segmentType: "focus", durationMinutes: focus }, { segmentType: "break", durationMinutes: rest }]);
   });
 
+  it("accepts an explicit zero break for a 30-minute task", () => {
+    const result = allocateContinuousFocusStructure({
+      totalStartAt: start,
+      totalEndAt: "2026-07-27T09:30:00+08:00",
+      breakMinutes: 0
+    });
+    expect(result.segments).toEqual([{ segmentType: "focus", durationMinutes: 30 }]);
+  });
+
   it("counts only focus segments and clips a late start at the fixed end", () => {
     const structure = allocateContinuousFocusStructure({
       totalStartAt: start,
@@ -103,5 +112,20 @@ describe("focus structure allocation", () => {
       ]
     });
     expect(result.effectiveFocusMinutes).toBe(110);
+  });
+
+  it("allows a final break in a segmented structure", () => {
+    const result = validateSegmentedFocusStructure({
+      totalStartAt: start,
+      totalEndAt: "2026-07-27T11:00:00+08:00",
+      segments: [
+        { segmentType: "focus", durationMinutes: 30 },
+        { segmentType: "break", durationMinutes: 15 },
+        { segmentType: "focus", durationMinutes: 70 },
+        { segmentType: "break", durationMinutes: 5 }
+      ]
+    });
+    expect(result.effectiveFocusMinutes).toBe(100);
+    expect(result.breakMinutes).toBe(20);
   });
 });

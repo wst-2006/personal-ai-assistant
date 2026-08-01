@@ -155,8 +155,11 @@ export function allocateContinuousFocusStructure(input: {
   }
 
   const requestedBreak = input.breakMinutes ?? 5;
-  if (!Number.isInteger(requestedBreak) || requestedBreak < 5 || requestedBreak > 15) {
-    throw new Error("Break duration must be between 5 and 15 minutes");
+  if (!Number.isInteger(requestedBreak) || requestedBreak < 0 || requestedBreak > 15) {
+    throw new Error("Break duration must be between 0 and 15 minutes");
+  }
+  if (totalMinutes > 30 && requestedBreak < 5) {
+    throw new Error("Tasks longer than 30 minutes require a 5-15 minute final break");
   }
 
   const breakMinutes = totalMinutes <= 30 ? 0 : requestedBreak;
@@ -169,8 +172,9 @@ export function allocateContinuousFocusStructure(input: {
 }
 
 /**
- * Validates a user-provided segmented plan. The final segment must end at the
- * task's fixed end; no operation is allowed to extend the task interval.
+ * Validates a user-provided segmented plan. The final segment may be a break:
+ * a long plan can reserve its final minutes for rest while still ending at the
+ * task's fixed end. No operation is allowed to extend the task interval.
  */
 export function validateSegmentedFocusStructure(input: {
   totalStartAt: Date | string;
@@ -188,8 +192,8 @@ export function validateSegmentedFocusStructure(input: {
   const segments = parsed.data;
   const minutes = segments.reduce((sum, segment) => sum + segment.durationMinutes, 0);
   if (minutes !== totalMinutes) throw new Error("Focus segments must exactly fill the fixed task interval");
-  if (segments[0]?.segmentType !== "focus" || segments.at(-1)?.segmentType !== "focus") {
-    throw new Error("A focus structure must start and end with focus");
+  if (segments[0]?.segmentType !== "focus" || !segments.some((segment) => segment.segmentType === "focus")) {
+    throw new Error("A focus structure must start with a focus segment");
   }
   for (let index = 1; index < segments.length; index += 1) {
     if (segments[index]?.segmentType === segments[index - 1]?.segmentType) {
@@ -222,8 +226,10 @@ function validateFocusStructureInput(input: FocusStructureInputShape, context: z
   }
   if (input.mode === "continuous") {
     if (input.segments !== undefined) context.addIssue({ code: z.ZodIssueCode.custom, path: ["segments"], message: "Continuous structures are allocated by the server" });
-    if (input.breakMinutes < 5 || input.breakMinutes > 15) {
-      context.addIssue({ code: z.ZodIssueCode.custom, path: ["breakMinutes"], message: "Break duration must be between 5 and 15 minutes" });
+    if (input.breakMinutes > 15 || (totalMinutes > 30 && input.breakMinutes < 5)) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ["breakMinutes"], message: totalMinutes > 30
+        ? "Tasks longer than 30 minutes require a 5-15 minute final break"
+        : "Break duration must be between 0 and 15 minutes" });
     }
   } else if (!input.segments) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ["segments"], message: "Segmented structures require segments" });
