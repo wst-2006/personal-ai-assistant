@@ -7,6 +7,7 @@ import { loadServerConfig } from "./config.js";
 import { PostgresTaskStore } from "./task-repository.js";
 import { TaskService } from "./task-service.js";
 import { FocusService } from "./focus-service.js";
+import { FocusStructureService } from "./focus-structure-service.js";
 import { ReviewService } from "./review-service.js";
 import { BriefService } from "./brief-service.js";
 import { DiaryService } from "./diary-service.js";
@@ -18,10 +19,12 @@ const database = await connectVerifiedDatabase(loadDatabaseConfig());
 const taskStore = new PostgresTaskStore(database.db);
 const taskService = new TaskService(taskStore);
 const focusService = new FocusService(database.db);
+const focusStructureService = new FocusStructureService(database.db);
 const feishuConfig = loadFeishuWebhookConfig(process.env);
 const app = buildApp({
   taskService,
   focusService,
+  focusStructureService,
   reviewService: new ReviewService(database.db),
   briefService: new BriefService(database.db),
   diaryService: new DiaryService(database.db),

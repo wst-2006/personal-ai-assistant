@@ -7,6 +7,8 @@ import { taskRoutes } from "./task-routes.js";
 import type { TaskService } from "./task-service.js";
 import { focusRoutes } from "./focus-routes.js";
 import type { FocusService } from "./focus-service.js";
+import { focusStructureRoutes } from "./focus-structure-routes.js";
+import type { FocusStructureService } from "./focus-structure-service.js";
 import { reviewRoutes } from "./review-routes.js";
 import type { ReviewService } from "./review-service.js";
 import { briefRoutes } from "./brief-routes.js";
@@ -25,6 +27,7 @@ declare module "fastify" {
 type AppOptions = {
   taskService?: TaskService;
   focusService?: FocusService;
+  focusStructureService?: FocusStructureService;
   reviewService?: ReviewService;
   briefService?: BriefService;
   diaryService?: DiaryService;
@@ -67,6 +70,7 @@ export function buildApp(options: AppOptions = {}) {
 
   if (options.taskService) app.register(inboxRoutes, { prefix: "/api/v1", taskService: options.taskService });
   if (options.focusService) app.register(focusRoutes, { prefix: "/api/v1", focusService: options.focusService });
+  if (options.focusStructureService) app.register(focusStructureRoutes, { prefix: "/api/v1", focusStructureService: options.focusStructureService });
   if (options.reviewService) app.register(reviewRoutes, { prefix: "/api/v1", reviewService: options.reviewService });
   if (options.briefService) app.register(briefRoutes, { prefix: "/api/v1", briefService: options.briefService });
   if (options.diaryService) app.register(diaryRoutes, { prefix: "/api/v1", diaryService: options.diaryService });
