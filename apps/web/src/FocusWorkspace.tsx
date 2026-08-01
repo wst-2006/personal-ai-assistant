@@ -21,7 +21,10 @@ type Task = {
   plannedEffortMinutes: number | null;
   difficulty: "low" | "medium" | "high" | null;
   requiresContinuousFocus: boolean | null;
+  scheduleKind: "none" | "daypart" | "exact";
   startAt: string | null;
+  endAt: string | null;
+  scheduleRevision: number;
   version: number;
 };
 type FocusState =
@@ -40,8 +43,17 @@ type Session = {
   activeSinceAt: string | null;
   rawActiveSeconds: number;
   effectiveFocusSeconds: number;
+  focusStructureId: string | null;
+  currentSegmentPosition: number | null;
+  currentSegmentElapsedSeconds: number;
   version: number;
   stoppedReason: string | null;
+};
+type FocusStructure = {
+  id: string;
+  state: "candidate" | "active" | "superseded" | "invalidated" | "cancelled";
+  version: number;
+  segments: Array<{ position: number; segmentType: "focus" | "break"; durationMinutes: number }>;
 };
 type Outcome = "not_completed" | "partial" | "complete";
 type Satisfaction = "satisfied" | "neutral" | "dissatisfied";
@@ -86,6 +98,8 @@ export function FocusWorkspace({
 }) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [session, setSession] = useState<Session | null>(null);
+  const [activeStructure, setActiveStructure] = useState<FocusStructure | null>(null);
+  const [breakMinutes, setBreakMinutes] = useState("5");
   const [selectedId, setSelectedId] = useState<string | null>(preferredTaskId);
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -119,6 +133,19 @@ export function FocusWorkspace({
       tasks.find((task) => task.id === (session?.taskId ?? selectedId)) ?? null,
     [tasks, session, selectedId],
   );
+  useEffect(() => {
+    if (!selected || selected.scheduleKind !== "exact") {
+      setActiveStructure(null);
+      return;
+    }
+    let cancelled = false;
+    void request<{ focusStructures: FocusStructure[] }>(`/api/v1/tasks/${selected.id}/focus-structures`)
+      .then((result) => {
+        if (!cancelled) setActiveStructure(result.focusStructures.find((item) => item.state === "active") ?? null);
+      })
+      .catch(() => { if (!cancelled) setActiveStructure(null); });
+    return () => { cancelled = true; };
+  }, [selected]);
   useEffect(() => {
     if (!session) return;
     const update = () => {
@@ -174,11 +201,41 @@ export function FocusWorkspace({
     return () => { cancelled = true; };
   }, [session, tasks]);
 
+  async function ensureStructure(task: Task): Promise<void> {
+    if (task.scheduleKind !== "exact" || !task.startAt || !task.endAt) return;
+    if (activeStructure?.state === "active") return;
+    const candidate = await request<{ focusStructure: FocusStructure }>(
+      "/api/v1/focus-structures/candidates",
+      "POST",
+      {
+        taskId: task.id,
+        taskVersion: task.version,
+        taskScheduleRevision: task.scheduleRevision,
+        source: "manual",
+        mode: "continuous",
+        totalStartAt: task.startAt,
+        totalEndAt: task.endAt,
+        breakMinutes: Number(breakMinutes)
+      }
+    );
+    const confirmed = await request<{ focusStructure: FocusStructure }>(
+      `/api/v1/focus-structures/${candidate.focusStructure.id}/confirm`,
+      "POST",
+      {
+        expectedVersion: candidate.focusStructure.version,
+        expectedTaskVersion: task.version,
+        expectedTaskScheduleRevision: task.scheduleRevision
+      }
+    );
+    setActiveStructure(confirmed.focusStructure);
+  }
+
   async function begin(mode: "prepare" | "remind" = "prepare") {
     if (!selected) return;
     setBusy(true);
     setError(null);
     try {
+      if (mode === "prepare") await ensureStructure(selected);
       const result = await request<{ session: Session }>(
         "/api/v1/focus-sessions",
         "POST",
@@ -282,6 +339,9 @@ export function FocusWorkspace({
           1000,
       )
     : 0;
+  const selectedMinutes = selected?.startAt && selected.endAt
+    ? Math.round((new Date(selected.endAt).getTime() - new Date(selected.startAt).getTime()) / 60_000)
+    : null;
   return (
     <section className="focus-workspace page" aria-labelledby="focus-title">
       <div className="focus-stage">
@@ -312,6 +372,11 @@ export function FocusWorkspace({
               ? `${selected.plannedEffortMinutes ?? 25} 分钟预计投入 · ${difficulty[selected.difficulty ?? "medium"]}${selected.requiresContinuousFocus ? " · 连续专注" : ""}`
               : "从今日时间轴或右侧列表选择任务"}
           </p>
+          {session && activeStructure && session.currentSegmentPosition !== null && (
+            <p className="focus-segment-status">
+              第 {session.currentSegmentPosition + 1} 段 · {activeStructure.segments[session.currentSegmentPosition]?.segmentType === "break" ? "休息" : "专注"}
+            </p>
+          )}
           <div
             className={`focus-timer ${stage === "running" ? "running" : ""}`}
           >
@@ -372,6 +437,31 @@ export function FocusWorkspace({
               </div>
             </div>
           )}
+          {!session && selected?.scheduleKind === "exact" && !activeStructure && (
+            <section className="focus-structure-panel" aria-label="专注结构">
+              <p className="section-kicker">先确定执行结构</p>
+              <strong>连续专注</strong>
+              <p>
+                {selectedMinutes !== null && selectedMinutes <= 30
+                  ? "30 分钟任务保持连续专注，不插入休息。"
+                  : "最后保留一段休息，任务总结束时间不变。"}
+              </p>
+              {selectedMinutes !== null && selectedMinutes > 30 && (
+                <label>
+                  末尾休息
+                  <input
+                    type="number"
+                    min="5"
+                    max="15"
+                    step="1"
+                    value={breakMinutes}
+                    onChange={(event) => setBreakMinutes(event.target.value)}
+                  />
+                  <em>分钟</em>
+                </label>
+              )}
+            </section>
+          )}
           <div className="focus-controls">
             {stage === "running" && (
               <>
@@ -392,7 +482,7 @@ export function FocusWorkspace({
                 onClick={() => void begin()}
               >
                 <Play />
-                开始专注
+                {selected?.scheduleKind === "exact" && !activeStructure ? "确认结构并开始" : "开始专注"}
               </button>
             )}
             {stage === "ended" && (

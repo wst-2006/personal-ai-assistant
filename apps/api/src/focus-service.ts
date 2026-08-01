@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { AppDatabase } from "@personal-ai/db/client";
-import { focusSessionSegmentRuns, focusSessions, focusStructureSegments, focusStructures, taskFeedback, taskLifecycleEvents, taskOutcomes, tasks } from "@personal-ai/db/schema";
+import { focusSessionSegmentRuns, focusSessions, focusStructureSegments, focusStructures, focusTimerJobs, taskFeedback, taskLifecycleEvents, taskOutcomes, tasks } from "@personal-ai/db/schema";
 import { calculateEffectiveFocusSeconds, type FocusSatisfaction, type FocusSessionState } from "@personal-ai/domain/focus";
 import type { TaskOutcome } from "@personal-ai/domain/task";
 import { syncTaskStartReminder } from "./reminder-scheduler.js";
@@ -55,6 +55,7 @@ export class FocusService {
         id: randomUUID(), taskId, state: mode === "remind" ? "reminded" : "preparing",
         plannedStartAt: task.startAt, plannedEndAt: task.endAt, remindedAt: mode === "remind" ? now : null,
         preparingEndsAt: mode === "remind" ? null : new Date(now.getTime() + 60_000),
+        confirmationDeadlineAt: mode === "remind" ? new Date(now.getTime() + 300_000) : null,
         startedAt: null, activeSinceAt: null,
         focusStructureId: execution?.structure.id ?? null,
         focusStructureVersion: execution?.structure.version ?? null,
@@ -73,6 +74,17 @@ export class FocusService {
           createdAt: now, updatedAt: now
         })));
       }
+      await transaction.insert(focusTimerJobs).values({
+        id: randomUUID(),
+        focusSessionId: created.id,
+        kind: mode === "remind" ? "confirmation_timeout" : "preparation_complete",
+        expectedSessionVersion: created.version,
+        dueAt: mode === "remind" ? created.confirmationDeadlineAt! : created.preparingEndsAt!,
+        status: "pending",
+        attempts: 0,
+        createdAt: now,
+        updatedAt: now
+      });
       return created;
     });
   }
@@ -125,11 +137,24 @@ export class FocusService {
       const current = await this.requireCurrent(transaction as AppDatabase, id, expectedVersion);
       if (current.state !== "reminded") throw new FocusTransitionError(current.state, "respond to reminder for");
       const changes = decision === "start"
-        ? { state: "preparing", preparingEndsAt: new Date(now.getTime() + 60_000), version: current.version + 1, updatedAt: now }
+        ? { state: "preparing", preparingEndsAt: new Date(now.getTime() + 60_000), confirmationDeadlineAt: null, version: current.version + 1, updatedAt: now }
         : { state: "stopped_for_change", endedAt: now, stoppedReason: "另有安排", version: current.version + 1, updatedAt: now };
       const [updated] = await transaction.update(focusSessions).set(changes)
         .where(and(eq(focusSessions.id, id), eq(focusSessions.version, expectedVersion))).returning();
       if (!updated) throw new FocusVersionConflictError(await this.requireCurrent(transaction as AppDatabase, id));
+      if (decision === "start") {
+        await transaction.insert(focusTimerJobs).values({
+          id: randomUUID(),
+          focusSessionId: updated.id,
+          kind: "preparation_complete",
+          expectedSessionVersion: updated.version,
+          dueAt: updated.preparingEndsAt!,
+          status: "pending",
+          attempts: 0,
+          createdAt: now,
+          updatedAt: now
+        });
+      }
       return updated;
     });
   }

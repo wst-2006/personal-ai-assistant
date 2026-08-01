@@ -1,4 +1,8 @@
 import { expect, test, type APIRequestContext } from "@playwright/test";
+import { connectVerifiedDatabase } from "@personal-ai/db/client";
+import { loadDatabaseConfig } from "@personal-ai/db/config";
+import { focusSessions } from "@personal-ai/db/schema";
+import { eq } from "drizzle-orm";
 
 const apiBase = "http://127.0.0.1:3000";
 
@@ -6,7 +10,7 @@ async function cleanup(request:APIRequestContext, id:string) {
   const current=await request.get(`${apiBase}/api/v1/focus-sessions/current`);
   if(current.ok()) {
     const session=(await current.json()).session as {id:string;taskId:string;state:string;version:number}|null;
-    if(session?.taskId===id && (session.state==="running"||session.state==="paused")) {
+    if(session?.taskId===id && session.state==="running") {
       const ended=await request.post(`${apiBase}/api/v1/focus-sessions/${session.id}/end`,{data:{expectedVersion:session.version,reason:"focus e2e cleanup"}});
       if(ended.ok()) {
         const value=(await ended.json()).session as {version:number};
@@ -20,29 +24,35 @@ async function cleanup(request:APIRequestContext, id:string) {
   await request.delete(`${apiBase}/api/v1/tasks/${id}`,{data:{expectedVersion:task.version,reason:"focus e2e cleanup"}});
 }
 
-test("真实专注会话可暂停、恢复、结束、评估并在刷新后保持",async({page,request})=>{
+async function expirePreparation(id: string) {
+  const { client, db } = await connectVerifiedDatabase(loadDatabaseConfig());
+  try {
+    await db.update(focusSessions).set({ preparingEndsAt: new Date(Date.now() - 1_000) }).where(eq(focusSessions.id, id));
+  } finally {
+    await client.end();
+  }
+}
+
+test("真实专注会话可准备、结束、评估并在刷新后保持",async({page,request})=>{
+  test.setTimeout(120_000);
   const date=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Shanghai",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());
   const title=`E2E 专注会话 ${Date.now().toString(36)}`; let taskId="";
   try {
     const created=await request.post(`${apiBase}/api/v1/tasks`,{data:{title,scheduleKind:"none",localDate:date,timeZone:"Asia/Shanghai",plannedEffortMinutes:45,difficulty:"high",requiresContinuousFocus:true}});
     expect(created.status()).toBe(201);
     const task=(await created.json()).task as {id:string;version:number}; taskId=task.id;
-    const started=await request.post(`${apiBase}/api/v1/focus-sessions`,{data:{taskId,expectedTaskVersion:task.version,mode:"restart"}});
+    const started=await request.post(`${apiBase}/api/v1/focus-sessions`,{data:{taskId,expectedTaskVersion:task.version,mode:"prepare"}});
     expect(started.status()).toBe(201);
+    const sessionId = ((await started.json()) as { session: { id: string } }).session.id;
+    await expirePreparation(sessionId);
 
     await page.goto("/");
     const focusNav=page.locator(".app-rail").getByRole("button",{name:"专注"}); await expect(focusNav).toHaveCount(1); await focusNav.click();
     await expect(page.getByRole("heading",{name:title})).toBeVisible();
-    await expect(page.getByRole("button",{name:"暂停专注"})).toBeVisible();
+    await expect(page.getByRole("button",{name:"结束并记录"})).toBeVisible();
     await page.reload();
     const restoredFocusNav=page.locator(".app-rail").getByRole("button",{name:"专注"}); await expect(restoredFocusNav).toHaveCount(1); await restoredFocusNav.click();
-    await expect(page.getByRole("button",{name:"暂停专注"})).toBeVisible();
-
-    const paused=page.waitForResponse(response=>response.url().endsWith("/pause")&&response.request().method()==="POST"&&response.status()===200);
-    await page.getByRole("button",{name:"暂停专注"}).click(); await paused;
-    await expect(page.getByRole("button",{name:"继续专注"})).toBeVisible();
-    const resumed=page.waitForResponse(response=>response.url().endsWith("/resume")&&response.request().method()==="POST"&&response.status()===200);
-    await page.getByRole("button",{name:"继续专注"}).click(); await resumed;
+    await expect(page.getByRole("button",{name:"结束并记录"})).toBeVisible();
     const ended=page.waitForResponse(response=>response.url().endsWith("/end")&&response.request().method()==="POST"&&response.status()===200);
     await page.getByRole("button",{name:"结束并记录"}).click(); await ended;
     await expect(page.getByRole("heading",{name:"完成情况与体验，都值得被记录。"})).toBeVisible();
@@ -60,7 +70,8 @@ test("真实专注会话可暂停、恢复、结束、评估并在刷新后保�
   } finally { if(taskId) await cleanup(request,taskId); }
 });
 
-test("390px 移动端可恢复真实专注会话并操作计时", async ({ page, request }) => {
+test("390px 移动端可恢复真实专注会话并结束计时", async ({ page, request }) => {
+  test.setTimeout(120_000);
   const date = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
   const title = `E2E 移动专注 ${Date.now().toString(36)}`;
   let taskId = "";
@@ -69,23 +80,21 @@ test("390px 移动端可恢复真实专注会话并操作计时", async ({ page,
     expect(created.status()).toBe(201);
     const task = (await created.json()).task as { id: string; version: number };
     taskId = task.id;
-    const started = await request.post(`${apiBase}/api/v1/focus-sessions`, { data: { taskId, expectedTaskVersion: task.version, mode: "restart" } });
+    const started = await request.post(`${apiBase}/api/v1/focus-sessions`, { data: { taskId, expectedTaskVersion: task.version, mode: "prepare" } });
     expect(started.status()).toBe(201);
+    const sessionId = ((await started.json()) as { session: { id: string } }).session.id;
+    await expirePreparation(sessionId);
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/");
     await page.locator(".mobile-nav").getByRole("button", { name: "专注", exact: true }).click();
     await expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "暂停专注", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "结束并记录", exact: true })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 
-    const paused = page.waitForResponse((response) => response.url().endsWith("/pause") && response.request().method() === "POST" && response.status() === 200);
-    await page.getByRole("button", { name: "暂停专注", exact: true }).click();
-    await paused;
-    await expect(page.getByRole("button", { name: "继续专注", exact: true })).toBeVisible();
     await page.reload();
     await page.locator(".mobile-nav").getByRole("button", { name: "专注", exact: true }).click();
-    await expect(page.getByRole("button", { name: "继续专注", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "结束并记录", exact: true })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   } finally {
     if (taskId) await cleanup(request, taskId);
