@@ -74,6 +74,12 @@ export class TaskTimeConflictError extends Error {
   }
 }
 
+export class TaskScheduleWindowError extends Error {
+  constructor(readonly earliestStartAt: Date) {
+    super("Today's current half-hour window is no longer available for scheduling.");
+  }
+}
+
 export class ConflictSetChangedError extends Error {
   constructor(readonly conflicts: TaskConflict[], readonly conflictSetFingerprint: string) {
     super("The blocking conflict set changed before confirmation.");
@@ -86,6 +92,7 @@ export class TaskService {
   async create(input: TaskInput): Promise<{ task: StoredTask; historicalOverlaps: TaskConflict[] }> {
     return this.store.runSerializable(async (transaction) => {
       const record = toNewTaskRecord(input);
+      assertScheduleWindow(record);
       const blocking = await this.findConflicts(transaction, record);
       await this.assertConflictDecision(transaction, record, blocking, input.conflictDecision, input.expectedConflictFingerprint);
       const task = await transaction.insertTask(record);
@@ -124,6 +131,7 @@ export class TaskService {
       const source = await transaction.getInboxEntry(id);
       if (!source || source.version !== expectedVersion || source.convertedAt) throw new InboxEntryConflictError(source);
       const record = { ...toNewTaskRecord(input), sourceInboxEntryId: id };
+      assertScheduleWindow(record);
       const blocking = await this.findConflicts(transaction, record);
       await this.assertConflictDecision(transaction, record, blocking, input.conflictDecision, input.expectedConflictFingerprint);
       const task = await transaction.insertTask(record);
@@ -192,6 +200,7 @@ export class TaskService {
       }
       this.assertEditable(current, patch);
       const normalized = mergeAndValidate(current, patch);
+      assertScheduleWindow(normalized);
       const scheduleChanged = hasScheduleSemanticChange(current, normalized);
       const target: NewTaskRecord = {
         ...normalized,
@@ -488,10 +497,6 @@ function toNewTaskRecord(input: TaskInput): NewTaskRecord {
     startAt,
     endAt,
     timeZone: input.timeZone,
-    plannedEffortMinutes: input.plannedEffortMinutes ?? null,
-    difficulty: input.difficulty ?? null,
-    taskType: input.taskType ?? null,
-    requiresContinuousFocus: input.requiresContinuousFocus ?? null,
     notes: input.notes ?? null,
     version: 1,
     scheduleRevision: 1
@@ -507,12 +512,6 @@ function mergeAndValidate(current: StoredTask, patch: TaskPatch): NewTaskRecord 
     startAt: patch.startAt !== undefined ? patch.startAt : current.startAt?.toISOString() ?? null,
     endAt: patch.endAt !== undefined ? patch.endAt : current.endAt?.toISOString() ?? null,
     timeZone: patch.timeZone ?? current.timeZone,
-    plannedEffortMinutes: patch.plannedEffortMinutes !== undefined ? patch.plannedEffortMinutes : current.plannedEffortMinutes,
-    difficulty: patch.difficulty !== undefined ? patch.difficulty : current.difficulty,
-    taskType: patch.taskType !== undefined ? patch.taskType : current.taskType,
-    requiresContinuousFocus: patch.requiresContinuousFocus !== undefined
-      ? patch.requiresContinuousFocus
-      : current.requiresContinuousFocus,
     notes: patch.notes !== undefined ? patch.notes : current.notes,
     conflictDecision: patch.conflictDecision,
     expectedConflictFingerprint: patch.expectedConflictFingerprint
@@ -540,6 +539,32 @@ function hasScheduleSemanticChange(current: StoredTask, next: NewTaskRecord): bo
     || current.startAt?.getTime() !== next.startAt?.getTime()
     || current.endAt?.getTime() !== next.endAt?.getTime()
     || current.timeZone !== next.timeZone;
+}
+
+function assertScheduleWindow(task: Pick<NewTaskRecord, "scheduleKind" | "startAt" | "endAt" | "timeZone">): void {
+  if (task.scheduleKind !== "exact" || !task.startAt || !task.endAt) return;
+  const now = new Date();
+  if (localDateAtTimeZone(task.startAt, task.timeZone) !== localDateAtTimeZone(now, task.timeZone)) return;
+  const nowParts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: task.timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).formatToParts(now);
+  const nowMinute = Number(nowParts.find((part) => part.type === "hour")?.value ?? 0) * 60
+    + Number(nowParts.find((part) => part.type === "minute")?.value ?? 0);
+  const earliestMinute = Math.min(24 * 60, (Math.floor(nowMinute / 30) + 1) * 30);
+  const startParts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: task.timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).formatToParts(task.startAt);
+  const startMinute = Number(startParts.find((part) => part.type === "hour")?.value ?? 0) * 60
+    + Number(startParts.find((part) => part.type === "minute")?.value ?? 0);
+  if (startMinute < earliestMinute) {
+    throw new TaskScheduleWindowError(new Date(task.startAt.getTime() + (earliestMinute - startMinute) * 60_000));
+  }
 }
 
 function isBlocking(status: string): boolean {

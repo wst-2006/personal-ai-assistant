@@ -49,10 +49,6 @@ export const tasks = pgTable(
     startAt: timestamp("start_at", { withTimezone: true }),
     endAt: timestamp("end_at", { withTimezone: true }),
     timeZone: varchar("time_zone", { length: 64 }).notNull().default("Asia/Shanghai"),
-    plannedEffortMinutes: integer("planned_effort_minutes"),
-    difficulty: varchar("difficulty", { length: 16 }),
-    taskType: varchar("task_type", { length: 80 }),
-    requiresContinuousFocus: boolean("requires_continuous_focus"),
     notes: text("notes"),
     version: integer("version").notNull().default(1),
     scheduleRevision: integer("schedule_revision").notNull().default(1),
@@ -89,10 +85,6 @@ export const tasks = pgTable(
         and extract(minute from ${table.endAt} at time zone ${table.timeZone}) in (0, 30)
         and extract(second from ${table.endAt} at time zone ${table.timeZone}) = 0
       )`
-    ),
-    check(
-      "tasks_planned_effort_check",
-      sql`${table.plannedEffortMinutes} is null or (${table.plannedEffortMinutes} between 1 and 1440)`
     ),
     check(
       "tasks_schedule_shape_check",

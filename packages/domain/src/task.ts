@@ -6,7 +6,6 @@ export const taskScheduleKindSchema = z.enum(["none", "daypart", "exact"]);
 export const taskDaypartSchema = z.enum(["morning", "afternoon", "evening"]);
 export const taskOutcomeSchema = z.enum(["not_completed", "partial", "complete"]);
 export const taskSatisfactionSchema = z.enum(["satisfied", "neutral", "dissatisfied"]);
-export const taskDifficultySchema = z.enum(["low", "medium", "high"]);
 export const taskEventSourceSchema = z.enum(["app", "ai", "feishu", "system"]);
 export const conflictDecisionSchema = z.enum(["reject", "keep"]);
 
@@ -22,10 +21,6 @@ const taskFields = {
   startAt: z.string().datetime({ offset: true }).nullable().optional(),
   endAt: z.string().datetime({ offset: true }).nullable().optional(),
   timeZone: ianaTimeZoneSchema.default("Asia/Shanghai"),
-  plannedEffortMinutes: z.number().int().positive().max(1440).nullable().optional(),
-  difficulty: taskDifficultySchema.nullable().optional(),
-  taskType: z.string().trim().max(80).nullable().optional(),
-  requiresContinuousFocus: z.boolean().nullable().optional(),
   notes: z.string().trim().max(4000).nullable().optional()
 };
 
@@ -48,10 +43,6 @@ export const taskPatchSchema = z.object({
   startAt: z.string().datetime({ offset: true }).nullable().optional(),
   endAt: z.string().datetime({ offset: true }).nullable().optional(),
   timeZone: ianaTimeZoneSchema.optional(),
-  plannedEffortMinutes: taskFields.plannedEffortMinutes,
-  difficulty: taskFields.difficulty,
-  taskType: taskFields.taskType,
-  requiresContinuousFocus: taskFields.requiresContinuousFocus,
   notes: taskFields.notes,
   conflictDecision: conflictDecisionSchema.default("reject"),
   expectedConflictFingerprint: z.string().min(1).max(128).optional()
@@ -109,10 +100,6 @@ export const naturalLanguageTaskCandidateSchema = z.object({
   date: z.string().date().nullable(),
   startAt: z.string().datetime({ offset: true }).nullable(),
   endAt: z.string().datetime({ offset: true }).nullable(),
-  plannedEffortMinutes: z.number().int().positive().max(1440).nullable(),
-  difficulty: taskDifficultySchema.nullable(),
-  taskType: z.string().trim().max(80).nullable(),
-  requiresContinuousFocus: z.boolean().nullable(),
   schedulePrecision: z.enum(["exact", "morning", "afternoon", "evening"]).nullable(),
   notes: z.string().trim().max(4000).nullable(),
   missingFields: z.array(z.enum([
@@ -120,16 +107,12 @@ export const naturalLanguageTaskCandidateSchema = z.object({
     "date",
     "startAt",
     "endAt",
-    "plannedEffortMinutes",
-    "difficulty",
-    "taskType",
-    "requiresContinuousFocus",
     "schedulePrecision",
     "notes"
   ]))
 }).strict().superRefine((candidate, context) => {
   if (candidate.entryType !== "task") {
-    for (const field of ["date", "startAt", "endAt", "plannedEffortMinutes", "difficulty", "taskType", "requiresContinuousFocus", "schedulePrecision"] as const) {
+    for (const field of ["date", "startAt", "endAt", "schedulePrecision"] as const) {
       if (candidate[field] !== null) context.addIssue({ code: z.ZodIssueCode.custom, path: [field], message: "Ideas and questions cannot contain task fields" });
     }
     return;

@@ -14,10 +14,6 @@ type NaturalLanguageTaskCandidate = {
   date: string | null;
   startAt: string | null;
   endAt: string | null;
-  plannedEffortMinutes: number | null;
-  difficulty: "low" | "medium" | "high" | null;
-  taskType: string | null;
-  requiresContinuousFocus: boolean | null;
   schedulePrecision: "exact" | "morning" | "afternoon" | "evening" | null;
   notes: string | null;
   missingFields: string[];
@@ -41,7 +37,6 @@ class ApiError extends Error {
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:3000";
 const entryLabels: Record<EntryType, string> = { task: "任务", idea: "想法", question: "问题" };
-const difficultyLabels = { low: "轻", medium: "中", high: "深" };
 const navItems: Array<{ id: View; label: string; icon: typeof CalendarDays }> = [
   { id: "today", label: "今日", icon: CalendarDays },
   { id: "focus", label: "专注", icon: Target },
@@ -169,10 +164,6 @@ export function App() {
           ...(exact ? { startAt: aiCandidate.startAt, endAt: aiCandidate.endAt } : {}),
           ...(daypart && aiCandidate.date ? { daypart } : {}),
           timeZone: "Asia/Shanghai",
-          ...(aiCandidate.plannedEffortMinutes ? { plannedEffortMinutes: aiCandidate.plannedEffortMinutes } : {}),
-          ...(aiCandidate.difficulty ? { difficulty: aiCandidate.difficulty } : {}),
-          ...(aiCandidate.taskType ? { taskType: aiCandidate.taskType } : {}),
-          ...(aiCandidate.requiresContinuousFocus !== null ? { requiresContinuousFocus: aiCandidate.requiresContinuousFocus } : {}),
           ...(aiCandidate.notes ? { notes: aiCandidate.notes } : {}),
         });
       }
@@ -243,7 +234,7 @@ export function App() {
             {selectedStandaloneBrief && <article className="standalone-brief-preview"><div><p>独立简报 · 已保存</p><button className="quiet-icon" type="button" aria-label="导出独立简报" onClick={() => exportStandaloneBrief(selectedStandaloneBrief)}><Download /></button></div><h3>{selectedStandaloneBrief.content.title}</h3><p>{selectedStandaloneBrief.content.reflection}</p><small>{selectedStandaloneBrief.content.taskSummary}</small></article>}
           </>}
         </section>
-      </div> : <div className="candidate-view"><p className="section-kicker">待你确认</p><div className="candidate-title"><span>{entryLabels[aiCandidate.entryType]}</span><h2>{aiCandidate.title}</h2></div><dl><div><dt>日期</dt><dd>{aiCandidate.date ?? "尚未确定"}</dd></div><div><dt>时间</dt><dd>{aiCandidate.startAt ? new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(aiCandidate.startAt)) : "尚未确定"}</dd></div><div><dt>预计投入</dt><dd>{aiCandidate.plannedEffortMinutes ? `${aiCandidate.plannedEffortMinutes} 分钟` : "尚未确定"}</dd></div><div><dt>难度</dt><dd>{aiCandidate.difficulty ? `${difficultyLabels[aiCandidate.difficulty]}量` : "尚未确定"}</dd></div></dl>{aiCandidate.missingFields.length > 0 && <p className="candidate-note">仍待确定：{aiCandidate.missingFields.map((field) => ({ taskType: "类型", requiresContinuousFocus: "连续专注", notes: "备注", date: "日期", startAt: "时间", endAt: "结束时间", plannedEffortMinutes: "预计投入", difficulty: "难度" }[field] ?? field)).join("、")}</p>}<button className="primary-button full-width" type="button" disabled={saving} onClick={() => void saveAiCandidate()}><Check />确认并保存</button><button className="text-button centered" type="button" onClick={() => setAiCandidate(null)}>返回修改原句</button></div>}
+      </div> : <div className="candidate-view"><p className="section-kicker">待你确认</p><div className="candidate-title"><span>{entryLabels[aiCandidate.entryType]}</span><h2>{aiCandidate.title}</h2></div><dl><div><dt>日期</dt><dd>{aiCandidate.date ?? "尚未确定"}</dd></div><div><dt>时间</dt><dd>{aiCandidate.startAt ? new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(aiCandidate.startAt)) : "尚未确定"}</dd></div><div><dt>备注</dt><dd>{aiCandidate.notes ?? "尚未填写"}</dd></div></dl>{aiCandidate.missingFields.length > 0 && <p className="candidate-note">仍待确定：{aiCandidate.missingFields.map((field) => ({ notes: "备注", date: "日期", startAt: "开始时间", endAt: "结束时间", schedulePrecision: "排期方式" }[field] ?? field)).join("、")}</p>}<button className="primary-button full-width" type="button" disabled={saving} onClick={() => void saveAiCandidate()}><Check />确认并保存</button><button className="text-button centered" type="button" onClick={() => setAiCandidate(null)}>返回修改原句</button></div>}
     </aside>
     {aiOpen && <button className="drawer-scrim" type="button" aria-label="关闭 AI 助手" onClick={() => setAiOpen(false)} />}
     <nav className="mobile-nav" aria-label="移动端主要导航">{navItems.map(({ id, label, icon: Icon }) => <button className={view === id ? "active" : ""} type="button" key={id} onClick={() => setView(id)}><Icon /><span>{label}</span></button>)}</nav>

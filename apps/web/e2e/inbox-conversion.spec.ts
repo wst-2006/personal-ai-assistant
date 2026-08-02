@@ -35,15 +35,11 @@ test("想法确认转换为正式任务后保留 inbox 源记录并持久恢复"
     await dialog.locator("select").nth(0).selectOption("exact");
     await dialog.locator('input[type="time"]').nth(0).fill("10:00");
     await dialog.locator('input[type="time"]').nth(1).fill("11:00");
-    await dialog.locator('input[type="number"]').fill("90");
-    await dialog.locator("select").nth(1).selectOption("high");
-    await dialog.locator("label").filter({ hasText: "任务类型" }).locator("input").fill("阅读");
-    await dialog.locator('input[type="checkbox"]').check();
     await dialog.locator("label.field-wide").last().locator("textarea").fill(`E2E 转换备注 ${suffix}`);
 
     const converted = page.waitForResponse((response) => response.url().endsWith(`/api/v1/inbox-entries/${entryId}/convert-to-task`) && response.request().method() === "POST" && response.status() === 201);
     await dialog.getByRole("button", { name: "确认并转为任务", exact: true }).click();
-    const conversion = (await (await converted).json()) as { entry: { id: string; convertedAt: string | null }; task: { id: string; sourceInboxEntryId: string | null; scheduleKind: string; localDate: string | null; startAt: string | null; endAt: string | null; plannedEffortMinutes: number | null; difficulty: string | null; taskType: string | null; requiresContinuousFocus: boolean | null } };
+    const conversion = (await (await converted).json()) as { entry: { id: string; convertedAt: string | null }; task: { id: string; sourceInboxEntryId: string | null; scheduleKind: string; localDate: string | null; startAt: string | null; endAt: string | null; notes: string | null } };
     taskId = conversion.task.id;
     expect(conversion.entry.id).toBe(entryId);
     expect(conversion.entry.convertedAt).toBeTruthy();
@@ -52,10 +48,7 @@ test("想法确认转换为正式任务后保留 inbox 源记录并持久恢复"
     expect(conversion.task.localDate).toBe(localDate);
     expect(conversion.task.startAt).toContain("02:00:00.000Z");
     expect(conversion.task.endAt).toContain("03:00:00.000Z");
-    expect(conversion.task.plannedEffortMinutes).toBe(90);
-    expect(conversion.task.difficulty).toBe("high");
-    expect(conversion.task.taskType).toBe("阅读");
-    expect(conversion.task.requiresContinuousFocus).toBe(true);
+    expect(conversion.task.notes).toBe(`E2E 转换备注 ${suffix}`);
 
     await expect(page.locator(`[data-task-id="${taskId}"]`)).toContainText(formalTitle);
     await page.reload();

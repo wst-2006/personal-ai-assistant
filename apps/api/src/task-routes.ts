@@ -12,6 +12,7 @@ import {
   ConflictSetChangedError,
   InvalidTaskTransitionError,
   TaskNotFoundError,
+  TaskScheduleWindowError,
   TaskScheduleRevisionConflictError,
   TaskService,
   TaskTimeConflictError,
@@ -143,6 +144,10 @@ function invalid(reply: FastifyReply, error: string, validation: ZodError) {
 }
 
 function taskError(reply: FastifyReply, error: unknown) {
+  if (error instanceof TaskScheduleWindowError) return reply.status(400).send({
+    error: "task_schedule_window_unavailable",
+    earliestStartAt: error.earliestStartAt.toISOString()
+  });
   if (error instanceof TaskNotFoundError) return reply.status(404).send({ error: "task_not_found" });
   if (error instanceof TaskVersionConflictError) {
     return reply.status(409).send({ error: "task_version_conflict", currentTask: error.currentTask });

@@ -37,8 +37,7 @@ describe("task endpoints", () => {
       payload: {
         title: "整理本周计划",
         scheduleKind: "none",
-        localDate: "2026-07-27",
-        plannedEffortMinutes: 30
+        localDate: "2026-07-27"
       }
     });
     expect(create.statusCode).toBe(201);
@@ -72,6 +71,35 @@ describe("task endpoints", () => {
     });
     expect(response.statusCode).toBe(400);
     expect(response.json().error).toBe("invalid_task");
+  });
+
+  it("rejects retired task metadata instead of silently persisting it", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/tasks",
+      payload: { title: "旧字段不应进入任务", scheduleKind: "none", plannedEffortMinutes: 30 }
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toBe("invalid_task");
+  });
+
+  it("rejects the current and already elapsed half-hour window for today's exact tasks", async () => {
+    const date = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit"
+    }).format(new Date());
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/tasks",
+      payload: {
+        title: "当前时间段不应创建",
+        scheduleKind: "exact",
+        startAt: `${date}T00:00:00+08:00`,
+        endAt: `${date}T00:30:00+08:00`,
+        timeZone: "Asia/Shanghai"
+      }
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toBe("task_schedule_window_unavailable");
   });
 });
 
@@ -124,9 +152,8 @@ describe("AI task parsing", () => {
         return {
           title: "学习线性代数", entryType: "task", date: "2026-07-28",
           startAt: "2026-07-28T09:00:00+08:00", endAt: "2026-07-28T10:00:00+08:00",
-          plannedEffortMinutes: 45, difficulty: "medium", taskType: null,
-          requiresContinuousFocus: null, schedulePrecision: "exact", notes: null,
-          missingFields: ["taskType", "requiresContinuousFocus", "notes"]
+          schedulePrecision: "exact", notes: null,
+          missingFields: ["notes"]
         };
       }
     };

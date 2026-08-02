@@ -45,7 +45,7 @@ export class GrowthService {
     const dissatisfied = feedback.filter((item) => item.satisfaction === "dissatisfied").length;
     const activeDays = days.filter((day) => day.focusMinutes > 0).length;
     const reviewedDays = new Set(messages.map((message) => message.reviewSessionId)).size;
-    const deepFocusMinutes = taskRows.filter((task) => task.requiresContinuousFocus).reduce((sum, task) => sum + (minutesByTask.get(task.id) ?? 0), 0);
+    const deepFocusMinutes = focusMinutes;
     const percentage = (value: number, total: number) => total ? Math.round(value / total * 100) : 0;
     const completion = percentage(closedTasks, plannedTasks);
     const quality = percentage(complete, outcomes.length);

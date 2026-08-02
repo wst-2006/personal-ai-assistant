@@ -40,7 +40,7 @@ export function buildDiaryDayData(taskRows: TaskRow[], sessions: FocusRow[], out
   const quality = percentage(completeCount, outcomeCount);
   const balance = percentage(satisfaction.satisfied + satisfaction.neutral, feedback.length);
   const focusMinutes = Math.round(effectiveFocusSeconds / 60);
-  const deepFocusMinutes = taskRows.filter((task) => task.requiresContinuousFocus).reduce((sum, task) => sum + Math.round((focusByTask.get(task.id)?.effectiveSeconds ?? 0) / 60), 0);
+  const deepFocusMinutes = focusMinutes;
   const radar = [
     { key: "focus", label: "专注", value: Math.min(100, Math.round(focusMinutes / 60 * 100)) },
     { key: "completion", label: "完成", value: completion },
@@ -53,7 +53,7 @@ export function buildDiaryDayData(taskRows: TaskRow[], sessions: FocusRow[], out
   return {
     tasks: taskRows.map((task) => ({
       id: task.id, title: task.title, lifecycleStatus: task.lifecycleStatus, scheduleKind: task.scheduleKind,
-      startAt: task.startAt, endAt: task.endAt, plannedEffortMinutes: task.plannedEffortMinutes, currentOutcome: task.currentOutcome,
+      startAt: task.startAt, endAt: task.endAt, currentOutcome: task.currentOutcome,
       focusMinutes: Math.round((focusByTask.get(task.id)?.effectiveSeconds ?? 0) / 60),
       rawFocusMinutes: Math.round((focusByTask.get(task.id)?.rawSeconds ?? 0) / 60),
       latestOutcome: latestOutcomeByTask.get(task.id)?.outcome ?? null

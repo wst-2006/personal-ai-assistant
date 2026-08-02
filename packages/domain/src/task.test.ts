@@ -80,25 +80,22 @@ describe("AI candidate validation", () => {
     date: "2026-07-27",
     startAt: "2026-07-27T09:00:00+08:00",
     endAt: "2026-07-27T10:00:00+08:00",
-    plannedEffortMinutes: 45,
-    difficulty: "medium" as const,
-    taskType: null,
-    requiresContinuousFocus: null,
     schedulePrecision: "exact" as const,
     notes: null,
-    missingFields: ["taskType", "requiresContinuousFocus", "notes"] as const
+    missingFields: ["notes"] as const
   };
 
-  it("uses the current planned-effort field and 30-minute exact boundaries", () => {
+  it("uses task timing only and 30-minute exact boundaries", () => {
     expect(naturalLanguageTaskCandidateSchema.safeParse(candidate).success).toBe(true);
     expect(naturalLanguageTaskCandidateSchema.safeParse({ ...candidate, endAt: "2026-07-27T09:45:00+08:00" }).success).toBe(false);
     expect(naturalLanguageTaskCandidateSchema.safeParse({ ...candidate, estimatedMinutes: 45 }).success).toBe(false);
+    expect(naturalLanguageTaskCandidateSchema.safeParse({ ...candidate, plannedEffortMinutes: 45 }).success).toBe(false);
   });
 
   it("keeps ideas and questions free of task-only fields", () => {
-    const idea = { ...candidate, entryType: "idea", date: null, startAt: null, endAt: null, plannedEffortMinutes: null, difficulty: null, taskType: null, requiresContinuousFocus: null, schedulePrecision: null, missingFields: [] };
+    const idea = { ...candidate, entryType: "idea", date: null, startAt: null, endAt: null, schedulePrecision: null, missingFields: [] };
     expect(naturalLanguageTaskCandidateSchema.safeParse(idea).success).toBe(true);
-    expect(naturalLanguageTaskCandidateSchema.safeParse({ ...idea, difficulty: "medium" }).success).toBe(false);
+    expect(naturalLanguageTaskCandidateSchema.safeParse({ ...idea, plannedEffortMinutes: 30 }).success).toBe(false);
   });
 });
 

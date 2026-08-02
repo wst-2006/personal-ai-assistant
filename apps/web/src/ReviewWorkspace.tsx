@@ -12,7 +12,8 @@ type Context = {
   tasks: Array<{
     id: string;
     lifecycleStatus: string;
-    plannedEffortMinutes: number | null;
+    startAt: string | null;
+    endAt: string | null;
   }>;
   outcomes: Array<{ taskId: string; outcome: string }>;
   focusSessions: Array<{
@@ -100,10 +101,10 @@ export function ReviewWorkspace() {
   }, [load]);
   const planned = useMemo(
     () =>
-      context?.tasks.reduce(
-        (sum, task) => sum + (task.plannedEffortMinutes ?? 0),
-        0,
-      ) ?? 0,
+      context?.tasks.reduce((sum, task) => {
+        if (!task.startAt || !task.endAt) return sum;
+        return sum + Math.max(0, Math.round((new Date(task.endAt).getTime() - new Date(task.startAt).getTime()) / 60000));
+      }, 0) ?? 0,
     [context],
   );
   const effective = useMemo(

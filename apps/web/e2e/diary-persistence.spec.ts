@@ -23,7 +23,7 @@ test("赛博日记读取真实日数据、持久保存、刷新恢复并导出",
         content: { title: `${localDate} 的每日简报`, reflection: `E2E 复盘 ${suffix}`, taskSummary: "完成了一项深度任务。", sections: [], location: { name: "上海", latitude: 31.23, longitude: 121.47, timeZone: "Asia/Shanghai" }, weather: { temperatureCelsius: 26, apparentTemperatureCelsius: 27, weatherCode: 1, observedAt: `${localDate}T10:00:00+08:00` } },
         sources: [{ kind: "personal_record", label: "E2E 隔离数据" }]
       });
-      await transaction.insert(tasks).values({ id: ids.task, title: `E2E 日记任务 ${suffix}`, lifecycleStatus: "closed", currentOutcome: "complete", scheduleKind: "none", localDate, plannedEffortMinutes: 60, requiresContinuousFocus: true });
+      await transaction.insert(tasks).values({ id: ids.task, title: `E2E 日记任务 ${suffix}`, lifecycleStatus: "closed", currentOutcome: "complete", scheduleKind: "none", localDate });
       await transaction.insert(focusSessions).values({ id: ids.focus, taskId: ids.task, state: "evaluated", rawActiveSeconds: 4200, effectiveFocusSeconds: 3600 });
       await transaction.insert(taskOutcomes).values({ id: ids.outcome, taskId: ids.task, focusSessionId: ids.focus, outcome: "complete", progressPercent: 100, source: "app" });
       await transaction.insert(taskFeedback).values({ id: ids.feedback, taskId: ids.task, focusSessionId: ids.focus, satisfaction: "satisfied" });

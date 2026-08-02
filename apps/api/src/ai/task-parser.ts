@@ -63,9 +63,8 @@ export class DeepSeekTaskParser implements TaskParser {
               "无法确定的字段必须返回 null，并把字段名加入 missingFields。",
               "日期使用 YYYY-MM-DD；具体时间使用带时区偏移的 ISO 8601。",
               "entryType 只能是 task、idea、question。schedulePrecision 只能是 exact、morning、afternoon、evening 或 null。",
-              "task 的 exact 起止时间必须落在 Asia/Shanghai 本地时间的 :00 或 :30，且至少相隔 30 分钟；预计投入与时间块长度独立。",
-              "idea 或 question 的日期、排期、预计投入、难度、任务类型和连续专注字段必须全部为 null。",
-              "difficulty 只能是 low、medium、high 或 null。",
+              "task 的 exact 起止时间必须落在 Asia/Shanghai 本地时间的 :00 或 :30，且至少相隔 30 分钟；时间块长度只由起止时间决定。",
+              "idea 或 question 的日期、排期和时间字段必须全部为 null，只有标题和备注可以保留。",
               "只返回一个 JSON 对象，不要 Markdown 或解释。"
             ].join("\n")
           },
@@ -81,10 +80,6 @@ export class DeepSeekTaskParser implements TaskParser {
                 "date",
                 "startAt",
                 "endAt",
-                "plannedEffortMinutes",
-                "difficulty",
-                "taskType",
-                "requiresContinuousFocus",
                 "schedulePrecision",
                 "notes",
                 "missingFields"

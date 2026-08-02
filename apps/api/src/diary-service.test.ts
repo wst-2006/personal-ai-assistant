@@ -4,7 +4,7 @@ import { buildDiaryDayData } from "./diary-service.js";
 const task = (id: string, overrides: Record<string, unknown> = {}) => ({
   id, title: `task-${id}`, sourceInboxEntryId: null, lifecycleStatus: "open", scheduleKind: "none", currentOutcome: null,
   localDate: "2026-07-30", daypart: null, startAt: null, endAt: null, timeZone: "Asia/Shanghai",
-  plannedEffortMinutes: 30, difficulty: null, taskType: null, requiresContinuousFocus: false, notes: null,
+  notes: null,
   version: 1, scheduleRevision: 1, deletedAt: null, createdAt: new Date("2026-07-30T01:00:00Z"), updatedAt: new Date("2026-07-30T01:00:00Z"),
   ...overrides
 });
@@ -23,7 +23,7 @@ const outcome = (id: string, taskId: string, value: "partial" | "complete", reco
 describe("buildDiaryDayData", () => {
   it("derives focus, latest outcomes, state tone, radar and tree from persisted rows", () => {
     const result = buildDiaryDayData(
-      [task("a", { lifecycleStatus: "closed", requiresContinuousFocus: true }), task("b", { lifecycleStatus: "cancelled" })] as never,
+      [task("a", { lifecycleStatus: "closed" }), task("b", { lifecycleStatus: "cancelled" })] as never,
       [session("s1", "a", 4200, 3600)] as never,
       [outcome("o1", "a", "partial", "2026-07-30T02:00:00Z"), outcome("o2", "a", "complete", "2026-07-30T03:00:00Z")] as never,
       [{ id: "f1", taskId: "a", focusSessionId: "s1", satisfaction: "satisfied", note: null, createdAt: new Date() }] as never,

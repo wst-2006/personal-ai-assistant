@@ -3,7 +3,7 @@
 ## Purpose
 
 The product is a single-user personal task manager and learning companion. The
-user enters goals, tasks, time estimates, difficulty, completion status, and
+user enters goals, formally scheduled tasks, completion status, notes, and
 review thoughts. AI organizes natural-language input, identifies obvious
 conflicts, offers optional adjustments, recommends focus structures, and
 creates search-backed daily briefs when explicitly requested.
@@ -12,6 +12,10 @@ creates search-backed daily briefs when explicitly requested.
 
 - The user confirms natural-language task extraction before it is stored.
 - Form entries that are already complete do not call AI.
+- A live formal task stores only its title, schedule/date/time, and optional
+  notes. Exact duration is derived from `startAt` and `endAt`; retired effort,
+  difficulty, task-type, and continuous-focus metadata are rejected by the
+  task API and form. Historical values remain in a legacy archive only.
 - Tasks, ideas, and questions are distinct entry types.
 - AI may advise on conflicts and changes but never changes a confirmed plan
   without an explicit user decision.

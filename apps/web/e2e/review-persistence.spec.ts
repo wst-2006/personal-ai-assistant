@@ -31,10 +31,11 @@ test("复盘消息与每日简报通过真实 API 持久保存、编辑、刷新
         title: `E2E 复盘任务 ${suffix}`,
         lifecycleStatus: "closed",
         currentOutcome: "complete",
-        scheduleKind: "none",
+        scheduleKind: "exact",
         localDate,
-        plannedEffortMinutes: 90,
-        requiresContinuousFocus: true,
+        timeZone: "Asia/Shanghai",
+        startAt: new Date(`${localDate}T01:00:00.000Z`),
+        endAt: new Date(`${localDate}T02:30:00.000Z`),
       });
       await transaction.insert(focusSessions).values({
         id: ids.focus,

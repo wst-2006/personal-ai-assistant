@@ -128,7 +128,7 @@ test("真实专注会话可准备、结束、评估并在刷新后保持",async(
   const date=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Shanghai",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());
   const title=`E2E 专注会话 ${Date.now().toString(36)}`; let taskId="";
   try {
-    const created=await request.post(`${apiBase}/api/v1/tasks`,{data:{title,scheduleKind:"none",localDate:date,timeZone:"Asia/Shanghai",plannedEffortMinutes:45,difficulty:"high",requiresContinuousFocus:true}});
+    const created=await request.post(`${apiBase}/api/v1/tasks`,{data:{title,scheduleKind:"none",localDate:date,timeZone:"Asia/Shanghai"}});
     expect(created.status()).toBe(201);
     const task=(await created.json()).task as {id:string;version:number}; taskId=task.id;
     const started=await request.post(`${apiBase}/api/v1/focus-sessions`,{data:{taskId,expectedTaskVersion:task.version,mode:"prepare"}});
@@ -166,7 +166,7 @@ test("390px 移动端可恢复真实专注会话并结束计时", async ({ page,
   const title = `E2E 移动专注 ${Date.now().toString(36)}`;
   let taskId = "";
   try {
-    const created = await request.post(`${apiBase}/api/v1/tasks`, { data: { title, scheduleKind: "none", localDate: date, timeZone: "Asia/Shanghai", plannedEffortMinutes: 30, difficulty: "medium", requiresContinuousFocus: true } });
+    const created = await request.post(`${apiBase}/api/v1/tasks`, { data: { title, scheduleKind: "none", localDate: date, timeZone: "Asia/Shanghai" } });
     expect(created.status()).toBe(201);
     const task = (await created.json()).task as { id: string; version: number };
     taskId = task.id;
@@ -197,7 +197,7 @@ test("真实结构执行会持久化段运行并自动切换到休息段", async
   const localHour = Number(new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Shanghai", hour: "2-digit", hour12: false }).format(now));
   test.skip(localHour >= 23, "23:00 后当天没有可用的、不会跨午夜的 60 分钟精确任务窗口");
   const halfHour = 30 * 60 * 1_000;
-  const startAt = new Date(Math.floor(now.getTime() / halfHour) * halfHour);
+  const startAt = new Date((Math.floor(now.getTime() / halfHour) + 1) * halfHour);
   const endAt = new Date(startAt.getTime() + 60 * 60_000);
   const title = `E2E 分段结构 ${Date.now().toString(36)}`;
   let taskId = "";
@@ -208,7 +208,6 @@ test("真实结构执行会持久化段运行并自动切换到休息段", async
       timeZone: "Asia/Shanghai",
       startAt: startAt.toISOString(),
       endAt: endAt.toISOString(),
-      plannedEffortMinutes: 60,
       notes: "结构执行验收"
     } });
     expect(created.status()).toBe(201);

@@ -12,8 +12,7 @@ import {
 import { describe, expect, it } from "vitest";
 
 describe("formal task and inbox schema contract", () => {
-  it("keeps planned effort and task-source linkage explicit", () => {
-    expect(tasks.plannedEffortMinutes.name).toBe("planned_effort_minutes");
+  it("keeps live task scheduling and task-source linkage explicit", () => {
     expect(tasks.sourceInboxEntryId.name).toBe("source_inbox_entry_id");
     expect("estimatedMinutes" in tasks).toBe(false);
     expect("entryType" in tasks).toBe(false);

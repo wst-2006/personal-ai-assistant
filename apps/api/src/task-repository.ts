@@ -27,10 +27,6 @@ export type NewTaskRecord = {
   startAt: Date | null;
   endAt: Date | null;
   timeZone: string;
-  plannedEffortMinutes: number | null;
-  difficulty: string | null;
-  taskType: string | null;
-  requiresContinuousFocus: boolean | null;
   notes: string | null;
   version: number;
   scheduleRevision: number;

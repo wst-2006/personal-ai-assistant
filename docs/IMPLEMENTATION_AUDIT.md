@@ -64,8 +64,8 @@ local reminder recovery requirements remain outstanding.
 | Task lifecycle and optimistic versioning | Product Spec, State Machines, Task Lifecycle | Partially implemented | High for backend and core browser paths | Today task actions and lifecycle service/repository | Task CRUD/action routes; `tasks`, lifecycle events, outcomes | service, route, repository, persistence and browser E2E tests | Expand visual acceptance for exceptional/recovery paths. |
 | Append-only task outcomes and reopening | Product Spec, State Machines | Partially implemented | High for backend and core browser paths | Today outcome form, reopen actions and focus evaluation | outcome and reopen routes; `task_outcomes` | outcome history and browser E2E tests | Add richer outcome history display and recovery-state acceptance. |
 | Exact-time conflict detection and retention | Product Spec, Task Lifecycle | Partially implemented | High for backend and browser core path | Spatial blocks, conflict prompt and explicit retention in Today | task create/update/accept APIs; `task_conflict_acceptances` | overlap, history, stale set, rollback and browser E2E tests | Add visual treatment for complex multi-lane conflict sets. |
-| Full manual task creation | Product Spec, Roadmap | Partially implemented | High for mapped core fields and browser path | Dedicated formal-task dialog with scheduling, effort, difficulty, type, focus and notes | `POST /tasks`; `tasks` | API/domain and browser E2E tests | Add accessibility and error-state coverage for all field combinations. |
-| Quick task capture | Product Spec, Design Review | Partially implemented | High for core path | Quick capture creates an unscheduled task with planned effort and can be completed later | `POST /tasks`; `tasks` | API and browser E2E coverage through Today | Add a distinct completion affordance in the unscheduled region. |
+| Full manual task creation | Product Spec, Roadmap | Partially implemented | High for mapped core fields and browser path | Dedicated formal-task dialog with title, schedule/date/time and notes; explicit form submit does not call AI | `POST /tasks`; `tasks` | API/domain and browser E2E tests | Add accessibility and error-state coverage for all schedule combinations. |
+| Quick task capture | Product Spec, Design Review | Partially implemented | High for core path | Quick capture creates a title-only unscheduled task targeted to the selected date and can be completed later | `POST /tasks`; `tasks` | API and browser E2E coverage through Today | Add a distinct completion affordance in the unscheduled region. |
 | Independent ideas/questions | Product Spec | Fully implemented | High for confirmed conversion and stale-version recovery | Idea/question capture writes separate inbox entries; conversion requires confirmation, creates a formal task only after submit, links `source_inbox_entry_id`, preserves the source with `converted_at`, and keeps the form when a stale version is rejected | inbox routes; `inbox_entries`, `tasks.source_inbox_entry_id` | API/domain tests and isolated PostgreSQL/browser conversion + stale-version E2E | Add broader conflict-error messaging only if future inbox editing introduces more concurrent mutations. |
 | AI candidate confirmation | Product Spec, Design Review | Partially implemented | Medium | AI drawer parses then asks for confirmation; formal tasks use the current task contract while ideas/questions use the independent inbox API | parse, task and inbox routes; `tasks`, `inbox_entries` | parser route and shared contract tests | Add browser confirmation/error coverage and an editable correction flow. |
 | Real Today timeline | Product Spec, Design Review | Partially implemented | High for core schedule editing; medium for full interaction | 24-hour coordinate axis, current-time marker, daypart/unscheduled areas, creation, drag/resize and spatial overlaps | task APIs; `tasks`, conflict acceptances | desktop and 390px browser E2E | Add keyboard-accessible movement and richer conflict explanations. |
@@ -98,8 +98,8 @@ local reminder recovery requirements remain outstanding.
 
 The following mapping is the contract used by the implemented manual
 scheduling slice. The inbox/source-link migration and the
-`planned_effort_minutes` rename have been applied to the guarded project
-database; subsequent UI/API work must continue to honor this mapping.
+retired task metadata is archived in `task_legacy_metadata`; the live `tasks`
+table and API do not expose or accept those fields.
 
 ### 5.1 Formal Task Form
 
@@ -112,30 +112,26 @@ database; subsequent UI/API work must continue to honor this mapping.
 | Start | `startAt` | `start_at` | Offset ISO 8601; required only for `exact`; stored as UTC `timestamptz`. |
 | End | `endAt` | `end_at` | Offset ISO 8601; paired with start, on a half-hour boundary, and at least 30 minutes after start. |
 | Time zone | `timeZone` | `time_zone` | Valid IANA zone; first UI defaults to `Asia/Shanghai`. Exact `localDate` is derived from start plus this zone. |
-| Planned effort | `plannedEffortMinutes` | `planned_effort_minutes` | Optional integer 1–1440. This is the user's estimate of total effort, not the scheduled block length. |
-| Difficulty | `difficulty` | `difficulty` | Optional: `low`, `medium`, `high`. |
-| Task type | `taskType` | `task_type` | Optional trimmed string, maximum 80 characters. |
-| Continuous focus | `requiresContinuousFocus` | `requires_continuous_focus` | Optional boolean. |
 | Notes | `notes` | `notes` | Optional trimmed text, maximum 4000 characters. |
 | Lifecycle (read/action UI) | `lifecycleStatus` | `lifecycle_status` | Not freely editable; transitions use explicit action APIs. |
 | Current objective result | `currentOutcome` | `current_outcome` | Read-only in form; set with append-only outcome transaction. |
 | Optimistic version | `expectedVersion` / `version` | `version` | Every task mutation checks/increments it. |
 | Schedule version | `expectedScheduleRevision` / `scheduleRevision` | `schedule_revision` | Every schedule mutation checks it; increments only by the matrix in section 7. |
 | Keep-conflict decision | `conflictDecision`, `expectedConflictFingerprint` | `task_conflict_acceptances` | `keep` requires the last complete server fingerprint; the server recomputes and atomically accepts all current pairs. |
-| Scheduled block duration | response `scheduledDurationMinutes` | not stored | Derived from `endAt - startAt`; it is never copied into planned effort. |
+| Scheduled block duration | response `scheduledDurationMinutes` | not stored | Derived only from `endAt - startAt`. |
 
 Applied migration consequences:
 
-- Rename `tasks.estimated_minutes` to `planned_effort_minutes` without changing
-  existing values.
+- Archive the former effort, difficulty, task-type, and continuous-focus values
+  in `task_legacy_metadata`, then remove those columns from live `tasks`.
 - Remove `tasks.entry_type`; a task row always represents a formal task.
 - Add nullable unique `tasks.source_inbox_entry_id` referencing the retained
   source entry.
 
 ### 5.2 Idea and Question Inbox
 
-Ideas and questions do not show task scheduling, planned effort, difficulty,
-task type, or continuous-focus fields. They do not have task lifecycle states.
+Ideas and questions do not show task scheduling or any formal-task fields. They
+do not have task lifecycle states.
 
 | Page field/action | API field | Database field | Validation and authority |
 | --- | --- | --- | --- |
@@ -174,7 +170,8 @@ Additional exact rules:
 - The full form, blank selection, drag and resize all use one 30-minute
   interval contract. A blank click creates a 30-minute draft.
 - Moving a block preserves its exact scheduled length; resizing changes the
-  block by 30-minute increments. Neither operation changes planned effort.
+  block by 30-minute increments. Neither operation changes the task's title,
+  notes, or other non-scheduling fields.
 
 ## 7. Version and Schedule Revision Rules
 
@@ -196,7 +193,7 @@ eligibility for conflict participation:
 | soft delete | yes | yes |
 | restore a soft-deleted task | yes | yes |
 | orphan recovery `active -> awaiting_outcome` | yes | no |
-| title, notes, difficulty, task type, continuous focus, planned effort | yes | no |
+| title, notes | yes | no |
 
 `localDate` and `daypart` changes increment the schedule revision even though
 they do not participate in exact overlap calculations. This keeps all visible
@@ -230,9 +227,7 @@ Drag/resize invariants:
   duration exactly.
 - A resize changes only the scheduled interval endpoint and therefore only the
   derived scheduled duration.
-- Neither operation writes or derives `plannedEffortMinutes`.
-- `plannedEffortMinutes` changes only when the user deliberately edits the
-  labelled “Planned effort” field in a form.
+- Neither operation writes or derives any retired task metadata.
 - Every drag/resize PATCH sends `expectedVersion` and
   `expectedScheduleRevision`. A keep-conflict retry also sends the exact
   fingerprint returned for that proposed interval.
@@ -248,7 +243,8 @@ Correctness constraints define its behavior; they do not justify reducing the
 experience to forms and rows.
 
 1. **Guarded data migration**
-   - Add `inbox_entries`, rename planned effort, make `tasks` formal-only, and
+   - Add `inbox_entries`, archive retired task metadata, make `tasks`
+     formal-only, and
      add the retained source link.
    - Recheck existing entry counts at migration time. If legacy ideas/questions
      exist, copy them into inbox entries transactionally before removing the
@@ -257,11 +253,12 @@ experience to forms and rows.
 2. **Domain and API contracts**
    - Split formal task and inbox schemas/routes.
    - Add transactional conversion, the exact schedule matrix, 30-minute minimum,
-     planned/scheduled duration separation, and schedule-revision preconditions.
+     schedule-revision preconditions, and strict rejection of retired task
+     metadata.
    - Keep complete `40001` transaction retries and atomic conflict acceptance.
 3. **Entry experiences**
-   - Preserve quick formal-task capture as title plus optional planned effort,
-     saved to the unscheduled area.
+   - Preserve quick formal-task capture as title only, saved to the unscheduled
+     area for later scheduling.
    - Add “Complete and schedule” and a polished full task form containing every
      mapped field. Explicit form input never invokes AI.
    - Give ideas/questions their own restrained inbox form and an explicit,
@@ -288,7 +285,7 @@ experience to forms and rows.
 After this audit is approved, the implementation is expected to modify:
 
 - Database: `packages/db/src/schema.ts` plus a guarded Drizzle migration for
-  `inbox_entries`, planned-effort rename, formal-task-only storage, source link,
+  `inbox_entries`, legacy metadata archival, formal-task-only storage, source link,
   and exact-interval constraints.
 - Domain/API: task schemas/service/repository/routes plus new inbox schemas,
   service, repository, and routes. Schedule PATCH gains
@@ -315,7 +312,7 @@ live Feishu delivery acceptance remains pending.
   cross-midnight rejection.
 - Verify the complete schedule-revision matrix in section 7, including
   `localDate`, daypart, cancel, reopen, delete, restore, and non-schedule edits.
-- Verify drag and resize service updates never change planned effort.
+- Verify drag and resize service updates change only the scheduled interval.
 - Verify retained inbox entries, transactional conversion, unique source link,
   stale versions, repeated conversion, and rollback.
 - Verify open/active/awaiting/closed/cancelled/deleted conflict behavior and
@@ -329,7 +326,7 @@ A serial Playwright scenario must use the real API and PostgreSQL database:
 
 1. Create an exact formal task through the full form.
 2. Refresh and verify all form/timeline values persist.
-3. Drag it and verify duration plus planned effort are unchanged.
+3. Drag it and verify the scheduled duration is unchanged.
 4. Resize it and verify only the scheduled duration changes.
 5. Create an overlap and verify no silent write/move occurs.
 6. Explicitly retain the complete conflict set.
@@ -377,9 +374,9 @@ Remaining gaps:
 2. **Timeline keyboard accessibility remains incomplete.** Pointer creation,
    drag/resize and explicit conflict retention are verified; keyboard
    manipulation and complete accessible conflict detail are not yet implemented.
-3. **The full duration distinction needs ongoing enforcement.**
-   `plannedEffortMinutes` is independent from an exact block's calculated
-   duration; future focus recommendations must retain that distinction.
+3. **Retired task metadata is archived, not exposed.**
+   Existing values remain queryable only through `task_legacy_metadata`; new
+   task requests containing those keys are rejected.
 4. **Cross-device confidence is not established.** Local refresh and browser
    interaction are verified; cross-device synchronization is intentionally
    outside the current local-first scope.
@@ -399,5 +396,6 @@ Remaining gaps:
    and cross-device verification still need explicit implementation phases;
    cloud runtime is deferred and the durable local Worker queue now exists.
 
-This audit is the only deliverable in its commit. Schema, API, and UI work may
-start only after the document and implementation slice are confirmed.
+This audit records the approved contract and current verification status. The
+live implementation now includes the guarded legacy-field migration and real
+browser coverage for the reduced task form.

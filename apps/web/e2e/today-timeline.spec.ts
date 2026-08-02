@@ -5,15 +5,21 @@ const halfHourPixels = 36;
 let dateSequence = 0;
 const isolatedDate = () => new Date(Date.UTC(2090,0,1+(Date.now()+dateSequence++)%300)).toISOString().slice(0,10);
 
-async function createExactTask(page:Page, title:string, start:string, end:string, planned="45") {
+async function createExactTask(page:Page, title:string, start:string, end:string) {
   await page.getByRole("button", { name: "完整添加" }).click();
   await page.getByLabel("任务标题").fill(title);
   await page.getByLabel("排期方式").selectOption("exact");
   await page.getByLabel("开始时间").fill(start);
   await page.getByLabel("结束时间").fill(end);
-  await page.getByLabel("预计投入（与时间块独立）").fill(planned);
+  const requestPromise=page.waitForRequest((request)=>request.url()===`${apiBase}/api/v1/tasks`&&request.method()==="POST");
   const responsePromise=page.waitForResponse((response)=>response.url()===`${apiBase}/api/v1/tasks`&&response.request().method()==="POST"&&response.status()===201);
   await page.getByRole("button", { name: "保存任务" }).click();
+  const request=await requestPromise;
+  const body=request.postDataJSON() as Record<string, unknown>;
+  expect(body).not.toHaveProperty("plannedEffortMinutes");
+  expect(body).not.toHaveProperty("difficulty");
+  expect(body).not.toHaveProperty("taskType");
+  expect(body).not.toHaveProperty("requiresContinuousFocus");
   const response=await responsePromise;
   return (await response.json()).task as {id:string;version:number;startAt:string;endAt:string};
 }
@@ -36,7 +42,7 @@ test.describe("真实今日时间轴",()=>{
       await page.goto("/");
       await expect(page.getByRole("heading",{name:"把今天放回时间里。"})).toBeVisible();
       await page.getByLabel("时间轴日期").fill(testDate);
-      const first=await createExactTask(page,firstTitle,"13:00","13:30","50");ids.push(first.id);
+      const first=await createExactTask(page,firstTitle,"13:00","13:30");ids.push(first.id);
       await expect(page.locator(`[data-task-id="${first.id}"]`)).toContainText(firstTitle);
 
       await page.reload();
@@ -49,9 +55,8 @@ test.describe("真实今日时间轴",()=>{
       const dragStartY=box!.y+3;
       await page.mouse.move(box!.x+8,dragStartY);
       await page.mouse.down();await page.mouse.move(box!.x+8,dragStartY+halfHourPixels,{steps:5});await page.mouse.up();
-      const movedTask=(await (await moved).json()).task as {startAt:string;plannedEffortMinutes:number};
+      const movedTask=(await (await moved).json()).task as {startAt:string};
       expect(movedTask.startAt).toContain("05:30:00.000Z");
-      expect(movedTask.plannedEffortMinutes).toBe(50);
 
       const handle=page.locator(`[data-task-id="${first.id}"] .resize-handle`);
       await handle.scrollIntoViewIfNeeded();const handleBox=await handle.boundingBox();expect(handleBox).not.toBeNull();
@@ -59,12 +64,11 @@ test.describe("真实今日时间轴",()=>{
       const resizeStartY=handleBox!.y+handleBox!.height/2;
       await page.mouse.move(handleBox!.x+handleBox!.width/2,resizeStartY);
       await page.mouse.down();await page.mouse.move(handleBox!.x+handleBox!.width/2,resizeStartY+halfHourPixels,{steps:4});await page.mouse.up();
-      const resizedTask=(await (await resized).json()).task as {endAt:string;plannedEffortMinutes:number};
+      const resizedTask=(await (await resized).json()).task as {endAt:string};
       expect(resizedTask.endAt).toContain("06:30:00.000Z");
-      expect(resizedTask.plannedEffortMinutes).toBe(50);
 
       page.once("dialog",(dialog)=>dialog.accept());
-      const second=await createExactTask(page,secondTitle,"14:00","15:00","30");ids.push(second.id);
+      const second=await createExactTask(page,secondTitle,"14:00","15:00");ids.push(second.id);
       await expect(page.locator(`[data-task-id="${first.id}"]`)).toHaveClass(/conflict/);
       await expect(page.locator(`[data-task-id="${second.id}"]`)).toHaveClass(/conflict/);
 
@@ -129,6 +133,10 @@ test.describe("真实今日时间轴",()=>{
     await expect(page.getByLabel("任务标题")).toBeVisible();
     await expect(page.getByLabel("开始时间")).toHaveAttribute("step","1800");
     await expect(page.getByLabel("结束时间")).toHaveAttribute("step","1800");
+    await expect(page.getByLabel("预计投入（与时间块独立）")).toHaveCount(0);
+    await expect(page.getByLabel("难度")).toHaveCount(0);
+    await expect(page.getByLabel("任务类型")).toHaveCount(0);
+    await expect(page.getByLabel("适合连续专注")).toHaveCount(0);
   });
 
   test("记录结果、刷新并重新打开任务",async({page,request})=>{
@@ -137,7 +145,7 @@ test.describe("真实今日时间轴",()=>{
     try {
       await page.goto("/");
       await page.getByLabel("时间轴日期").fill(testDate);
-      const task=await createExactTask(page,title,"15:00","16:00","45"); ids.push(task.id);
+      const task=await createExactTask(page,title,"15:00","16:00"); ids.push(task.id);
       const block=page.locator(`[data-task-id="${task.id}"]`);
       await block.scrollIntoViewIfNeeded();
       await block.getByLabel(`打开 ${title} 的任务操作`).click();
