@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { BarChart3, Bot, BrainCircuit, CalendarDays, Check, CircleHelp, Download, LoaderCircle, NotebookPen, Sparkles, Target, X } from "lucide-react";
 import { DiaryWorkspace } from "./DiaryWorkspace";
 import { FocusWorkspace } from "./FocusWorkspace";
@@ -7,6 +7,8 @@ import { ReviewWorkspace } from "./ReviewWorkspace";
 import { TodayWorkspace } from "./TodayWorkspace";
 
 type EntryType = "task" | "idea" | "question";
+type ScheduleKind = "none" | "daypart" | "exact";
+type Daypart = "morning" | "afternoon" | "evening";
 type View = "today" | "focus" | "review" | "diary" | "growth";
 type NaturalLanguageTaskCandidate = {
   title: string;
@@ -18,7 +20,17 @@ type NaturalLanguageTaskCandidate = {
   notes: string | null;
   missingFields: string[];
 };
-type ApiErrorBody = { error?: string; conflictSetFingerprint?: string };
+type CandidateDraft = {
+  title: string;
+  entryType: EntryType;
+  scheduleKind: ScheduleKind;
+  localDate: string;
+  daypart: Daypart;
+  start: string;
+  end: string;
+  notes: string;
+};
+type ApiErrorBody = { error?: string; conflictSetFingerprint?: string; earliestStartAt?: string };
 type StandaloneBrief = {
   id: string;
   localDate: string;
@@ -56,6 +68,77 @@ function displayDate() {
 function isThirtyMinuteBoundary(value: string) {
   const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Shanghai", minute: "2-digit" }).formatToParts(new Date(value));
   return Number(parts.find((part) => part.type === "minute")?.value ?? -1) % 30 === 0;
+}
+
+function localDateFromIso(value: string | null): string {
+  if (!value) return "";
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(value));
+}
+
+function localTimeFromIso(value: string | null): string {
+  if (!value) return "";
+  return new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(value));
+}
+
+function minuteFromTime(value: string): number {
+  if (!/^\d{2}:\d{2}$/.test(value)) return Number.NaN;
+  return Number(value.slice(0, 2)) * 60 + Number(value.slice(3));
+}
+
+function timeFromMinute(value: number): string {
+  return `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
+}
+
+function nextAvailableMinuteForToday(date: string): number {
+  if (date !== shanghaiDate()) return 0;
+  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(new Date());
+  const nowMinute = Number(parts.find((part) => part.type === "hour")?.value ?? 0) * 60
+    + Number(parts.find((part) => part.type === "minute")?.value ?? 0);
+  return Math.min(24 * 60, (Math.floor(nowMinute / 30) + 1) * 30);
+}
+
+function candidateDraftFrom(candidate: NaturalLanguageTaskCandidate): CandidateDraft {
+  const scheduleKind: ScheduleKind = candidate.entryType !== "task"
+    ? "none"
+    : candidate.schedulePrecision === "exact"
+      ? "exact"
+      : candidate.schedulePrecision
+        ? "daypart"
+        : "none";
+  const daypart = candidate.schedulePrecision === "morning" || candidate.schedulePrecision === "afternoon" || candidate.schedulePrecision === "evening"
+    ? candidate.schedulePrecision
+    : "morning";
+  return {
+    title: candidate.title,
+    entryType: candidate.entryType,
+    scheduleKind,
+    localDate: scheduleKind === "exact" ? localDateFromIso(candidate.startAt) : candidate.date ?? "",
+    daypart,
+    start: localTimeFromIso(candidate.startAt),
+    end: localTimeFromIso(candidate.endAt),
+    notes: candidate.notes ?? ""
+  };
+}
+
+function candidateMissingFields(candidate: CandidateDraft): string[] {
+  const missing: string[] = [];
+  if (!candidate.title.trim()) missing.push("标题");
+  if (candidate.entryType !== "task") return missing;
+  if (candidate.scheduleKind === "daypart" && !candidate.localDate) missing.push("日期");
+  if (candidate.scheduleKind === "exact") {
+    if (!candidate.localDate) missing.push("日期");
+    if (!candidate.start) missing.push("开始时间");
+    if (!candidate.end) missing.push("结束时间");
+  }
+  return missing;
+}
+
+function candidateSaveLabel(candidate: CandidateDraft): string {
+  return candidate.entryType === "task"
+    ? "确认并保存任务"
+    : candidate.entryType === "idea"
+      ? "确认并保存想法"
+      : "确认并保存问题";
 }
 
 function standaloneBriefText(brief: StandaloneBrief) {
@@ -101,7 +184,7 @@ export function App() {
   const [aiInput, setAiInput] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [aiCandidate, setAiCandidate] = useState<NaturalLanguageTaskCandidate | null>(null);
+  const [aiCandidate, setAiCandidate] = useState<CandidateDraft | null>(null);
   const [standaloneBriefs, setStandaloneBriefs] = useState<StandaloneBrief[]>([]);
   const [selectedStandaloneBriefId, setSelectedStandaloneBriefId] = useState<string | null>(null);
   const [standaloneLoading, setStandaloneLoading] = useState(false);
@@ -132,7 +215,7 @@ export function App() {
     setAiLoading(true); setError(null);
     try {
       const result = await requestJson<{ candidate: NaturalLanguageTaskCandidate }>("/api/v1/ai/tasks/parse", "POST", { text, referenceDate: today, timeZone: "Asia/Shanghai" });
-      setAiCandidate(result.candidate);
+      setAiCandidate(candidateDraftFrom(result.candidate));
     } catch {
       setError("AI 暂时无法整理这条内容，原始输入仍保留在侧边层。");
     } finally {
@@ -140,37 +223,91 @@ export function App() {
     }
   }
 
-  async function saveAiCandidate() {
+  async function saveAiCandidate(event: FormEvent) {
+    event.preventDefault();
     if (!aiCandidate) return;
-    setSaving(true); setError(null);
-    try {
-      if (aiCandidate.entryType !== "task") {
-        await requestJson("/api/v1/inbox-entries", "POST", {
-          entryKind: aiCandidate.entryType,
-          content: aiCandidate.title,
-          ...(aiCandidate.notes ? { notes: aiCandidate.notes } : {}),
-        });
-      } else {
-        const exact = aiCandidate.schedulePrecision === "exact" && aiCandidate.startAt && aiCandidate.endAt;
-        if (exact && (!isThirtyMinuteBoundary(aiCandidate.startAt!) || !isThirtyMinuteBoundary(aiCandidate.endAt!))) {
-          setError("AI 候选的开始和结束时间必须使用 30 分钟间隔，请修改原句后重新生成。");
+    const candidate = aiCandidate;
+    const title = candidate.title.trim();
+    if (!title) {
+      setError("请先填写任务、想法或问题的标题。");
+      return;
+    }
+
+    let taskPayload: Record<string, unknown> | null = null;
+    if (candidate.entryType === "task") {
+      if (candidate.scheduleKind === "daypart" && !candidate.localDate) {
+        setError("时间段任务需要选择日期。");
+        return;
+      }
+      if (candidate.scheduleKind === "exact") {
+        const startMinute = minuteFromTime(candidate.start);
+        const endMinute = minuteFromTime(candidate.end);
+        if (!candidate.localDate || !Number.isFinite(startMinute) || !Number.isFinite(endMinute)) {
+          setError("精确任务需要日期、开始时间和结束时间。");
           return;
         }
-        const daypart = aiCandidate.schedulePrecision && aiCandidate.schedulePrecision !== "exact" ? aiCandidate.schedulePrecision : null;
-        await requestWithConflictConfirmation("/api/v1/tasks", "POST", {
-          title: aiCandidate.title,
-          scheduleKind: exact ? "exact" : daypart && aiCandidate.date ? "daypart" : "none",
-          ...(!exact && aiCandidate.date ? { localDate: aiCandidate.date } : {}),
-          ...(exact ? { startAt: aiCandidate.startAt, endAt: aiCandidate.endAt } : {}),
-          ...(daypart && aiCandidate.date ? { daypart } : {}),
+        if (startMinute % 30 !== 0 || endMinute % 30 !== 0 || endMinute - startMinute < 30) {
+          setError("精确任务的起止时间必须使用 30 分钟间隔，且至少持续 30 分钟。");
+          return;
+        }
+        const earliest = nextAvailableMinuteForToday(candidate.localDate);
+        if (startMinute < earliest) {
+          setError(earliest >= 24 * 60 ? "今天已经没有可用的精确时间段，请选择其他日期。" : `今天只能从 ${timeFromMinute(earliest)} 开始安排。`);
+          return;
+        }
+        const startAt = `${candidate.localDate}T${candidate.start}:00+08:00`;
+        const endAt = `${candidate.localDate}T${candidate.end}:00+08:00`;
+        if (!isThirtyMinuteBoundary(startAt) || !isThirtyMinuteBoundary(endAt)) {
+          setError("精确任务的起止时间必须使用 30 分钟间隔。");
+          return;
+        }
+        taskPayload = {
+          title,
+          scheduleKind: "exact",
+          startAt,
+          endAt,
           timeZone: "Asia/Shanghai",
-          ...(aiCandidate.notes ? { notes: aiCandidate.notes } : {}),
+          ...(candidate.notes.trim() ? { notes: candidate.notes.trim() } : {})
+        };
+      } else if (candidate.scheduleKind === "daypart") {
+        taskPayload = {
+          title,
+          scheduleKind: "daypart",
+          localDate: candidate.localDate,
+          daypart: candidate.daypart,
+          timeZone: "Asia/Shanghai",
+          ...(candidate.notes.trim() ? { notes: candidate.notes.trim() } : {})
+        };
+      } else {
+        taskPayload = {
+          title,
+          scheduleKind: "none",
+          ...(candidate.localDate ? { localDate: candidate.localDate } : {}),
+          timeZone: "Asia/Shanghai",
+          ...(candidate.notes.trim() ? { notes: candidate.notes.trim() } : {})
+        };
+      }
+    }
+
+    setSaving(true); setError(null);
+    try {
+      if (candidate.entryType !== "task") {
+        await requestJson("/api/v1/inbox-entries", "POST", {
+          entryKind: candidate.entryType,
+          content: title,
+          ...(candidate.notes.trim() ? { notes: candidate.notes.trim() } : {})
         });
+      } else if (taskPayload) {
+        await requestWithConflictConfirmation("/api/v1/tasks", "POST", taskPayload);
       }
       setAiInput(""); setAiCandidate(null); setAiOpen(false);
       setTodayRefreshToken((value) => value + 1);
-    } catch {
-      setError("确认保存失败，候选内容仍保留在 AI 侧边层。");
+    } catch (requestError) {
+      if (requestError instanceof ApiError && requestError.body.error === "task_schedule_window_unavailable") {
+        setError("这个精确时间段已经不可用，请调整候选排期后再确认。");
+      } else {
+        setError("确认保存失败，候选内容仍保留在 AI 侧边层。");
+      }
     } finally {
       setSaving(false);
     }
@@ -234,7 +371,7 @@ export function App() {
             {selectedStandaloneBrief && <article className="standalone-brief-preview"><div><p>独立简报 · 已保存</p><button className="quiet-icon" type="button" aria-label="导出独立简报" onClick={() => exportStandaloneBrief(selectedStandaloneBrief)}><Download /></button></div><h3>{selectedStandaloneBrief.content.title}</h3><p>{selectedStandaloneBrief.content.reflection}</p><small>{selectedStandaloneBrief.content.taskSummary}</small></article>}
           </>}
         </section>
-      </div> : <div className="candidate-view"><p className="section-kicker">待你确认</p><div className="candidate-title"><span>{entryLabels[aiCandidate.entryType]}</span><h2>{aiCandidate.title}</h2></div><dl><div><dt>日期</dt><dd>{aiCandidate.date ?? "尚未确定"}</dd></div><div><dt>时间</dt><dd>{aiCandidate.startAt ? new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(aiCandidate.startAt)) : "尚未确定"}</dd></div><div><dt>备注</dt><dd>{aiCandidate.notes ?? "尚未填写"}</dd></div></dl>{aiCandidate.missingFields.length > 0 && <p className="candidate-note">仍待确定：{aiCandidate.missingFields.map((field) => ({ notes: "备注", date: "日期", startAt: "开始时间", endAt: "结束时间", schedulePrecision: "排期方式" }[field] ?? field)).join("、")}</p>}<button className="primary-button full-width" type="button" disabled={saving} onClick={() => void saveAiCandidate()}><Check />确认并保存</button><button className="text-button centered" type="button" onClick={() => setAiCandidate(null)}>返回修改原句</button></div>}
+      </div> : <div className="candidate-view"><p className="section-kicker">待你确认</p><div className="candidate-title"><span>{entryLabels[aiCandidate.entryType]}</span><h2>逐项确认后再保存</h2><small>AI 只提供候选，任何内容都不会在此之前写入你的计划。</small></div><form className="candidate-form" onSubmit={saveAiCandidate}><label className="candidate-wide"><span>候选类型</span><select aria-label="候选类型" value={aiCandidate.entryType} onChange={(event) => setAiCandidate((current) => current ? { ...current, entryType: event.target.value as EntryType, scheduleKind: event.target.value === "task" ? current.scheduleKind : "none" } : current)}><option value="task">任务</option><option value="idea">想法</option><option value="question">问题</option></select></label><label className="candidate-wide"><span>{aiCandidate.entryType === "task" ? "任务标题" : aiCandidate.entryType === "idea" ? "想法内容" : "问题内容"}</span><input aria-label="候选标题" required maxLength={200} value={aiCandidate.title} onChange={(event) => setAiCandidate((current) => current ? { ...current, title: event.target.value } : current)} /></label>{aiCandidate.entryType === "task" && <><label><span>排期方式</span><select aria-label="候选排期方式" value={aiCandidate.scheduleKind} onChange={(event) => setAiCandidate((current) => current ? { ...current, scheduleKind: event.target.value as ScheduleKind, localDate: current.localDate || shanghaiDate() } : current)}><option value="none">未排期</option><option value="daypart">时间段</option><option value="exact">精确时间</option></select></label><label><span>日期{aiCandidate.scheduleKind === "none" ? "（可选）" : ""}</span><input aria-label="候选日期" type="date" required={aiCandidate.scheduleKind !== "none"} value={aiCandidate.localDate} onChange={(event) => setAiCandidate((current) => current ? { ...current, localDate: event.target.value } : current)} /></label>{aiCandidate.scheduleKind === "daypart" && <label className="candidate-wide"><span>时间段</span><select aria-label="候选时间段" value={aiCandidate.daypart} onChange={(event) => setAiCandidate((current) => current ? { ...current, daypart: event.target.value as Daypart } : current)}><option value="morning">上午</option><option value="afternoon">下午</option><option value="evening">晚上</option></select></label>}{aiCandidate.scheduleKind === "exact" && <><label><span>开始时间</span><input aria-label="候选开始时间" type="time" step="1800" min={aiCandidate.localDate === today ? timeFromMinute(nextAvailableMinuteForToday(aiCandidate.localDate)) : "00:00"} required value={aiCandidate.start} onChange={(event) => setAiCandidate((current) => current ? { ...current, start: event.target.value } : current)} /></label><label><span>结束时间</span><input aria-label="候选结束时间" type="time" step="1800" max="23:30" required value={aiCandidate.end} onChange={(event) => setAiCandidate((current) => current ? { ...current, end: event.target.value } : current)} /></label></>}</>}<label className="candidate-wide"><span>备注（可选）</span><textarea aria-label="候选备注" rows={3} maxLength={4000} value={aiCandidate.notes} onChange={(event) => setAiCandidate((current) => current ? { ...current, notes: event.target.value } : current)} /></label>{candidateMissingFields(aiCandidate).length > 0 && <p className="candidate-note candidate-wide">仍待补充：{candidateMissingFields(aiCandidate).join("、")}</p>}<footer className="candidate-wide"><button className="primary-button full-width" type="submit" disabled={saving}>{saving ? <LoaderCircle className="spin" /> : <Check />}{candidateSaveLabel(aiCandidate)}</button><button className="text-button centered" type="button" disabled={saving} onClick={() => setAiCandidate(null)}>返回修改原句</button></footer></form></div>}
     </aside>
     {aiOpen && <button className="drawer-scrim" type="button" aria-label="关闭 AI 助手" onClick={() => setAiOpen(false)} />}
     <nav className="mobile-nav" aria-label="移动端主要导航">{navItems.map(({ id, label, icon: Icon }) => <button className={view === id ? "active" : ""} type="button" key={id} onClick={() => setView(id)}><Icon /><span>{label}</span></button>)}</nav>

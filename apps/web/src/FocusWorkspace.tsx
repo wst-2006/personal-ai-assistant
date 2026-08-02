@@ -97,7 +97,7 @@ export function FocusWorkspace({
   const [session, setSession] = useState<Session | null>(null);
   const [activeStructure, setActiveStructure] = useState<FocusStructureRecord | null>(null);
   const [candidateStructure, setCandidateStructure] = useState<FocusStructureRecord | null>(null);
-  const [structureLoading, setStructureLoading] = useState(false);
+  const [loadedStructureKey, setLoadedStructureKey] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(preferredTaskId);
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -134,14 +134,17 @@ export function FocusWorkspace({
       tasks.find((task) => task.id === (session?.taskId ?? selectedId)) ?? null,
     [tasks, session, selectedId],
   );
+  const structureKey = selected?.scheduleKind === "exact" && selected.startAt && selected.endAt
+    ? `${selected.id}:${selected.scheduleRevision}:${selected.startAt}:${selected.endAt}`
+    : null;
   useEffect(() => {
-    if (!selected || selected.scheduleKind !== "exact") {
+    if (!selected || selected.scheduleKind !== "exact" || !structureKey) {
       setActiveStructure(null);
       setCandidateStructure(null);
+      setLoadedStructureKey(null);
       return;
     }
     let cancelled = false;
-    setStructureLoading(true);
     void request<{ focusStructures: FocusStructureRecord[] }>(`/api/v1/tasks/${selected.id}/focus-structures`)
       .then((result) => {
         if (cancelled) return;
@@ -160,9 +163,9 @@ export function FocusWorkspace({
           setError("无法读取已保存的专注结构，请刷新后重试。");
         }
       })
-      .finally(() => { if (!cancelled) setStructureLoading(false); });
+      .finally(() => { if (!cancelled) setLoadedStructureKey(structureKey); });
     return () => { cancelled = true; };
-  }, [selected]);
+  }, [structureKey]);
   useEffect(() => {
     if (!session) return;
     const update = () => {
@@ -528,7 +531,7 @@ export function FocusWorkspace({
             </div>
           )}
           {!session && selected?.scheduleKind === "exact" && selected.startAt && selected.endAt && (
-            structureLoading
+            loadedStructureKey !== structureKey
               ? <p className="focus-structure-loading">正在恢复已保存的专注结构…</p>
               : <FocusStructureEditor
                   task={{ id: selected.id, startAt: selected.startAt, endAt: selected.endAt, timeZone: selected.timeZone }}

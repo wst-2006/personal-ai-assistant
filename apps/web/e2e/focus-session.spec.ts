@@ -195,10 +195,11 @@ test("真实结构执行会持久化段运行并自动切换到休息段", async
   test.setTimeout(120_000);
   const now = new Date();
   const localHour = Number(new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Shanghai", hour: "2-digit", hour12: false }).format(now));
-  test.skip(localHour >= 23, "23:00 后当天没有可用的、不会跨午夜的 60 分钟精确任务窗口");
   const halfHour = 30 * 60 * 1_000;
   const startAt = new Date((Math.floor(now.getTime() / halfHour) + 1) * halfHour);
   const endAt = new Date(startAt.getTime() + 60 * 60_000);
+  const localDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" });
+  test.skip(localDate.format(startAt) !== localDate.format(endAt), "当天没有可用的、不会跨午夜的 60 分钟精确任务窗口");
   const title = `E2E 分段结构 ${Date.now().toString(36)}`;
   let taskId = "";
   try {
