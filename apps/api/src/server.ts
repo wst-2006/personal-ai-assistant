@@ -20,6 +20,8 @@ import { HealthService } from "./health-service.js";
 import { DeepSeekHealthPlanner } from "./ai/health-planner.js";
 import { DeepSeekSleepImageAnalyzer } from "./ai/sleep-image-analyzer.js";
 import { LongRangePlanService } from "./long-range-plan-service.js";
+import { LongRangeTaskTreeService } from "./long-range-task-tree-service.js";
+import { DeepSeekLongRangeTaskTreePlanner } from "./ai/long-range-task-tree-planner.js";
 
 const config = loadServerConfig();
 const database = await connectVerifiedDatabase(loadDatabaseConfig());
@@ -43,6 +45,8 @@ const app = buildApp({
   healthPlanner: new DeepSeekHealthPlanner(deepSeekConfig),
   sleepImageAnalyzer: new DeepSeekSleepImageAnalyzer(deepSeekConfig),
   longRangePlanService: new LongRangePlanService(database.db),
+  longRangeTaskTreeService: new LongRangeTaskTreeService(database.db),
+  longRangeTaskTreePlanner: new DeepSeekLongRangeTaskTreePlanner(deepSeekConfig),
   feishuWebhookService: feishuConfig ? new FeishuWebhookService(feishuConfig, taskService, focusService) : undefined,
   taskParser: new DeepSeekTaskParser(deepSeekConfig),
   planChangeAdvisor: new DeepSeekPlanChangeAdvisor(deepSeekConfig)

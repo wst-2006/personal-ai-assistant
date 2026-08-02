@@ -489,6 +489,7 @@ function toNewTaskRecord(input: TaskInput): NewTaskRecord {
     id: randomUUID(),
     title: input.title,
     sourceInboxEntryId: null,
+    sourceLongRangePlanId: null,
     lifecycleStatus: "open",
     scheduleKind: input.scheduleKind,
     currentOutcome: null,

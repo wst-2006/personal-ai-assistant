@@ -33,7 +33,7 @@ try {
     FROM information_schema.columns
     WHERE table_schema = 'public'
       AND table_name = 'tasks'
-      AND column_name IN ('planned_effort_minutes', 'difficulty', 'task_type', 'requires_continuous_focus', 'source_inbox_entry_id')
+      AND column_name IN ('planned_effort_minutes', 'difficulty', 'task_type', 'requires_continuous_focus', 'source_inbox_entry_id', 'source_long_range_plan_id')
     ORDER BY column_name
   `);
   const taskConstraintsResult = await client.query<{ conname: string }>(`
@@ -118,6 +118,38 @@ try {
       AND indexname = 'long_range_plan_milestones_position_unique'
     ORDER BY name
   `);
+  const taskTreeColumnsResult = await client.query<{ column_name: string }>(`
+    SELECT column_name FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'long_range_plan_task_tree_candidates'
+      AND column_name IN ('long_range_plan_id', 'long_range_plan_version', 'state', 'proposal', 'created_task_ids', 'version', 'confirmed_at', 'cancelled_at')
+    ORDER BY column_name
+  `);
+  const taskTreeContractResult = await client.query<{ name: string }>(`
+    SELECT conname AS name FROM pg_constraint
+    WHERE conrelid = to_regclass('public.long_range_plan_task_tree_candidates')
+      AND conname IN (
+        'long_range_plan_task_tree_candidates_state_check',
+        'long_range_plan_task_tree_candidates_version_check',
+        'long_range_plan_task_tree_candidates_plan_version_check'
+      )
+    UNION ALL
+    SELECT 'long_range_plan_task_tree_candidates_plan_fk' AS name
+    WHERE EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conrelid = to_regclass('public.long_range_plan_task_tree_candidates')
+        AND confrelid = to_regclass('public.long_range_plans')
+        AND contype = 'f'
+    )
+    UNION ALL
+    SELECT 'tasks_source_long_range_plan_fk' AS name
+    WHERE EXISTS (
+      SELECT 1 FROM pg_constraint
+      WHERE conrelid = to_regclass('public.tasks')
+        AND confrelid = to_regclass('public.long_range_plans')
+        AND contype = 'f'
+    )
+    ORDER BY name
+  `);
   const tableNames = tablesResult.rows.map((row) => row.table_name);
   const taskColumns = taskColumnsResult.rows.map((row) => row.column_name);
   const taskConstraints = taskConstraintsResult.rows.map((row) => row.conname);
@@ -129,8 +161,10 @@ try {
   const healthContract = healthContractResult.rows.map((row) => row.name);
   const longRangeColumns = longRangeColumnsResult.rows.map((row) => `${row.table_name}.${row.column_name}`);
   const longRangeContract = longRangeContractResult.rows.map((row) => row.name);
-  const expectedTables = ["health_daily_references", "health_profiles", "health_sleep_analyses", "health_week_plans", "inbox_entries", "long_range_plan_milestones", "long_range_plans", "tasks"];
-  const expectedColumns = ["source_inbox_entry_id"];
+  const taskTreeColumns = taskTreeColumnsResult.rows.map((row) => row.column_name);
+  const taskTreeContract = taskTreeContractResult.rows.map((row) => row.name);
+  const expectedTables = ["health_daily_references", "health_profiles", "health_sleep_analyses", "health_week_plans", "inbox_entries", "long_range_plan_milestones", "long_range_plan_task_tree_candidates", "long_range_plans", "tasks"];
+  const expectedColumns = ["source_inbox_entry_id", "source_long_range_plan_id"];
   const retiredTaskColumns = ["planned_effort_minutes", "difficulty", "task_type", "requires_continuous_focus"];
   const expectedConstraints = [
     "tasks_exact_half_hour_boundary_check",
@@ -190,6 +224,23 @@ try {
     "long_range_plan_milestones.target_date",
     "long_range_plan_milestones.position"
   ];
+  const expectedTaskTreeColumns = [
+    "long_range_plan_id",
+    "long_range_plan_version",
+    "state",
+    "proposal",
+    "created_task_ids",
+    "version",
+    "confirmed_at",
+    "cancelled_at"
+  ];
+  const expectedTaskTreeContract = [
+    "long_range_plan_task_tree_candidates_state_check",
+    "long_range_plan_task_tree_candidates_version_check",
+    "long_range_plan_task_tree_candidates_plan_version_check",
+    "long_range_plan_task_tree_candidates_plan_fk",
+    "tasks_source_long_range_plan_fk"
+  ];
 
   if (expectedTables.some((name) => !tableNames.includes(name))
     || expectedColumns.some((name) => !taskColumns.includes(name))
@@ -203,8 +254,10 @@ try {
     || expectedHealthColumns.some((name) => !healthColumns.includes(name))
     || ["health_week_plans_base_plan_idx", "health_week_plans_revision_base_check"].some((name) => !healthContract.includes(name))
     || expectedLongRangeColumns.some((name) => !longRangeColumns.includes(name))
-    || ["long_range_plans_scope_check", "long_range_plans_period_check", "long_range_plan_milestones_position_unique"].some((name) => !longRangeContract.includes(name))) {
-    throw new Error("Database schema does not match the live task, focus structure, inbox, reminder, health, or long-range plan migration contract.");
+    || ["long_range_plans_scope_check", "long_range_plans_period_check", "long_range_plan_milestones_position_unique"].some((name) => !longRangeContract.includes(name))
+    || expectedTaskTreeColumns.some((name) => !taskTreeColumns.includes(name))
+    || expectedTaskTreeContract.some((name) => !taskTreeContract.includes(name))) {
+    throw new Error("Database schema does not match the live task, focus structure, inbox, reminder, health, long-range plan, or task-tree migration contract.");
   }
 
   console.log(JSON.stringify({
@@ -220,7 +273,9 @@ try {
     healthColumns,
     healthContract,
     longRangeColumns,
-    longRangeContract
+    longRangeContract,
+    taskTreeColumns,
+    taskTreeContract
   }, null, 2));
 } finally {
   await client.end();

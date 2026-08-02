@@ -19,6 +19,7 @@ export type NewTaskRecord = {
   id: string;
   title: string;
   sourceInboxEntryId: string | null;
+  sourceLongRangePlanId: string | null;
   lifecycleStatus: TaskLifecycle;
   scheduleKind: TaskScheduleKind;
   currentOutcome: TaskOutcome | null;

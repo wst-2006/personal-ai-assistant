@@ -42,6 +42,7 @@ export const tasks = pgTable(
     id: uuid("id").primaryKey(),
     title: varchar("title", { length: 200 }).notNull(),
     sourceInboxEntryId: uuid("source_inbox_entry_id").references(() => inboxEntries.id),
+    sourceLongRangePlanId: uuid("source_long_range_plan_id").references(() => longRangePlans.id),
     lifecycleStatus: varchar("lifecycle_status", { length: 32 }).notNull().default("open"),
     scheduleKind: varchar("schedule_kind", { length: 16 }).notNull().default("none"),
     currentOutcome: varchar("current_outcome", { length: 32 }),
@@ -61,6 +62,7 @@ export const tasks = pgTable(
     index("tasks_local_date_idx").on(table.localDate),
     index("tasks_exact_interval_idx").on(table.startAt, table.endAt),
     uniqueIndex("tasks_source_inbox_entry_id_unique").on(table.sourceInboxEntryId),
+    index("tasks_source_long_range_plan_idx").on(table.sourceLongRangePlanId),
     check(
       "tasks_lifecycle_status_check",
       sql`${table.lifecycleStatus} in ('open', 'active', 'awaiting_outcome', 'closed', 'cancelled')`
@@ -390,6 +392,30 @@ export const longRangePlanMilestones = pgTable(
     index("long_range_plan_milestones_plan_idx").on(table.longRangePlanId, table.position),
     uniqueIndex("long_range_plan_milestones_position_unique").on(table.longRangePlanId, table.position),
     check("long_range_plan_milestones_position_check", sql`${table.position} >= 0`)
+  ]
+);
+
+export const longRangePlanTaskTreeCandidates = pgTable(
+  "long_range_plan_task_tree_candidates",
+  {
+    id: uuid("id").primaryKey(),
+    longRangePlanId: uuid("long_range_plan_id").notNull().references(() => longRangePlans.id),
+    longRangePlanVersion: integer("long_range_plan_version").notNull(),
+    state: varchar("state", { length: 16 }).notNull().default("candidate"),
+    instructions: text("instructions"),
+    proposal: jsonb("proposal").notNull(),
+    createdTaskIds: jsonb("created_task_ids"),
+    version: integer("version").notNull().default(1),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    index("long_range_plan_task_tree_candidates_plan_idx").on(table.longRangePlanId, table.createdAt),
+    check("long_range_plan_task_tree_candidates_state_check", sql`${table.state} in ('candidate', 'confirmed', 'cancelled')`),
+    check("long_range_plan_task_tree_candidates_version_check", sql`${table.version} > 0`),
+    check("long_range_plan_task_tree_candidates_plan_version_check", sql`${table.longRangePlanVersion} > 0`)
   ]
 );
 

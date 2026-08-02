@@ -34,6 +34,8 @@ type PlanDraft = {
   description: string;
   milestones: DraftMilestone[];
 };
+type TaskTreeItem = { title: string; targetDate: string | null; notes: string | null };
+type TaskTreeCandidate = { id: string; state: "candidate" | "confirmed" | "cancelled"; longRangePlanVersion: number; proposal: { summary: string; tasks: TaskTreeItem[] }; createdTaskIds: string[]; version: number };
 
 type ApiFailureBody = { error?: string; plan?: LongRangePlan };
 
@@ -151,6 +153,9 @@ export function LongRangePlansWorkspace() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [taskTreeCandidate, setTaskTreeCandidate] = useState<TaskTreeCandidate | null>(null);
+  const [taskTreeInstructions, setTaskTreeInstructions] = useState("");
+  const [taskTreeBusy, setTaskTreeBusy] = useState(false);
   const selectedPlan = useMemo(() => plans.find((plan) => plan.id === selectedId) ?? null, [plans, selectedId]);
   const scopeCopy = scopeOptions.find((option) => option.value === scope)!;
 
@@ -175,6 +180,15 @@ export function LongRangePlansWorkspace() {
   useEffect(() => {
     if (selectedPlan) setDraft(draftFromPlan(selectedPlan));
   }, [selectedPlan]);
+
+  useEffect(() => {
+    if (!selectedPlan) { setTaskTreeCandidate(null); return; }
+    let cancelled = false;
+    void requestPlan<{ candidate: TaskTreeCandidate | null }>(`/api/v1/long-range-plans/${selectedPlan.id}/task-tree-candidate`, "GET")
+      .then((result) => { if (!cancelled) setTaskTreeCandidate(result.candidate); })
+      .catch(() => { if (!cancelled) setTaskTreeCandidate(null); });
+    return () => { cancelled = true; };
+  }, [selectedPlan?.id]);
 
   function chooseScope(nextScope: PlanScope) {
     setScope(nextScope);
@@ -249,6 +263,46 @@ export function LongRangePlansWorkspace() {
     }
   }
 
+  async function generateTaskTree() {
+    if (!selectedPlan) return;
+    setTaskTreeBusy(true); setError(null);
+    try {
+      const result = await requestPlan<{ candidate: TaskTreeCandidate }>(`/api/v1/long-range-plans/${selectedPlan.id}/task-tree-candidates/ai`, "POST", { expectedPlanVersion: selectedPlan.version, instructions: taskTreeInstructions.trim() || null });
+      setTaskTreeCandidate(result.candidate);
+    } catch (taskTreeError) { setError(taskTreeError instanceof PlanApiError && taskTreeError.body.error === "long_range_plan_version_conflict" ? "规划已在别处更新，请重新选择后再生成候选。" : "AI 暂时无法生成候选，现有规划和任务没有变化。"); }
+    finally { setTaskTreeBusy(false); }
+  }
+
+  async function saveTaskTreeCandidate() {
+    if (!selectedPlan || !taskTreeCandidate) return;
+    setTaskTreeBusy(true); setError(null);
+    try {
+      const result = await requestPlan<{ candidate: TaskTreeCandidate }>(`/api/v1/task-tree-candidates/${taskTreeCandidate.id}`, "PUT", { expectedVersion: taskTreeCandidate.version, expectedPlanVersion: selectedPlan.version, proposal: taskTreeCandidate.proposal });
+      setTaskTreeCandidate(result.candidate);
+    } catch { setError("候选已经变化，未覆盖其他版本；请刷新后重新确认。"); }
+    finally { setTaskTreeBusy(false); }
+  }
+
+  async function cancelTaskTreeCandidate() {
+    if (!selectedPlan || !taskTreeCandidate) return;
+    setTaskTreeBusy(true); setError(null);
+    try {
+      const result = await requestPlan<{ candidate: TaskTreeCandidate }>(`/api/v1/task-tree-candidates/${taskTreeCandidate.id}/cancel`, "POST", { expectedVersion: taskTreeCandidate.version, expectedPlanVersion: selectedPlan.version });
+      setTaskTreeCandidate(result.candidate);
+    } catch { setError("候选没有被放弃，未修改规划或任务。请刷新后重试。"); }
+    finally { setTaskTreeBusy(false); }
+  }
+
+  async function confirmTaskTreeCandidate() {
+    if (!selectedPlan || !taskTreeCandidate) return;
+    setTaskTreeBusy(true); setError(null);
+    try {
+      const result = await requestPlan<{ candidate: TaskTreeCandidate; taskIds: string[] }>(`/api/v1/task-tree-candidates/${taskTreeCandidate.id}/confirm`, "POST", { expectedVersion: taskTreeCandidate.version, expectedPlanVersion: selectedPlan.version });
+      setTaskTreeCandidate({ ...result.candidate, createdTaskIds: result.taskIds });
+    } catch { setError("候选没有确认，未创建任何任务。请刷新后检查规划版本。"); }
+    finally { setTaskTreeBusy(false); }
+  }
+
   return <section className="long-range-workspace page" aria-labelledby="long-range-title">
     <header className="long-range-heading">
       <div>
@@ -292,6 +346,14 @@ export function LongRangePlansWorkspace() {
         <section className="milestone-editor" aria-labelledby="milestone-title">
           <header><div><p className="section-kicker">自己设定的节点</p><h3 id="milestone-title">里程碑</h3></div>{selectedPlan?.status !== "archived" && <button className="inline-button" type="button" disabled={saving || draft.milestones.length >= 30} onClick={() => updateDraft({ milestones: [...draft.milestones, newMilestone()] })}><Plus />添加节点</button>}</header>
           {draft.milestones.length === 0 ? <p className="milestone-empty">还没有节点。只在它能帮助你保持方向时再添加。</p> : <div className="milestone-list">{draft.milestones.map((milestone, index) => <article key={milestone.key} className="milestone-row"><span>{String(index + 1).padStart(2, "0")}</span><div><input aria-label={`里程碑 ${index + 1}`} required maxLength={200} disabled={saving || selectedPlan?.status === "archived"} value={milestone.title} onChange={(event) => updateMilestone(milestone.key, { title: event.target.value })} placeholder="一个可辨认的阶段节点" /><div className="milestone-detail"><label><span>目标日期（可选）</span><input aria-label={`里程碑 ${index + 1} 目标日期`} type="date" disabled={saving || selectedPlan?.status === "archived"} value={milestone.targetDate} onChange={(event) => updateMilestone(milestone.key, { targetDate: event.target.value })} /></label><label><span>补充说明（可选）</span><input aria-label={`里程碑 ${index + 1} 说明`} maxLength={4000} disabled={saving || selectedPlan?.status === "archived"} value={milestone.notes} onChange={(event) => updateMilestone(milestone.key, { notes: event.target.value })} placeholder="不必填" /></label></div></div>{selectedPlan?.status !== "archived" && <button className="quiet-icon" type="button" aria-label={`移除里程碑 ${index + 1}`} disabled={saving} onClick={() => updateDraft({ milestones: draft.milestones.filter((item) => item.key !== milestone.key) })}><Trash2 /></button>}</article>)}</div>}
+        </section>
+
+        <section className="task-tree-section" aria-labelledby="task-tree-title">
+          <header><div><p className="section-kicker">可选的 AI 协作</p><h3 id="task-tree-title">框架级拆分候选</h3></div>{taskTreeCandidate?.state === "confirmed" && <span className="task-tree-confirmed"><Check />已确认并建立任务</span>}</header>
+          {!selectedPlan ? <p className="milestone-empty">先保存一条规划，再让 AI 根据它提出有限的阶段候选。</p> : taskTreeCandidate?.state === "confirmed" ? <div className="task-tree-result"><strong>{taskTreeCandidate.proposal.summary}</strong><p>已创建 {taskTreeCandidate.createdTaskIds.length} 个未排期任务。它们不会自动进入具体时间轴。</p></div> : taskTreeCandidate?.state === "cancelled" ? <div className="task-tree-result"><strong>这份候选已取消。</strong><p>规划和任务没有变化。你可以重新生成一份新的候选。</p><button className="quiet-button" type="button" disabled={taskTreeBusy || selectedPlan.status === "archived"} onClick={() => setTaskTreeCandidate(null)}><RotateCcw />重新生成候选</button></div> : <>
+            {!taskTreeCandidate && <><p className="task-tree-note">AI 只提出阶段、成果或资料整理节点，不会擅自拆成课程知识点，也不会在此处直接写入任务。</p><textarea aria-label="拆分补充说明" rows={3} maxLength={1000} value={taskTreeInstructions} onChange={(event) => setTaskTreeInstructions(event.target.value)} placeholder="可选：告诉 AI 你希望保留的边界或重点" /><button className="quiet-button" type="button" disabled={taskTreeBusy || selectedPlan.status === "archived"} onClick={() => void generateTaskTree()}>{taskTreeBusy ? <LoaderCircle className="spin" /> : <Plus />}{taskTreeBusy ? "正在生成候选" : "生成 AI 候选"}</button></>}
+            {taskTreeCandidate && <div className="task-tree-candidate"><p className="task-tree-summary">{taskTreeCandidate.proposal.summary}</p><div className="task-tree-items">{taskTreeCandidate.proposal.tasks.map((item, index) => <article key={`${taskTreeCandidate.id}-${index}`}><span>{String(index + 1).padStart(2, "0")}</span><div><input aria-label={`候选任务 ${index + 1}`} value={item.title} onChange={(event) => setTaskTreeCandidate((current) => current ? { ...current, proposal: { ...current.proposal, tasks: current.proposal.tasks.map((task, position) => position === index ? { ...task, title: event.target.value } : task) } } : current)} /><input aria-label={`候选任务 ${index + 1} 日期`} type="date" value={item.targetDate ?? ""} onChange={(event) => setTaskTreeCandidate((current) => current ? { ...current, proposal: { ...current.proposal, tasks: current.proposal.tasks.map((task, position) => position === index ? { ...task, targetDate: event.target.value || null } : task) } } : current)} /></div></article>)}</div><footer><button className="quiet-button" type="button" disabled={taskTreeBusy} onClick={() => void cancelTaskTreeCandidate()}><Trash2 />放弃这份候选</button><button className="quiet-button" type="button" disabled={taskTreeBusy} onClick={() => void saveTaskTreeCandidate()}><Save />保存候选修改</button><button className="primary-button" type="button" disabled={taskTreeBusy} onClick={() => void confirmTaskTreeCandidate()}><Check />确认并建立任务</button></footer></div>}
+          </>}
         </section>
 
         <footer className="long-range-actions">

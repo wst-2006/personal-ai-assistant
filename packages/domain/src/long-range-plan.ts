@@ -41,3 +41,32 @@ export type LongRangePlanStatus = z.infer<typeof longRangePlanStatusSchema>;
 export type LongRangeMilestoneInput = z.infer<typeof longRangeMilestoneInputSchema>;
 export type CreateLongRangePlan = z.infer<typeof createLongRangePlanSchema>;
 export type UpdateLongRangePlan = z.infer<typeof updateLongRangePlanSchema>;
+
+export const taskTreeProposalItemSchema = z.object({
+  title: z.string().trim().min(1).max(200),
+  targetDate: z.string().date().nullable().optional(),
+  notes: z.string().trim().max(4000).nullable().optional()
+}).strict();
+
+export const taskTreeProposalSchema = z.object({
+  summary: z.string().trim().min(1).max(2000),
+  tasks: z.array(taskTreeProposalItemSchema).min(1).max(12)
+}).strict();
+
+export const createTaskTreeCandidateSchema = z.object({
+  expectedPlanVersion: z.number().int().positive(),
+  instructions: z.string().trim().max(1000).nullable().optional()
+}).strict();
+
+export const updateTaskTreeCandidateSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  expectedPlanVersion: z.number().int().positive(),
+  proposal: taskTreeProposalSchema
+}).strict();
+
+export const taskTreeCandidateActionSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  expectedPlanVersion: z.number().int().positive()
+}).strict();
+
+export type TaskTreeProposal = z.infer<typeof taskTreeProposalSchema>;

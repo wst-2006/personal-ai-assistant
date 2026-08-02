@@ -1,0 +1,1 @@
+ALTER TABLE "tasks" ADD CONSTRAINT "tasks_source_long_range_plan_id_long_range_plans_id_fk" FOREIGN KEY ("source_long_range_plan_id") REFERENCES "public"."long_range_plans"("id") ON DELETE no action ON UPDATE no action;
