@@ -6,6 +6,7 @@ import {
   focusTimerJobs,
   healthDailyReferences,
   healthProfiles,
+  healthSleepAnalyses,
   healthWeekPlans,
   inboxEntries,
   reminderJobs,
@@ -60,5 +61,7 @@ describe("formal task and inbox schema contract", () => {
     expect(healthWeekPlans.profileVersion.name).toBe("profile_version");
     expect(healthDailyReferences.healthWeekPlanId.name).toBe("health_week_plan_id");
     expect(healthDailyReferences.content.name).toBe("content");
+    expect(healthSleepAnalyses.analysis.name).toBe("analysis");
+    expect(healthSleepAnalyses.sha256.name).toBe("sha256");
   });
 });

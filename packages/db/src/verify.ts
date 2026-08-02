@@ -86,7 +86,8 @@ try {
     WHERE table_schema = 'public'
       AND ((table_name = 'health_profiles' AND column_name IN ('profile', 'version'))
         OR (table_name = 'health_week_plans' AND column_name IN ('week_start', 'state', 'source', 'profile_version', 'city', 'solar_term', 'version'))
-        OR (table_name = 'health_daily_references' AND column_name IN ('health_week_plan_id', 'local_date', 'day_index', 'content')))
+        OR (table_name = 'health_daily_references' AND column_name IN ('health_week_plan_id', 'local_date', 'day_index', 'content'))
+        OR (table_name = 'health_sleep_analyses' AND column_name IN ('local_date', 'source', 'original_file_name', 'mime_type', 'sha256', 'analysis')))
     ORDER BY table_name, column_name
   `);
   const tableNames = tablesResult.rows.map((row) => row.table_name);
@@ -97,7 +98,7 @@ try {
   const focusTables = focusTablesResult.rows.map((row) => row.table_name);
   const focusColumns = focusColumnsResult.rows.map((row) => `${row.table_name}.${row.column_name}`);
   const healthColumns = healthColumnsResult.rows.map((row) => `${row.table_name}.${row.column_name}`);
-  const expectedTables = ["health_daily_references", "health_profiles", "health_week_plans", "inbox_entries", "tasks"];
+  const expectedTables = ["health_daily_references", "health_profiles", "health_sleep_analyses", "health_week_plans", "inbox_entries", "tasks"];
   const expectedColumns = ["source_inbox_entry_id"];
   const retiredTaskColumns = ["planned_effort_minutes", "difficulty", "task_type", "requires_continuous_focus"];
   const expectedConstraints = [
@@ -136,7 +137,13 @@ try {
     "health_daily_references.health_week_plan_id",
     "health_daily_references.local_date",
     "health_daily_references.day_index",
-    "health_daily_references.content"
+    "health_daily_references.content",
+    "health_sleep_analyses.local_date",
+    "health_sleep_analyses.source",
+    "health_sleep_analyses.original_file_name",
+    "health_sleep_analyses.mime_type",
+    "health_sleep_analyses.sha256",
+    "health_sleep_analyses.analysis"
   ];
 
   if (expectedTables.some((name) => !tableNames.includes(name))

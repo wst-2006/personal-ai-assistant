@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { connectVerifiedDatabase } from "@personal-ai/db/client";
 import { loadDatabaseConfig } from "@personal-ai/db/config";
-import { healthDailyReferences, healthWeekPlans } from "@personal-ai/db/schema";
+import { healthDailyReferences, healthSleepAnalyses, healthWeekPlans } from "@personal-ai/db/schema";
 import { eq } from "drizzle-orm";
 import { HealthService } from "./health-service.js";
 
@@ -30,6 +30,28 @@ describe("health reference persistence", () => {
         await transaction.delete(healthDailyReferences).where(eq(healthDailyReferences.healthWeekPlanId, candidate.plan.id));
         await transaction.delete(healthWeekPlans).where(eq(healthWeekPlans.id, candidate.plan.id));
       });
+    }
+  });
+
+  it("stores only a hashed upload and structured visible analysis, never the original image", async () => {
+    const png = `data:image/png;base64,${Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString("base64")}`;
+    const record = await service.analyzeSleepImage({ localDate: "2099-01-05", fileName: "sleep.png", mimeType: "image/png", dataUrl: png }, {
+      async analyze() {
+        return {
+          totalSleepMinutes: 420, deepSleepMinutes: null, lightSleepMinutes: null, remSleepMinutes: null,
+          awakeCount: null, sleepStart: null, wakeTime: "07:30", deviceScore: null, deviceNotes: null,
+          visibleMetrics: ["总睡眠 7 小时"], interpretation: ["截图显示总睡眠约 7 小时。"], limitations: ["仅基于截图中可见信息。"]
+        };
+      }
+    });
+    try {
+      expect(record.originalFileName).toBe("sleep.png");
+      expect(record.sha256).toMatch(/^[a-f0-9]{64}$/);
+      expect(record.analysis).toMatchObject({ totalSleepMinutes: 420 });
+      expect(JSON.stringify(record)).not.toContain("iVBORw0KGgo");
+      expect(await service.listSleepAnalyses("2099-01-05")).toHaveLength(1);
+    } finally {
+      await connection.db.delete(healthSleepAnalyses).where(eq(healthSleepAnalyses.id, record.id));
     }
   });
 });

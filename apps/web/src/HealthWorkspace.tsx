@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { Check, ChevronLeft, ChevronRight, ClipboardPenLine, HeartPulse, Leaf, LoaderCircle, MapPin, Sparkles, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, ClipboardPenLine, HeartPulse, Leaf, LoaderCircle, MapPin, Sparkles, Upload, X } from "lucide-react";
 
 type Profile = {
   city: string | null;
@@ -26,6 +26,27 @@ type DayReference = {
   };
 };
 type HealthPlan = { id: string; weekStart: string; state: "candidate" | "active"; source: "template" | "ai" | "manual"; city: string | null; solarTerm: string; overview: string; supplements: string[]; version: number; days: DayReference[] };
+type SleepAnalysis = {
+  id: string;
+  localDate: string;
+  originalFileName: string;
+  mimeType: string;
+  createdAt: string;
+  analysis: {
+    totalSleepMinutes: number | null;
+    deepSleepMinutes: number | null;
+    lightSleepMinutes: number | null;
+    remSleepMinutes: number | null;
+    awakeCount: number | null;
+    sleepStart: string | null;
+    wakeTime: string | null;
+    deviceScore: number | null;
+    deviceNotes: string | null;
+    visibleMetrics: string[];
+    interpretation: string[];
+    limitations: string[];
+  };
+};
 type ApiError = Error & { status?: number; body?: { error?: string } };
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:3000";
@@ -53,6 +74,10 @@ function listText(value: string) {
   return value.split(/[\n,，]/).map((item) => item.trim()).filter(Boolean);
 }
 
+function sleepMetric(label: string, value: number | string | null, suffix = "") {
+  return value === null ? null : <div className="sleep-metric"><span>{label}</span><strong>{value}{suffix}</strong></div>;
+}
+
 async function request<T>(path: string, method = "GET", payload?: Record<string, unknown>): Promise<T> {
   const response = await fetch(`${apiBaseUrl}${path}`, { method, headers: payload ? { "content-type": "application/json" } : undefined, body: payload ? JSON.stringify(payload) : undefined });
   const body = response.status === 204 ? {} : await response.json().catch(() => ({}));
@@ -76,9 +101,12 @@ export function HealthWorkspace() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sleepAnalyses, setSleepAnalyses] = useState<SleepAnalysis[]>([]);
+  const [sleepFile, setSleepFile] = useState<File | null>(null);
   const autoCandidateRequested = useRef<string | null>(null);
   const visiblePlan = candidate ?? active;
   const selectedReference = visiblePlan?.days[selectedDay] ?? null;
+  const sleepDate = selectedReference?.localDate ?? shanghaiDate();
 
   useEffect(() => { void reload(); }, [weekStart]);
 
@@ -88,6 +116,14 @@ export function HealthWorkspace() {
       void createCandidate("template");
     }
   }, [loading, profile, active, candidate, weekStart]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void request<{ analyses: SleepAnalysis[] }>(`/api/v1/health/sleep-analyses/${sleepDate}`)
+      .then((result) => { if (!cancelled) setSleepAnalyses(result.analyses); })
+      .catch(() => { if (!cancelled) setSleepAnalyses([]); });
+    return () => { cancelled = true; };
+  }, [sleepDate]);
 
   async function reload() {
     setLoading(true);
@@ -164,6 +200,34 @@ export function HealthWorkspace() {
     finally { setBusy(false); }
   }
 
+  async function analyzeSleepScreenshot() {
+    if (!sleepFile) return;
+    if (!["image/png", "image/jpeg", "image/webp"].includes(sleepFile.type) || sleepFile.size > 6 * 1024 * 1024) {
+      setError("请选择不超过 6 MB 的 PNG、JPG 或 WebP 睡眠截图。");
+      return;
+    }
+    setBusy(true); setError(null);
+    try {
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(new Error("file_read_failed"));
+        reader.onload = () => typeof reader.result === "string" ? resolve(reader.result) : reject(new Error("file_read_failed"));
+        reader.readAsDataURL(sleepFile);
+      });
+      const result = await request<{ analysis: SleepAnalysis }>("/api/v1/health/sleep-analyses", "POST", {
+        localDate: sleepDate,
+        fileName: sleepFile.name,
+        mimeType: sleepFile.type,
+        dataUrl
+      });
+      setSleepAnalyses((items) => [result.analysis, ...items]);
+      setSleepFile(null);
+    } catch (requestError) {
+      const code = requestError instanceof Error ? (requestError as ApiError).body?.error : undefined;
+      setError(code === "sleep_image_analysis_unavailable" ? "视觉分析暂时不可用，原图和分析结果都没有保存。" : "这张截图无法读取，原图和分析结果都没有保存。");
+    } finally { setBusy(false); }
+  }
+
   return <section className="health-workspace">
     <header className="health-heading">
       <div><p className="section-kicker">健康参考</p><h1>把身体照顾在计划之外。</h1><p>只给出本周可查看的饮食与运动范围，不安排任务、不要求打卡。</p></div>
@@ -197,6 +261,10 @@ export function HealthWorkspace() {
         {selectedReference && <article className="health-day-detail"><section><header><Leaf /><div><p>饮食方向</p><strong>蛋白质约 {selectedReference.content.proteinRangeGrams.minimum}–{selectedReference.content.proteinRangeGrams.maximum} g / 天</strong></div></header><p>{selectedReference.content.nutritionDirection}</p><ul>{selectedReference.content.plateGuidance.map((item) => <li key={item}>{item}</li>)}</ul><div className="vegetable-tags">{selectedReference.content.seasonalVegetables.map((item) => <span key={item}>{item}</span>)}</div></section><section><header><HeartPulse /><div><p>运动范围</p><strong>{activityLabel[selectedReference.content.movement.category]} · {intensityLabel[selectedReference.content.movement.intensity]}</strong></div></header><p>{selectedReference.content.movement.durationMinutes.maximum === 0 ? "不安排训练；保持日常轻松活动即可。" : `${selectedReference.content.movement.durationMinutes.minimum}–${selectedReference.content.movement.durationMinutes.maximum} 分钟，按当天实际状态自主决定。`}</p><aside>{selectedReference.content.movement.safetyReminder}</aside></section></article>}
         <section className="health-supplements"><p className="section-kicker">补充剂参考</p>{visiblePlan.supplements.map((item) => <p key={item}>{item}</p>)}</section>
       </section> : <div className="health-empty"><HeartPulse /><strong>健康资料已准备好后，会在这里生成一份待你确认的本周参考。</strong></div>}
+      <section className="health-sleep-card">
+        <header><div><p className="section-kicker">睡眠截图</p><h2>只读取你主动上传的这一张。</h2><small>只分析截图中实际出现的时间、时长、阶段、设备评分和说明；原图不会保存，也不会自动修改健康资料或本周参考。</small></div><div className="health-sleep-actions"><label className="sleep-upload-control"><Upload /><span>{sleepFile ? sleepFile.name : "选择截图"}</span><input aria-label="选择睡眠截图" type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => setSleepFile(event.target.files?.[0] ?? null)} /></label><button className="primary-button" type="button" disabled={busy || !sleepFile} onClick={() => void analyzeSleepScreenshot()}>{busy ? <LoaderCircle className="spin" /> : <Sparkles />}上传并分析</button></div></header>
+        {sleepAnalyses.length === 0 ? <p className="health-sleep-empty">{sleepDate} 还没有已保存的截图分析。</p> : <div className="health-sleep-results">{sleepAnalyses.map((record) => <article key={record.id}><div className="health-sleep-result-head"><strong>{record.localDate}</strong><small>{record.originalFileName} · {new Date(record.createdAt).toLocaleString("zh-CN")}</small></div><div className="sleep-metrics">{sleepMetric("总睡眠", record.analysis.totalSleepMinutes, " 分钟")}{sleepMetric("深睡", record.analysis.deepSleepMinutes, " 分钟")}{sleepMetric("浅睡", record.analysis.lightSleepMinutes, " 分钟")}{sleepMetric("快速眼动", record.analysis.remSleepMinutes, " 分钟")}{sleepMetric("清醒次数", record.analysis.awakeCount)}{sleepMetric("设备评分", record.analysis.deviceScore, " / 100")}{sleepMetric("入睡", record.analysis.sleepStart)}{sleepMetric("起床", record.analysis.wakeTime)}</div>{record.analysis.deviceNotes && <p>{record.analysis.deviceNotes}</p>}<ul>{record.analysis.interpretation.map((item) => <li key={item}>{item}</li>)}</ul><small className="health-sleep-limitations">{record.analysis.limitations.join(" ")}</small></article>)}</div>}
+      </section>
     </>}
   </section>;
 }

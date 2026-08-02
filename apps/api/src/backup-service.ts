@@ -10,6 +10,7 @@ import {
   focusTimerJobs,
   healthDailyReferences,
   healthProfiles,
+  healthSleepAnalyses,
   healthWeekPlans,
   inboxEntries,
   reminderJobs,
@@ -35,6 +36,7 @@ export type LogicalBackup = {
     healthProfiles: Array<typeof healthProfiles.$inferSelect>;
     healthWeekPlans: Array<typeof healthWeekPlans.$inferSelect>;
     healthDailyReferences: Array<typeof healthDailyReferences.$inferSelect>;
+    healthSleepAnalyses: Array<typeof healthSleepAnalyses.$inferSelect>;
     tasks: Array<typeof tasks.$inferSelect>;
     taskLegacyMetadata: Array<typeof taskLegacyMetadata.$inferSelect>;
     taskOutcomes: Array<typeof taskOutcomes.$inferSelect>;
@@ -74,6 +76,7 @@ export class BackupService implements BackupExporter {
       const healthProfileRows = await transaction.select().from(healthProfiles).orderBy(asc(healthProfiles.createdAt), asc(healthProfiles.id));
       const healthWeekPlanRows = await transaction.select().from(healthWeekPlans).orderBy(asc(healthWeekPlans.weekStart), asc(healthWeekPlans.createdAt), asc(healthWeekPlans.id));
       const healthDailyReferenceRows = await transaction.select().from(healthDailyReferences).orderBy(asc(healthDailyReferences.localDate), asc(healthDailyReferences.dayIndex), asc(healthDailyReferences.id));
+      const healthSleepAnalysisRows = await transaction.select().from(healthSleepAnalyses).orderBy(asc(healthSleepAnalyses.localDate), asc(healthSleepAnalyses.createdAt), asc(healthSleepAnalyses.id));
       const taskRows = await transaction.select().from(tasks).orderBy(asc(tasks.createdAt), asc(tasks.id));
       const legacyMetadataRows = await transaction.select().from(taskLegacyMetadata).orderBy(asc(taskLegacyMetadata.archivedAt), asc(taskLegacyMetadata.id));
       const outcomeRows = await transaction.select().from(taskOutcomes).orderBy(asc(taskOutcomes.recordedAt), asc(taskOutcomes.id));
@@ -100,6 +103,7 @@ export class BackupService implements BackupExporter {
           healthProfiles: healthProfileRows,
           healthWeekPlans: healthWeekPlanRows,
           healthDailyReferences: healthDailyReferenceRows,
+          healthSleepAnalyses: healthSleepAnalysisRows,
           tasks: taskRows,
           taskLegacyMetadata: legacyMetadataRows,
           taskOutcomes: outcomeRows,

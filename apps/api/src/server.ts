@@ -17,6 +17,7 @@ import { FeishuWebhookService, loadFeishuWebhookConfig } from "./feishu-webhook.
 import { BackupService } from "./backup-service.js";
 import { HealthService } from "./health-service.js";
 import { DeepSeekHealthPlanner } from "./ai/health-planner.js";
+import { DeepSeekSleepImageAnalyzer } from "./ai/sleep-image-analyzer.js";
 
 const config = loadServerConfig();
 const database = await connectVerifiedDatabase(loadDatabaseConfig());
@@ -38,6 +39,7 @@ const app = buildApp({
   backupService: new BackupService(database.db),
   healthService: new HealthService(database.db),
   healthPlanner: new DeepSeekHealthPlanner(deepSeekConfig),
+  sleepImageAnalyzer: new DeepSeekSleepImageAnalyzer(deepSeekConfig),
   feishuWebhookService: feishuConfig ? new FeishuWebhookService(feishuConfig, taskService, focusService) : undefined,
   taskParser: new DeepSeekTaskParser(deepSeekConfig)
 });

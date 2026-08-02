@@ -472,3 +472,23 @@ export const healthDailyReferences = pgTable(
     check("health_daily_references_day_index_check", sql`${table.dayIndex} between 0 and 6`)
   ]
 );
+
+export const healthSleepAnalyses = pgTable(
+  "health_sleep_analyses",
+  {
+    id: uuid("id").primaryKey(),
+    localDate: date("local_date", { mode: "string" }).notNull(),
+    source: varchar("source", { length: 16 }).notNull().default("user_upload"),
+    originalFileName: varchar("original_file_name", { length: 160 }).notNull(),
+    mimeType: varchar("mime_type", { length: 32 }).notNull(),
+    sha256: varchar("sha256", { length: 64 }).notNull(),
+    analysis: jsonb("analysis").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    index("health_sleep_analyses_date_idx").on(table.localDate, table.createdAt),
+    check("health_sleep_analyses_source_check", sql`${table.source} = 'user_upload'`),
+    check("health_sleep_analyses_mime_check", sql`${table.mimeType} in ('image/png', 'image/jpeg', 'image/webp')`),
+    check("health_sleep_analyses_sha256_check", sql`length(${table.sha256}) = 64`)
+  ]
+);

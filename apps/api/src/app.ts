@@ -23,7 +23,7 @@ import type { FocusStructurePlanner } from "./ai/focus-structure-planner.js";
 import { backupRoutes } from "./backup-routes.js";
 import type { BackupExporter } from "./backup-service.js";
 import { healthRoutes } from "./health-routes.js";
-import type { HealthPlanner, HealthService } from "./health-service.js";
+import type { HealthPlanner, HealthService, SleepImageAnalyzer } from "./health-service.js";
 
 declare module "fastify" {
   interface FastifyRequest { rawBody?: string }
@@ -43,10 +43,11 @@ type AppOptions = {
   backupService?: BackupExporter;
   healthService?: HealthService;
   healthPlanner?: HealthPlanner;
+  sleepImageAnalyzer?: SleepImageAnalyzer;
 };
 
 export function buildApp(options: AppOptions = {}) {
-  const app = Fastify({ logger: true });
+  const app = Fastify({ logger: true, bodyLimit: 9 * 1024 * 1024 });
 
   app.removeContentTypeParser("application/json");
   app.addContentTypeParser("application/json", { parseAs: "string" }, (request, body, done) => {
@@ -90,7 +91,7 @@ export function buildApp(options: AppOptions = {}) {
   if (options.growthService) app.register(growthRoutes, { prefix: "/api/v1", growthService: options.growthService });
   if (options.feishuWebhookService) app.register(feishuRoutes, { prefix: "/api/v1", webhookService: options.feishuWebhookService });
   if (options.backupService) app.register(backupRoutes, { prefix: "/api/v1", backupService: options.backupService });
-  if (options.healthService) app.register(healthRoutes, { prefix: "/api/v1", healthService: options.healthService, healthPlanner: options.healthPlanner });
+  if (options.healthService) app.register(healthRoutes, { prefix: "/api/v1", healthService: options.healthService, healthPlanner: options.healthPlanner, sleepImageAnalyzer: options.sleepImageAnalyzer });
 
   if (options.taskParser) {
     app.register(aiRoutes, {

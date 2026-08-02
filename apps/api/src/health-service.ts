@@ -1,12 +1,16 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import type { AppDatabase } from "@personal-ai/db/client";
-import { healthDailyReferences, healthProfiles, healthWeekPlans, tasks } from "@personal-ai/db/schema";
+import { healthDailyReferences, healthProfiles, healthSleepAnalyses, healthWeekPlans, tasks } from "@personal-ai/db/schema";
 import {
   healthPlanContentSchema,
+  sleepImageAnalysisRequestSchema,
+  sleepImageAnalysisSchema,
   localDatesForHealthWeek,
   type HealthPlanContent,
-  type HealthProfile
+  type HealthProfile,
+  type SleepImageAnalysis,
+  type SleepImageAnalysisRequest
 } from "@personal-ai/domain/health";
 
 export const primaryHealthProfileId = "3a1c7d0c-86ed-4e5f-b9fb-4b7df5bf93e1";
@@ -26,6 +30,10 @@ export type HealthPlanner = {
   }): Promise<HealthPlanContent>;
 };
 
+export type SleepImageAnalyzer = {
+  analyze(input: { localDate: string; fileName: string; mimeType: string; dataUrl: string }): Promise<SleepImageAnalysis>;
+};
+
 export class HealthProfileNotFoundError extends Error {}
 export class HealthProfileVersionConflictError extends Error {
   constructor(readonly current: typeof healthProfiles.$inferSelect) { super("Health profile version conflict."); }
@@ -37,6 +45,7 @@ export class HealthPlanVersionConflictError extends Error {
 export class HealthPlanStateError extends Error {
   constructor(readonly state: string, readonly operation: string) { super(`Cannot ${operation} a health plan in ${state} state.`); }
 }
+export class SleepImageValidationError extends Error {}
 
 export class HealthService {
   constructor(private readonly db: AppDatabase) {}
@@ -126,6 +135,35 @@ export class HealthService {
     });
   }
 
+  async analyzeSleepImage(input: SleepImageAnalysisRequest, analyzer: SleepImageAnalyzer) {
+    const parsed = sleepImageAnalysisRequestSchema.parse(input);
+    const { bytes } = decodeSleepImage(parsed);
+    const analysis = sleepImageAnalysisSchema.parse(await analyzer.analyze({
+      localDate: parsed.localDate,
+      fileName: parsed.fileName,
+      mimeType: parsed.mimeType,
+      dataUrl: parsed.dataUrl
+    }));
+    const [record] = await this.db.insert(healthSleepAnalyses).values({
+      id: randomUUID(),
+      localDate: parsed.localDate,
+      source: "user_upload",
+      originalFileName: parsed.fileName,
+      mimeType: parsed.mimeType,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      analysis,
+      createdAt: new Date()
+    }).returning();
+    if (!record) throw new Error("PostgreSQL did not return the sleep analysis.");
+    return record;
+  }
+
+  async listSleepAnalyses(localDate: string) {
+    return this.db.select().from(healthSleepAnalyses)
+      .where(eq(healthSleepAnalyses.localDate, localDate))
+      .orderBy(desc(healthSleepAnalyses.createdAt));
+  }
+
   private async storeCandidate(input: {
     weekStart: string;
     profileVersion: number;
@@ -196,6 +234,22 @@ export class HealthService {
     }
     throw new Error("Health transaction retry budget exhausted.");
   }
+}
+
+function decodeSleepImage(input: SleepImageAnalysisRequest): { bytes: Buffer } {
+  const separator = input.dataUrl.indexOf(",");
+  if (separator < 0) throw new SleepImageValidationError("sleep screenshot data is malformed");
+  const bytes = Buffer.from(input.dataUrl.slice(separator + 1), "base64");
+  if (bytes.length === 0 || bytes.length > 6 * 1024 * 1024) {
+    throw new SleepImageValidationError("sleep screenshot must be between 1 byte and 6 MB");
+  }
+  const matches = input.mimeType === "image/png"
+    ? bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+    : input.mimeType === "image/jpeg"
+      ? bytes.length >= 3 && bytes.subarray(0, 3).equals(Buffer.from([255, 216, 255]))
+      : bytes.length >= 12 && bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP";
+  if (!matches) throw new SleepImageValidationError("sleep screenshot bytes do not match the declared image type");
+  return { bytes };
 }
 
 function buildTemplateHealthPlan(profile: HealthProfile, activities: Array<{ localDate: string; title: string }>): HealthPlanContent {

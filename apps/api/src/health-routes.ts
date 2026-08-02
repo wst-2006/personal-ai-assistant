@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
-import { createHealthPlanCandidateSchema, healthPlanConfirmationSchema, healthWeekStartSchema, saveHealthProfileSchema } from "@personal-ai/domain/health";
+import { createHealthPlanCandidateSchema, healthPlanConfirmationSchema, healthWeekStartSchema, saveHealthProfileSchema, sleepImageAnalysisRequestSchema } from "@personal-ai/domain/health";
+import { reviewDateSchema } from "@personal-ai/domain/review";
 import { z } from "zod";
 import {
   HealthPlanNotFoundError,
@@ -8,14 +9,17 @@ import {
   HealthProfileNotFoundError,
   HealthProfileVersionConflictError,
   HealthService,
+  SleepImageValidationError,
+  type SleepImageAnalyzer,
   type HealthPlanner
 } from "./health-service.js";
 
 const planIdParams = z.object({ id: z.string().uuid() });
 const weekParams = z.object({ weekStart: healthWeekStartSchema });
+const sleepAnalysisParams = z.object({ localDate: reviewDateSchema });
 
-export async function healthRoutes(app: FastifyInstance, options: { healthService: HealthService; healthPlanner?: HealthPlanner }) {
-  const { healthService, healthPlanner } = options;
+export async function healthRoutes(app: FastifyInstance, options: { healthService: HealthService; healthPlanner?: HealthPlanner; sleepImageAnalyzer?: SleepImageAnalyzer }) {
+  const { healthService, healthPlanner, sleepImageAnalyzer } = options;
 
   app.get("/health/profile", async () => ({ profile: serializeProfile(await healthService.getProfile()) }));
 
@@ -34,6 +38,25 @@ export async function healthRoutes(app: FastifyInstance, options: { healthServic
     if (!params.success) return reply.status(400).send({ error: "invalid_health_week" });
     const week = await healthService.getWeek(params.data.weekStart);
     return { active: serializePlan(week.active), candidate: serializePlan(week.candidate) };
+  });
+
+  app.get("/health/sleep-analyses/:localDate", async (request, reply) => {
+    const params = sleepAnalysisParams.safeParse(request.params);
+    if (!params.success) return reply.status(400).send({ error: "invalid_sleep_analysis_date" });
+    return { analyses: await healthService.listSleepAnalyses(params.data.localDate) };
+  });
+
+  app.post("/health/sleep-analyses", async (request, reply) => {
+    if (!sleepImageAnalyzer) return reply.status(503).send({ error: "sleep_image_analysis_unavailable", message: "视觉分析服务尚未配置。" });
+    const input = sleepImageAnalysisRequestSchema.safeParse(request.body);
+    if (!input.success) return reply.status(400).send({ error: "invalid_sleep_image", details: input.error.flatten() });
+    try {
+      return reply.status(201).send({ analysis: await healthService.analyzeSleepImage(input.data, sleepImageAnalyzer) });
+    } catch (error) {
+      if (error instanceof SleepImageValidationError) return reply.status(400).send({ error: "invalid_sleep_image", message: error.message });
+      app.log.warn({ reason: error instanceof Error ? error.message : "unknown" }, "Sleep image analysis failed");
+      return reply.status(502).send({ error: "sleep_image_analysis_unavailable", message: "视觉分析暂时不可用，未保存任何分析结果。" });
+    }
   });
 
   app.post("/health/weeks/template-candidates", async (request, reply) => {
