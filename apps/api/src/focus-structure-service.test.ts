@@ -130,4 +130,36 @@ describe("focus structure persistence", () => {
     expect(cancelled.structure.state).toBe("cancelled");
     expect(cancelled.structure.version).toBe(2);
   });
+
+  it("persists a validated AI plan only as an unconfirmed candidate", async () => {
+    const taskId = randomUUID();
+    cleanupIds.push(taskId);
+    const [task] = await connection.db.insert(tasks).values({
+      id: taskId,
+      title: "AI focus candidate test",
+      lifecycleStatus: "open",
+      scheduleKind: "exact",
+      localDate: "2099-07-27",
+      startAt: new Date("2099-07-27T07:00:00.000Z"),
+      endAt: new Date("2099-07-27T08:30:00.000Z"),
+      timeZone: "Asia/Shanghai",
+      version: 1,
+      scheduleRevision: 1
+    }).returning();
+    if (!task) throw new Error("test task was not created");
+
+    const candidate = await service.createAiCandidate({
+      taskId,
+      taskVersion: task.version,
+      taskScheduleRevision: task.scheduleRevision,
+      instructions: "前短后长"
+    }, { plan: async () => [
+      { segmentType: "focus", durationMinutes: 35 },
+      { segmentType: "break", durationMinutes: 5 },
+      { segmentType: "focus", durationMinutes: 45 },
+      { segmentType: "break", durationMinutes: 5 }
+    ] });
+    expect(candidate.structure).toMatchObject({ state: "candidate", source: "ai" });
+    expect((await service.list(taskId)).filter((item) => item.structure.state === "active")).toHaveLength(0);
+  });
 });

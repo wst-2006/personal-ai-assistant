@@ -250,6 +250,28 @@ export function FocusWorkspace({
     }
   }
 
+  async function planAiStructure(instructions: string | null): Promise<void> {
+    if (!selected || selected.scheduleKind !== "exact") return;
+    setBusy(true);
+    setError(null);
+    try {
+      const candidate = await request<{ focusStructure: FocusStructureRecord }>(
+        "/api/v1/focus-structures/ai-candidates", "POST", {
+          taskId: selected.id,
+          taskVersion: selected.version,
+          taskScheduleRevision: selected.scheduleRevision,
+          instructions
+        });
+      setCandidateStructure(candidate.focusStructure);
+    } catch (error: any) {
+      setError(error.body?.error === "focus_structure_task_conflict"
+        ? "任务排期已经变化，请刷新后再让 AI 安排。"
+        : error.body?.message ?? "AI 暂时无法安排，现有结构没有变化。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function confirmStructure(): Promise<void> {
     if (!selected || !candidateStructure) return;
     setBusy(true);
@@ -514,6 +536,7 @@ export function FocusWorkspace({
                   candidate={candidateStructure}
                   busy={busy}
                   onSave={saveStructure}
+                  onPlanAi={planAiStructure}
                   onConfirm={confirmStructure}
                   onDiscard={discardCandidate}
                 />

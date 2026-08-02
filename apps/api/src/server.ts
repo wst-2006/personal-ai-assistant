@@ -3,6 +3,7 @@ import { loadDatabaseConfig } from "@personal-ai/db/config";
 import { buildApp } from "./app.js";
 import { loadDeepSeekConfig } from "./ai/config.js";
 import { DeepSeekTaskParser } from "./ai/task-parser.js";
+import { DeepSeekFocusStructurePlanner } from "./ai/focus-structure-planner.js";
 import { loadServerConfig } from "./config.js";
 import { PostgresTaskStore } from "./task-repository.js";
 import { TaskService } from "./task-service.js";
@@ -21,16 +22,18 @@ const taskService = new TaskService(taskStore);
 const focusService = new FocusService(database.db);
 const focusStructureService = new FocusStructureService(database.db);
 const feishuConfig = loadFeishuWebhookConfig(process.env);
+const deepSeekConfig = loadDeepSeekConfig();
 const app = buildApp({
   taskService,
   focusService,
   focusStructureService,
+  focusStructurePlanner: new DeepSeekFocusStructurePlanner(deepSeekConfig),
   reviewService: new ReviewService(database.db),
   briefService: new BriefService(database.db),
   diaryService: new DiaryService(database.db),
   growthService: new GrowthService(database.db),
   feishuWebhookService: feishuConfig ? new FeishuWebhookService(feishuConfig, taskService, focusService) : undefined,
-  taskParser: new DeepSeekTaskParser(loadDeepSeekConfig())
+  taskParser: new DeepSeekTaskParser(deepSeekConfig)
 });
 
 app.addHook("onClose", async () => {

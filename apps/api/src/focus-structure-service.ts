@@ -10,6 +10,7 @@ import {
   type FocusStructureInput,
   type FocusSegment
 } from "@personal-ai/domain/focus";
+import type { FocusStructurePlanner } from "./ai/focus-structure-planner.js";
 
 export type StoredFocusStructure = typeof focusStructures.$inferSelect;
 export type StoredFocusStructureSegment = typeof focusStructureSegments.$inferSelect;
@@ -86,6 +87,51 @@ export class FocusStructureService {
       }));
       await transaction.insert(focusStructureSegments).values(segments);
       return { structure, segments: await this.listSegments(transaction, structure.id) };
+    });
+  }
+
+  async createAiCandidate(input: {
+    taskId: string;
+    taskVersion: number;
+    taskScheduleRevision: number;
+    instructions: string | null;
+  }, planner: FocusStructurePlanner): Promise<FocusStructureWithSegments> {
+    const task = await this.requireTask(this.db, input.taskId);
+    this.assertTaskVersion(task, input.taskVersion, input.taskScheduleRevision);
+    if (task.lifecycleStatus !== "open" || task.scheduleKind !== "exact" || !task.startAt || !task.endAt) {
+      throw new InvalidFocusStructureError("AI focus planning requires an open task with an exact interval.");
+    }
+    const totalMinutes = (task.endAt.getTime() - task.startAt.getTime()) / 60_000;
+    const segments = await planner.plan({
+      title: task.title,
+      totalStartAt: task.startAt.toISOString(),
+      totalEndAt: task.endAt.toISOString(),
+      totalMinutes,
+      instructions: input.instructions
+    });
+    const focusCount = segments.filter((segment) => segment.segmentType === "focus").length;
+    if (totalMinutes === 30) {
+      if (segments.length !== 1 || segments[0]?.segmentType !== "focus" || segments[0].durationMinutes !== 30) {
+        throw new InvalidFocusStructureError("AI returned an invalid 30-minute focus structure.");
+      }
+    } else {
+      try {
+        validateSegmentedFocusStructure({ totalStartAt: task.startAt, totalEndAt: task.endAt, segments });
+      } catch (error) {
+        throw new InvalidFocusStructureError(`AI returned an invalid focus structure: ${error instanceof Error ? error.message : "unknown validation error"}`);
+      }
+    }
+    const breakMinutes = segments.find((segment) => segment.segmentType === "break")?.durationMinutes ?? 0;
+    return this.createCandidate({
+      taskId: task.id,
+      taskVersion: task.version,
+      taskScheduleRevision: task.scheduleRevision,
+      source: "ai",
+      mode: focusCount === 1 ? "continuous" : "segmented",
+      totalStartAt: task.startAt.toISOString(),
+      totalEndAt: task.endAt.toISOString(),
+      breakMinutes,
+      ...(focusCount === 1 ? {} : { segments })
     });
   }
 

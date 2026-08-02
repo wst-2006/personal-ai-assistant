@@ -114,6 +114,7 @@ async function cleanupStructureEditorTask(id: string) {
 
 async function openTaskStructureEditor(page: Page, title: string, localDate: string) {
   await page.getByLabel("时间轴日期").fill(localDate);
+  await page.waitForLoadState("networkidle");
   const task = page.locator(`[data-task-id]`).filter({ hasText: title });
   await expect(task).toBeVisible();
   await task.getByRole("button", { name: `打开 ${title} 的任务操作` }).click();
@@ -327,6 +328,87 @@ test("手动专注结构可保存候选、刷新恢复、确认并在移动端�
     await page.getByLabel("第 1 段专注分钟").fill("30");
     await expect(page.getByText("各段总和必须刚好填满任务时间。", { exact: true })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  } finally {
+    await cleanupStructureEditorTask(task.id);
+  }
+});
+
+test("AI 专注安排只生成待确认候选且不会自动启用", async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const task = await createStructureEditorTask();
+  const candidateId = randomUUID();
+  let confirmRequests = 0;
+  let receivedPayload: {
+    taskId: string;
+    taskVersion: number;
+    taskScheduleRevision: number;
+    instructions: string | null;
+  } | null = null;
+  page.on("request", (outgoing) => {
+    if (outgoing.method() === "POST" && outgoing.url().endsWith("/confirm")) confirmRequests += 1;
+  });
+  await page.route("**/api/v1/focus-structures/ai-candidates", async (route) => {
+    receivedPayload = route.request().postDataJSON() as {
+      taskId: string;
+      taskVersion: number;
+      taskScheduleRevision: number;
+      instructions: string | null;
+    };
+    await route.fulfill({
+      status: 201,
+      contentType: "application/json",
+      body: JSON.stringify({
+        focusStructure: {
+          id: candidateId,
+          taskId: task.id,
+          taskScheduleRevision: 1,
+          state: "candidate",
+          source: "ai",
+          version: 1,
+          totalStartAt: new Date(`${task.localDate}T09:00:00+08:00`).toISOString(),
+          totalEndAt: new Date(`${task.localDate}T12:00:00+08:00`).toISOString(),
+          confirmedAt: null,
+          supersededAt: null,
+          invalidatedAt: null,
+          invalidationReason: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          segments: [
+            { id: randomUUID(), focusStructureId: candidateId, position: 0, segmentType: "focus", durationMinutes: 50 },
+            { id: randomUUID(), focusStructureId: candidateId, position: 1, segmentType: "break", durationMinutes: 5 },
+            { id: randomUUID(), focusStructureId: candidateId, position: 2, segmentType: "focus", durationMinutes: 55 },
+            { id: randomUUID(), focusStructureId: candidateId, position: 3, segmentType: "break", durationMinutes: 5 },
+            { id: randomUUID(), focusStructureId: candidateId, position: 4, segmentType: "focus", durationMinutes: 60 },
+            { id: randomUUID(), focusStructureId: candidateId, position: 5, segmentType: "break", durationMinutes: 5 }
+          ]
+        }
+      })
+    });
+  });
+
+  try {
+    await page.goto("/");
+    await openTaskStructureEditor(page, task.title, task.localDate);
+    const instructions = page.getByLabel("AI 专注结构临时要求");
+    await instructions.fill("拆成 3 段，前短后长");
+    await expect(instructions).toHaveValue("拆成 3 段，前短后长");
+    await instructions.press("Tab");
+    await page.getByRole("button", { name: "生成 AI 候选", exact: true }).click();
+
+    await expect(page.getByText("AI 候选，等待你确认", { exact: true })).toBeVisible();
+    await expect(page.locator(".structure-timeline > div")).toHaveCount(6);
+    await expect(page.getByRole("button", { name: "确认并使用", exact: true })).toBeVisible();
+    expect(confirmRequests).toBe(0);
+    expect(receivedPayload).toEqual({
+      taskId: task.id,
+      taskVersion: 1,
+      taskScheduleRevision: 1,
+      instructions: "拆成 3 段，前短后长"
+    });
+
+    const stored = await request.get(`${apiBase}/api/v1/tasks/${task.id}/focus-structures`);
+    expect(stored.status()).toBe(200);
+    expect(((await stored.json()) as { focusStructures: unknown[] }).focusStructures).toHaveLength(0);
   } finally {
     await cleanupStructureEditorTask(task.id);
   }

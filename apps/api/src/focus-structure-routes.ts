@@ -9,6 +9,7 @@ import {
   FocusStructureVersionConflictError,
   InvalidFocusStructureError
 } from "./focus-structure-service.js";
+import type { FocusStructurePlanner } from "./ai/focus-structure-planner.js";
 
 const taskParamsSchema = z.object({ taskId: z.string().uuid() });
 const structureParamsSchema = z.object({ id: z.string().uuid() });
@@ -18,9 +19,15 @@ const confirmSchema = z.object({
   expectedTaskScheduleRevision: z.number().int().positive()
 }).strict();
 const cancelSchema = z.object({ expectedVersion: z.number().int().positive() }).strict();
+const aiCandidateSchema = z.object({
+  taskId: z.string().uuid(),
+  taskVersion: z.number().int().positive(),
+  taskScheduleRevision: z.number().int().positive(),
+  instructions: z.string().trim().max(1000).nullable().optional()
+}).strict();
 
-export async function focusStructureRoutes(app: FastifyInstance, options: { focusStructureService: FocusStructureService }) {
-  const { focusStructureService } = options;
+export async function focusStructureRoutes(app: FastifyInstance, options: { focusStructureService: FocusStructureService; focusStructurePlanner?: FocusStructurePlanner }) {
+  const { focusStructureService, focusStructurePlanner } = options;
 
   app.post("/focus-structures/candidates", async (request, reply) => {
     const input = focusStructureInputSchema.safeParse(request.body);
@@ -29,6 +36,27 @@ export async function focusStructureRoutes(app: FastifyInstance, options: { focu
       return reply.status(201).send({ focusStructure: serialize(await focusStructureService.createCandidate(input.data)) });
     } catch (error) {
       return focusStructureError(reply, error);
+    }
+  });
+
+  if (focusStructurePlanner) app.post("/focus-structures/ai-candidates", async (request, reply) => {
+    const input = aiCandidateSchema.safeParse(request.body);
+    if (!input.success) return reply.status(400).send({ error: "invalid_ai_focus_structure_request", details: input.error.flatten() });
+    try {
+      return reply.status(201).send({ focusStructure: serialize(await focusStructureService.createAiCandidate({
+        ...input.data,
+        instructions: input.data.instructions?.trim() || null
+      }, focusStructurePlanner)) });
+    } catch (error) {
+      if (error instanceof InvalidFocusStructureError && error.message.startsWith("AI returned")) {
+        app.log.warn({ reason: error.message }, "DeepSeek focus planning returned an invalid structure");
+        return reply.status(502).send({ error: "ai_focus_structure_invalid", message: "AI 返回的结构不符合时间约束，没有保存。" });
+      }
+      if (error instanceof FocusStructureNotFoundError || error instanceof FocusStructureTaskConflictError ||
+        error instanceof FocusStructureVersionConflictError || error instanceof FocusStructureStateError ||
+        error instanceof InvalidFocusStructureError) return focusStructureError(reply, error);
+      app.log.warn({ reason: error instanceof Error ? error.message : "Unknown AI focus planner failure" }, "DeepSeek focus planning failed");
+      return reply.status(502).send({ error: "ai_focus_structure_unavailable", message: "AI 暂时无法安排专注结构，现有结构没有变化。" });
     }
   });
 

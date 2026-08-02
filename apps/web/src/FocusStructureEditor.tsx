@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronDown, RotateCcw, Save, Trash2 } from "lucide-react";
+import { Check, ChevronDown, RotateCcw, Save, Sparkles, Trash2 } from "lucide-react";
 import {
   allocateContinuousFocusStructure,
   allocateTemplateFocusStructure,
@@ -32,6 +32,7 @@ type Props = {
   candidate: FocusStructureRecord | null;
   busy: boolean;
   onSave: (segments: FocusSegment[], source: "manual" | "template") => Promise<void>;
+  onPlanAi: (instructions: string | null) => Promise<void>;
   onConfirm: () => Promise<void>;
   onDiscard: () => Promise<void>;
 };
@@ -43,7 +44,7 @@ const distributions: Array<{ value: FocusDistribution | "custom"; label: string 
   { value: "custom", label: "自定义" }
 ];
 
-export function FocusStructureEditor({ task, active, candidate, busy, onSave, onConfirm, onDiscard }: Props) {
+export function FocusStructureEditor({ task, active, candidate, busy, onSave, onPlanAi, onConfirm, onDiscard }: Props) {
   const totalMinutes = Math.round((new Date(task.endAt).getTime() - new Date(task.startAt).getTime()) / 60_000);
   const [focusCount, setFocusCount] = useState(1);
   const [distribution, setDistribution] = useState<FocusDistribution | "custom">("equal");
@@ -51,6 +52,7 @@ export function FocusStructureEditor({ task, active, candidate, busy, onSave, on
   const [segments, setSegments] = useState<FocusSegment[]>([]);
   const [expanded, setExpanded] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  const [aiInstructions, setAiInstructions] = useState("");
   const dragRef = useRef<null | { boundaryIndex: number; startX: number; width: number; initial: FocusSegment[] }>(null);
   const maxCount = totalMinutes === 30 ? 1 : Math.max(1, Math.floor(totalMinutes / (30 + Math.max(5, breakMinutes))));
 
@@ -170,7 +172,7 @@ export function FocusStructureEditor({ task, active, candidate, busy, onSave, on
       <header className="structure-heading">
         <div>
           <p className="section-kicker">执行结构</p>
-          <strong>{candidate ? "候选方案，等待确认" : active ? "已确认方案" : "先安排这段时间"}</strong>
+          <strong>{candidate ? candidate.source === "ai" ? "AI 候选，等待你确认" : "候选方案，等待确认" : active ? "已确认方案" : "先安排这段时间"}</strong>
         </div>
         <span>{formatClock(task.startAt, task.timeZone)}–{formatClock(task.endAt, task.timeZone)} · {totalMinutes} 分钟</span>
       </header>
@@ -238,6 +240,25 @@ export function FocusStructureEditor({ task, active, candidate, busy, onSave, on
           </label>
         </div>
       )}
+
+      <div className="structure-ai-planner">
+        <div>
+          <Sparkles />
+          <span><strong>AI 安排候选</strong><small>只使用任务时间与本次要求，不会自动确认。</small></span>
+        </div>
+        <textarea
+          aria-label="AI 专注结构临时要求"
+          rows={2}
+          maxLength={1000}
+          placeholder="可选，例如：拆成 3 段，前短后长，休息都用 5 分钟"
+          disabled={busy}
+          value={aiInstructions}
+          onChange={(event) => setAiInstructions(event.target.value)}
+        />
+        <button type="button" className="focus-secondary" disabled={busy} onClick={() => void onPlanAi(aiInstructions.trim() || null)}>
+          <Sparkles />{candidate?.source === "ai" ? "重新安排" : "生成 AI 候选"}
+        </button>
+      </div>
 
       <div className="structure-timeline" aria-label="专注结构时间带">
         {timeline.map((segment, index) => (

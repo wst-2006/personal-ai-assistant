@@ -19,6 +19,7 @@ import { growthRoutes } from "./growth-routes.js";
 import type { GrowthService } from "./growth-service.js";
 import { feishuRoutes } from "./feishu-routes.js";
 import type { FeishuWebhookService } from "./feishu-webhook.js";
+import type { FocusStructurePlanner } from "./ai/focus-structure-planner.js";
 
 declare module "fastify" {
   interface FastifyRequest { rawBody?: string }
@@ -28,6 +29,7 @@ type AppOptions = {
   taskService?: TaskService;
   focusService?: FocusService;
   focusStructureService?: FocusStructureService;
+  focusStructurePlanner?: FocusStructurePlanner;
   reviewService?: ReviewService;
   briefService?: BriefService;
   diaryService?: DiaryService;
@@ -70,7 +72,11 @@ export function buildApp(options: AppOptions = {}) {
 
   if (options.taskService) app.register(inboxRoutes, { prefix: "/api/v1", taskService: options.taskService });
   if (options.focusService) app.register(focusRoutes, { prefix: "/api/v1", focusService: options.focusService });
-  if (options.focusStructureService) app.register(focusStructureRoutes, { prefix: "/api/v1", focusStructureService: options.focusStructureService });
+  if (options.focusStructureService) app.register(focusStructureRoutes, {
+    prefix: "/api/v1",
+    focusStructureService: options.focusStructureService,
+    focusStructurePlanner: options.focusStructurePlanner
+  });
   if (options.reviewService) app.register(reviewRoutes, { prefix: "/api/v1", reviewService: options.reviewService });
   if (options.briefService) app.register(briefRoutes, { prefix: "/api/v1", briefService: options.briefService });
   if (options.diaryService) app.register(diaryRoutes, { prefix: "/api/v1", diaryService: options.diaryService });
