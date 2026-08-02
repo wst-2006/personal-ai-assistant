@@ -9,6 +9,8 @@ import {
   healthSleepAnalyses,
   healthWeekPlans,
   inboxEntries,
+  longRangePlanMilestones,
+  longRangePlans,
   reminderJobs,
   taskLegacyMetadata,
   tasks
@@ -63,5 +65,14 @@ describe("formal task and inbox schema contract", () => {
     expect(healthDailyReferences.content.name).toBe("content");
     expect(healthSleepAnalyses.analysis.name).toBe("analysis");
     expect(healthSleepAnalyses.sha256.name).toBe("sha256");
+  });
+
+  it("keeps monthly, semester, and annual plans outside the task lifecycle", () => {
+    expect(longRangePlans.scope.name).toBe("scope");
+    expect(longRangePlans.periodStart.name).toBe("period_start");
+    expect(longRangePlans.periodEnd.name).toBe("period_end");
+    expect(longRangePlans.version.name).toBe("version");
+    expect(longRangePlanMilestones.longRangePlanId.name).toBe("long_range_plan_id");
+    expect(longRangePlanMilestones.targetDate.name).toBe("target_date");
   });
 });

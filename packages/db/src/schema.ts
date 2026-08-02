@@ -350,6 +350,49 @@ export const taskConflictAcceptances = pgTable(
   ]
 );
 
+export const longRangePlans = pgTable(
+  "long_range_plans",
+  {
+    id: uuid("id").primaryKey(),
+    scope: varchar("scope", { length: 16 }).notNull(),
+    title: varchar("title", { length: 200 }).notNull(),
+    periodStart: date("period_start", { mode: "string" }).notNull(),
+    periodEnd: date("period_end", { mode: "string" }).notNull(),
+    description: text("description"),
+    status: varchar("status", { length: 16 }).notNull().default("active"),
+    version: integer("version").notNull().default(1),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    index("long_range_plans_scope_status_idx").on(table.scope, table.status, table.periodStart),
+    check("long_range_plans_scope_check", sql`${table.scope} in ('month', 'semester', 'annual')`),
+    check("long_range_plans_status_check", sql`${table.status} in ('active', 'archived')`),
+    check("long_range_plans_period_check", sql`${table.periodEnd} >= ${table.periodStart}`),
+    check("long_range_plans_version_check", sql`${table.version} > 0`)
+  ]
+);
+
+export const longRangePlanMilestones = pgTable(
+  "long_range_plan_milestones",
+  {
+    id: uuid("id").primaryKey(),
+    longRangePlanId: uuid("long_range_plan_id").notNull().references(() => longRangePlans.id),
+    title: varchar("title", { length: 200 }).notNull(),
+    targetDate: date("target_date", { mode: "string" }),
+    notes: text("notes"),
+    position: integer("position").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    index("long_range_plan_milestones_plan_idx").on(table.longRangePlanId, table.position),
+    uniqueIndex("long_range_plan_milestones_position_unique").on(table.longRangePlanId, table.position),
+    check("long_range_plan_milestones_position_check", sql`${table.position} >= 0`)
+  ]
+);
+
 export const reviewSessions = pgTable("review_sessions", {
   id: uuid("id").primaryKey(),
   localDate: varchar("local_date", { length: 10 }).notNull().unique(),

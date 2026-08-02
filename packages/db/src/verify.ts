@@ -100,6 +100,24 @@ try {
       AND indexname = 'health_week_plans_base_plan_idx'
     ORDER BY name
   `);
+  const longRangeColumnsResult = await client.query<{ table_name: string; column_name: string }>(`
+    SELECT table_name, column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND ((table_name = 'long_range_plans' AND column_name IN ('scope', 'period_start', 'period_end', 'status', 'version'))
+        OR (table_name = 'long_range_plan_milestones' AND column_name IN ('long_range_plan_id', 'target_date', 'position')))
+    ORDER BY table_name, column_name
+  `);
+  const longRangeContractResult = await client.query<{ name: string }>(`
+    SELECT conname AS name FROM pg_constraint
+    WHERE conrelid = to_regclass('public.long_range_plans')
+      AND conname IN ('long_range_plans_scope_check', 'long_range_plans_period_check')
+    UNION ALL
+    SELECT indexname AS name FROM pg_indexes
+    WHERE schemaname = 'public' AND tablename = 'long_range_plan_milestones'
+      AND indexname = 'long_range_plan_milestones_position_unique'
+    ORDER BY name
+  `);
   const tableNames = tablesResult.rows.map((row) => row.table_name);
   const taskColumns = taskColumnsResult.rows.map((row) => row.column_name);
   const taskConstraints = taskConstraintsResult.rows.map((row) => row.conname);
@@ -109,7 +127,9 @@ try {
   const focusColumns = focusColumnsResult.rows.map((row) => `${row.table_name}.${row.column_name}`);
   const healthColumns = healthColumnsResult.rows.map((row) => `${row.table_name}.${row.column_name}`);
   const healthContract = healthContractResult.rows.map((row) => row.name);
-  const expectedTables = ["health_daily_references", "health_profiles", "health_sleep_analyses", "health_week_plans", "inbox_entries", "tasks"];
+  const longRangeColumns = longRangeColumnsResult.rows.map((row) => `${row.table_name}.${row.column_name}`);
+  const longRangeContract = longRangeContractResult.rows.map((row) => row.name);
+  const expectedTables = ["health_daily_references", "health_profiles", "health_sleep_analyses", "health_week_plans", "inbox_entries", "long_range_plan_milestones", "long_range_plans", "tasks"];
   const expectedColumns = ["source_inbox_entry_id"];
   const retiredTaskColumns = ["planned_effort_minutes", "difficulty", "task_type", "requires_continuous_focus"];
   const expectedConstraints = [
@@ -160,6 +180,16 @@ try {
     "health_sleep_analyses.sha256",
     "health_sleep_analyses.analysis"
   ];
+  const expectedLongRangeColumns = [
+    "long_range_plans.scope",
+    "long_range_plans.period_start",
+    "long_range_plans.period_end",
+    "long_range_plans.status",
+    "long_range_plans.version",
+    "long_range_plan_milestones.long_range_plan_id",
+    "long_range_plan_milestones.target_date",
+    "long_range_plan_milestones.position"
+  ];
 
   if (expectedTables.some((name) => !tableNames.includes(name))
     || expectedColumns.some((name) => !taskColumns.includes(name))
@@ -171,8 +201,10 @@ try {
     || expectedFocusTables.some((name) => !focusTables.includes(name))
     || expectedFocusColumns.some((name) => !focusColumns.includes(name))
     || expectedHealthColumns.some((name) => !healthColumns.includes(name))
-    || ["health_week_plans_base_plan_idx", "health_week_plans_revision_base_check"].some((name) => !healthContract.includes(name))) {
-    throw new Error("Database schema does not match the live task, focus structure, inbox, reminder, or health migration contract.");
+    || ["health_week_plans_base_plan_idx", "health_week_plans_revision_base_check"].some((name) => !healthContract.includes(name))
+    || expectedLongRangeColumns.some((name) => !longRangeColumns.includes(name))
+    || ["long_range_plans_scope_check", "long_range_plans_period_check", "long_range_plan_milestones_position_unique"].some((name) => !longRangeContract.includes(name))) {
+    throw new Error("Database schema does not match the live task, focus structure, inbox, reminder, health, or long-range plan migration contract.");
   }
 
   console.log(JSON.stringify({
@@ -186,7 +218,9 @@ try {
     focusTables,
     focusColumns,
     healthColumns,
-    healthContract
+    healthContract,
+    longRangeColumns,
+    longRangeContract
   }, null, 2));
 } finally {
   await client.end();

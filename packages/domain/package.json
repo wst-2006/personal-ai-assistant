@@ -27,6 +27,10 @@
     "./health": {
       "types": "./dist/health.d.ts",
       "default": "./dist/health.js"
+    },
+    "./long-range-plan": {
+      "types": "./dist/long-range-plan.d.ts",
+      "default": "./dist/long-range-plan.js"
     }
   },
   "scripts": {

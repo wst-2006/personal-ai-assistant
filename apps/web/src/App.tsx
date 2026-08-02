@@ -1,9 +1,10 @@
 import { useMemo, useState, type FormEvent } from "react";
-import { BarChart3, Bot, BrainCircuit, CalendarDays, Check, CircleHelp, Download, HardDriveDownload, HeartPulse, LoaderCircle, NotebookPen, Sparkles, Target, X } from "lucide-react";
+import { BarChart3, Bot, BrainCircuit, CalendarDays, Check, CircleHelp, Download, HardDriveDownload, HeartPulse, LoaderCircle, Map, NotebookPen, Sparkles, Target, X } from "lucide-react";
 import { DiaryWorkspace } from "./DiaryWorkspace";
 import { FocusWorkspace } from "./FocusWorkspace";
 import { GrowthWorkspace } from "./GrowthWorkspace";
 import { HealthWorkspace } from "./HealthWorkspace";
+import { LongRangePlansWorkspace } from "./LongRangePlansWorkspace";
 import { PlanChangeDrawer } from "./PlanChangeDrawer";
 import { ReviewWorkspace } from "./ReviewWorkspace";
 import { TodayWorkspace } from "./TodayWorkspace";
@@ -11,7 +12,7 @@ import { TodayWorkspace } from "./TodayWorkspace";
 type EntryType = "task" | "idea" | "question";
 type ScheduleKind = "none" | "daypart" | "exact";
 type Daypart = "morning" | "afternoon" | "evening";
-type View = "today" | "focus" | "review" | "diary" | "growth" | "health";
+type View = "today" | "focus" | "review" | "diary" | "growth" | "health" | "plans";
 type NaturalLanguageTaskCandidate = {
   title: string;
   entryType: EntryType;
@@ -58,6 +59,7 @@ const navItems: Array<{ id: View; label: string; icon: typeof CalendarDays }> = 
   { id: "review", label: "复盘", icon: Sparkles },
   { id: "diary", label: "日记", icon: NotebookPen },
   { id: "growth", label: "成长", icon: BarChart3 },
+  { id: "plans", label: "规划", icon: Map },
   { id: "health", label: "健康", icon: HeartPulse },
 ];
 
@@ -378,6 +380,7 @@ export function App() {
       {view === "review" && <ReviewWorkspace />}
       {view === "diary" && <DiaryWorkspace onOpenReview={() => setView("review")} />}
       {view === "growth" && <GrowthWorkspace />}
+      {view === "plans" && <LongRangePlansWorkspace />}
       {view === "health" && <HealthWorkspace />}
     </section>
     <aside className={`ai-drawer ${aiOpen ? "open" : ""}`} aria-label={planChange ? "计划变更协商" : "AI 助手"} aria-hidden={!aiOpen}>
