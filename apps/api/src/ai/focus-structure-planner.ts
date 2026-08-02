@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { focusSegmentSchema, type FocusSegment } from "@personal-ai/domain/focus";
 import type { DeepSeekConfig } from "./config.js";
+import { personalContextInstruction, type UserAiContextProvider } from "./user-context.js";
 
 export type PlanFocusStructureRequest = {
   title: string;
@@ -19,7 +20,7 @@ const responseSchema = z.object({ segments: z.array(focusSegmentSchema).min(1).m
 type ChatCompletionResponse = { choices?: Array<{ message?: { content?: string } }> };
 
 export class DeepSeekFocusStructurePlanner implements FocusStructurePlanner {
-  constructor(private readonly config: DeepSeekConfig) {}
+  constructor(private readonly config: DeepSeekConfig, private readonly userContext?: UserAiContextProvider) {}
 
   async plan(request: PlanFocusStructureRequest): Promise<FocusSegment[]> {
     let lastError: unknown;
@@ -36,6 +37,7 @@ export class DeepSeekFocusStructurePlanner implements FocusStructurePlanner {
   }
 
   private async requestPlan(request: PlanFocusStructureRequest): Promise<FocusSegment[]> {
+    const context = await personalContextInstruction(this.userContext, this.config.DEEPSEEK_USER_CONTEXT_MAX_CHARS);
     const response = await fetch(`${this.config.DEEPSEEK_BASE_URL.replace(/\/$/, "")}/chat/completions`, {
       method: "POST",
       headers: {
@@ -58,7 +60,8 @@ export class DeepSeekFocusStructurePlanner implements FocusStructurePlanner {
               "其他结构必须从 focus 开始，focus 与 break 交替，并在最后一个 focus 后保留 break。",
               "每个 focus 至少 30 分钟；每个 break 为 5 至 15 分钟。",
               "只使用用户本次要求和任务信息，不推断人格、意志力、精神或健康状态。",
-              "只返回 JSON，不要 Markdown 或解释。"
+              "只返回 JSON，不要 Markdown 或解释。",
+              context
             ].join("\n")
           },
           { role: "user", content: JSON.stringify(request) }

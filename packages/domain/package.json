@@ -31,6 +31,10 @@
     "./long-range-plan": {
       "types": "./dist/long-range-plan.d.ts",
       "default": "./dist/long-range-plan.js"
+    },
+    "./user-profile": {
+      "types": "./dist/user-profile.d.ts",
+      "default": "./dist/user-profile.js"
     }
   },
   "scripts": {

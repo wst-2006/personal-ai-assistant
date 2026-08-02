@@ -150,6 +150,21 @@ try {
     )
     ORDER BY name
   `);
+  const userProfileColumnsResult = await client.query<{ column_name: string }>(`
+    SELECT column_name FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'user_profiles'
+      AND column_name IN ('personal_context', 'ai_guidance', 'share_with_ai', 'response_style', 'version')
+    ORDER BY column_name
+  `);
+  const userProfileContractResult = await client.query<{ name: string }>(`
+    SELECT conname AS name FROM pg_constraint
+    WHERE conrelid = to_regclass('public.user_profiles')
+      AND conname IN ('user_profiles_singleton_check', 'user_profiles_response_style_check', 'user_profiles_version_check')
+    UNION ALL
+    SELECT 'user_profiles_initialized' AS name
+    WHERE EXISTS (SELECT 1 FROM public.user_profiles WHERE id = 1 AND version > 0)
+    ORDER BY name
+  `);
   const tableNames = tablesResult.rows.map((row) => row.table_name);
   const taskColumns = taskColumnsResult.rows.map((row) => row.column_name);
   const taskConstraints = taskConstraintsResult.rows.map((row) => row.conname);
@@ -163,7 +178,9 @@ try {
   const longRangeContract = longRangeContractResult.rows.map((row) => row.name);
   const taskTreeColumns = taskTreeColumnsResult.rows.map((row) => row.column_name);
   const taskTreeContract = taskTreeContractResult.rows.map((row) => row.name);
-  const expectedTables = ["health_daily_references", "health_profiles", "health_sleep_analyses", "health_week_plans", "inbox_entries", "long_range_plan_milestones", "long_range_plan_task_tree_candidates", "long_range_plans", "tasks"];
+  const userProfileColumns = userProfileColumnsResult.rows.map((row) => row.column_name);
+  const userProfileContract = userProfileContractResult.rows.map((row) => row.name);
+  const expectedTables = ["health_daily_references", "health_profiles", "health_sleep_analyses", "health_week_plans", "inbox_entries", "long_range_plan_milestones", "long_range_plan_task_tree_candidates", "long_range_plans", "tasks", "user_profiles"];
   const expectedColumns = ["source_inbox_entry_id", "source_long_range_plan_id"];
   const retiredTaskColumns = ["planned_effort_minutes", "difficulty", "task_type", "requires_continuous_focus"];
   const expectedConstraints = [
@@ -241,6 +258,8 @@ try {
     "long_range_plan_task_tree_candidates_plan_fk",
     "tasks_source_long_range_plan_fk"
   ];
+  const expectedUserProfileColumns = ["personal_context", "ai_guidance", "share_with_ai", "response_style", "version"];
+  const expectedUserProfileContract = ["user_profiles_singleton_check", "user_profiles_response_style_check", "user_profiles_version_check", "user_profiles_initialized"];
 
   if (expectedTables.some((name) => !tableNames.includes(name))
     || expectedColumns.some((name) => !taskColumns.includes(name))
@@ -256,8 +275,10 @@ try {
     || expectedLongRangeColumns.some((name) => !longRangeColumns.includes(name))
     || ["long_range_plans_scope_check", "long_range_plans_period_check", "long_range_plan_milestones_position_unique"].some((name) => !longRangeContract.includes(name))
     || expectedTaskTreeColumns.some((name) => !taskTreeColumns.includes(name))
-    || expectedTaskTreeContract.some((name) => !taskTreeContract.includes(name))) {
-    throw new Error("Database schema does not match the live task, focus structure, inbox, reminder, health, long-range plan, or task-tree migration contract.");
+    || expectedTaskTreeContract.some((name) => !taskTreeContract.includes(name))
+    || expectedUserProfileColumns.some((name) => !userProfileColumns.includes(name))
+    || expectedUserProfileContract.some((name) => !userProfileContract.includes(name))) {
+    throw new Error("Database schema does not match the live task, focus structure, inbox, reminder, health, long-range plan, task-tree, or user-profile migration contract.");
   }
 
   console.log(JSON.stringify({
@@ -275,7 +296,9 @@ try {
     longRangeColumns,
     longRangeContract,
     taskTreeColumns,
-    taskTreeContract
+    taskTreeContract,
+    userProfileColumns,
+    userProfileContract
   }, null, 2));
 } finally {
   await client.end();

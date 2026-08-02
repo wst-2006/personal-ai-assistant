@@ -1,11 +1,12 @@
 import { healthPlanContentSchema, type HealthPlanContent } from "@personal-ai/domain/health";
 import type { HealthPlanner } from "../health-service.js";
 import type { DeepSeekConfig } from "./config.js";
+import { personalContextInstruction, type UserAiContextProvider } from "./user-context.js";
 
 type ChatCompletionResponse = { choices?: Array<{ message?: { content?: string } }> };
 
 export class DeepSeekHealthPlanner implements HealthPlanner {
-  constructor(private readonly config: DeepSeekConfig) {}
+  constructor(private readonly config: DeepSeekConfig, private readonly userContext?: UserAiContextProvider) {}
 
   async plan(input: Parameters<HealthPlanner["plan"]>[0]): Promise<HealthPlanContent> {
     let lastError: unknown;
@@ -22,6 +23,7 @@ export class DeepSeekHealthPlanner implements HealthPlanner {
   }
 
   private async requestPlan(input: Parameters<HealthPlanner["plan"]>[0]): Promise<HealthPlanContent> {
+    const context = await personalContextInstruction(this.userContext, this.config.DEEPSEEK_USER_CONTEXT_MAX_CHARS);
     const response = await fetch(`${this.config.DEEPSEEK_BASE_URL.replace(/\/$/, "")}/chat/completions`, {
       method: "POST",
       headers: { authorization: `Bearer ${this.config.DEEPSEEK_API_KEY}`, "content-type": "application/json" },
@@ -44,7 +46,8 @@ export class DeepSeekHealthPlanner implements HealthPlanner {
               "当输入包含 sleepAnalysis 时，它是用户主动要求的单次修订依据：只使用其中非空、可见的指标生成候选，不诊断睡眠问题，不将一次记录写成长期结论，也不自动改变任何现有周计划。",
               "节气内容只作为传统饮食文化和时令提示，不做中医体质诊断或治疗宣称。",
               "补充剂内容仅提示标签、成分重复和咨询专业人士的场景；不提供确定剂量、不自动加入肌酸。",
-              "只返回 JSON，不要 Markdown。"
+              "只返回 JSON，不要 Markdown。",
+              context
             ].join("\n")
           },
           { role: "user", content: JSON.stringify(input) }

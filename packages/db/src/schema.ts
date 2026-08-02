@@ -419,6 +419,25 @@ export const longRangePlanTaskTreeCandidates = pgTable(
   ]
 );
 
+export const userProfiles = pgTable(
+  "user_profiles",
+  {
+    id: integer("id").primaryKey(),
+    personalContext: text("personal_context").notNull().default(""),
+    aiGuidance: text("ai_guidance").notNull().default(""),
+    shareWithAi: boolean("share_with_ai").notNull().default(true),
+    responseStyle: varchar("response_style", { length: 16 }).notNull().default("balanced"),
+    version: integer("version").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    check("user_profiles_singleton_check", sql`${table.id} = 1`),
+    check("user_profiles_response_style_check", sql`${table.responseStyle} in ('concise', 'balanced', 'detailed')`),
+    check("user_profiles_version_check", sql`${table.version} > 0`)
+  ]
+);
+
 export const reviewSessions = pgTable("review_sessions", {
   id: uuid("id").primaryKey(),
   localDate: varchar("local_date", { length: 10 }).notNull().unique(),

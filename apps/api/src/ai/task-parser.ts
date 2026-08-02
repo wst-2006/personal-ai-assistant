@@ -3,6 +3,7 @@ import {
   type NaturalLanguageTaskCandidate
 } from "@personal-ai/domain/task";
 import type { DeepSeekConfig } from "./config.js";
+import { personalContextInstruction, type UserAiContextProvider } from "./user-context.js";
 
 export type ParseTaskRequest = {
   text: string;
@@ -25,7 +26,7 @@ function endpoint(baseUrl: string): string {
 }
 
 export class DeepSeekTaskParser implements TaskParser {
-  constructor(private readonly config: DeepSeekConfig) {}
+  constructor(private readonly config: DeepSeekConfig, private readonly userContext?: UserAiContextProvider) {}
 
   async parse(request: ParseTaskRequest): Promise<NaturalLanguageTaskCandidate> {
     let lastError: unknown;
@@ -44,6 +45,7 @@ export class DeepSeekTaskParser implements TaskParser {
   }
 
   private async requestCandidate(request: ParseTaskRequest): Promise<NaturalLanguageTaskCandidate> {
+    const context = await personalContextInstruction(this.userContext, this.config.DEEPSEEK_USER_CONTEXT_MAX_CHARS);
     const response = await fetch(endpoint(this.config.DEEPSEEK_BASE_URL), {
       method: "POST",
       headers: {
@@ -65,7 +67,8 @@ export class DeepSeekTaskParser implements TaskParser {
               "entryType 只能是 task、idea、question。schedulePrecision 只能是 exact、morning、afternoon、evening 或 null。",
               "task 的 exact 起止时间必须落在 Asia/Shanghai 本地时间的 :00 或 :30，且至少相隔 30 分钟；时间块长度只由起止时间决定。",
               "idea 或 question 的日期、排期和时间字段必须全部为 null，只有标题和备注可以保留。",
-              "只返回一个 JSON 对象，不要 Markdown 或解释。"
+              "只返回一个 JSON 对象，不要 Markdown 或解释。",
+              context
             ].join("\n")
           },
           {

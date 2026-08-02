@@ -30,6 +30,8 @@ import type { LongRangePlanService } from "./long-range-plan-service.js";
 import { longRangeTaskTreeRoutes } from "./long-range-task-tree-routes.js";
 import type { LongRangeTaskTreePlanner } from "./ai/long-range-task-tree-planner.js";
 import type { LongRangeTaskTreeService } from "./long-range-task-tree-service.js";
+import { userProfileRoutes } from "./user-profile-routes.js";
+import type { UserProfileService } from "./user-profile-service.js";
 
 declare module "fastify" {
   interface FastifyRequest { rawBody?: string }
@@ -54,6 +56,7 @@ type AppOptions = {
   longRangePlanService?: LongRangePlanService;
   longRangeTaskTreeService?: LongRangeTaskTreeService;
   longRangeTaskTreePlanner?: LongRangeTaskTreePlanner;
+  userProfileService?: UserProfileService;
 };
 
 export function buildApp(options: AppOptions = {}) {
@@ -104,6 +107,7 @@ export function buildApp(options: AppOptions = {}) {
   if (options.healthService) app.register(healthRoutes, { prefix: "/api/v1", healthService: options.healthService, healthPlanner: options.healthPlanner, sleepImageAnalyzer: options.sleepImageAnalyzer });
   if (options.longRangePlanService) app.register(longRangePlanRoutes, { prefix: "/api/v1", longRangePlanService: options.longRangePlanService });
   if (options.longRangeTaskTreeService) app.register(longRangeTaskTreeRoutes, { prefix: "/api/v1", service: options.longRangeTaskTreeService, planner: options.longRangeTaskTreePlanner });
+  if (options.userProfileService) app.register(userProfileRoutes, { prefix: "/api/v1", userProfileService: options.userProfileService });
 
   if (options.taskParser || (options.taskService && options.planChangeAdvisor)) {
     app.register(aiRoutes, {

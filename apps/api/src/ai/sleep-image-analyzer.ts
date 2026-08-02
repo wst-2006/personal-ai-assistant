@@ -4,6 +4,7 @@ import {
 } from "@personal-ai/domain/health";
 import type { SleepImageAnalyzer } from "../health-service.js";
 import type { DeepSeekConfig } from "./config.js";
+import { personalContextInstruction, type UserAiContextProvider } from "./user-context.js";
 
 type ChatCompletionResponse = {
   choices?: Array<{ message?: { content?: string | Array<{ type?: string; text?: string }> } }>;
@@ -14,7 +15,7 @@ function endpoint(baseUrl: string): string {
 }
 
 export class DeepSeekSleepImageAnalyzer implements SleepImageAnalyzer {
-  constructor(private readonly config: DeepSeekConfig) {}
+  constructor(private readonly config: DeepSeekConfig, private readonly userContext?: UserAiContextProvider) {}
 
   async analyze(input: { localDate: string; fileName: string; mimeType: string; dataUrl: string }): Promise<SleepImageAnalysis> {
     let lastError: unknown;
@@ -31,6 +32,7 @@ export class DeepSeekSleepImageAnalyzer implements SleepImageAnalyzer {
   }
 
   private async requestAnalysis(input: { localDate: string; fileName: string; mimeType: string; dataUrl: string }): Promise<SleepImageAnalysis> {
+    const context = await personalContextInstruction(this.userContext, this.config.DEEPSEEK_USER_CONTEXT_MAX_CHARS);
     const response = await fetch(endpoint(this.config.DEEPSEEK_BASE_URL), {
       method: "POST",
       headers: {
@@ -50,7 +52,8 @@ export class DeepSeekSleepImageAnalyzer implements SleepImageAnalyzer {
               "只读取这张图片中清晰可见的数字、时间、设备评分和设备说明；图片没有显示的字段必须返回 null，不得根据常识补全。",
               "所有时长统一返回分钟整数；无法确定或单位不清楚时返回 null。",
               "visibleMetrics 只列出图片实际出现且成功读取的指标。interpretation 只能描述图中数据，不得给出治疗或确定医学结论。limitations 至少包含‘仅基于这张截图中可见的信息，不能替代专业医疗建议’。",
-              "只返回一个 JSON 对象，不要 Markdown 或解释。"
+              "只返回一个 JSON 对象，不要 Markdown 或解释。",
+              context
             ].join("\n")
           },
           {

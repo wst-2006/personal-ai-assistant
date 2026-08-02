@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { DeepSeekConfig } from "./config.js";
+import { personalContextInstruction, type UserAiContextProvider } from "./user-context.js";
 
 export type PlanChangeTaskContext = {
   id: string;
@@ -51,7 +52,7 @@ type ChatCompletionResponse = {
 };
 
 export class DeepSeekPlanChangeAdvisor implements PlanChangeAdvisor {
-  constructor(private readonly config: DeepSeekConfig) {}
+  constructor(private readonly config: DeepSeekConfig, private readonly userContext?: UserAiContextProvider) {}
 
   async advise(request: PlanChangeAdviceRequest): Promise<PlanChangeAdvice> {
     let lastError: unknown;
@@ -68,6 +69,7 @@ export class DeepSeekPlanChangeAdvisor implements PlanChangeAdvisor {
   }
 
   private async requestAdvice(request: PlanChangeAdviceRequest): Promise<PlanChangeAdvice> {
+    const context = await personalContextInstruction(this.userContext, this.config.DEEPSEEK_USER_CONTEXT_MAX_CHARS);
     const response = await fetch(`${this.config.DEEPSEEK_BASE_URL.replace(/\/$/, "")}/chat/completions`, {
       method: "POST",
       headers: {
@@ -88,7 +90,8 @@ export class DeepSeekPlanChangeAdvisor implements PlanChangeAdvisor {
               "不要擅自限制每日任务数量，不要推断人格、情绪、健康或意志力，也不要进行说教。",
               "只根据用户说明、当前任务和当天任务上下文回答。无法判断时使用 needs_clarification，并在 warnings 中提出一个具体问题。",
               "只引用 dailyTasks 内的任务 ID 到 affectedTaskIds；没有受影响任务时返回空数组。",
-              "返回严格 JSON：summary、feasibility（feasible|risky|needs_clarification）、affectedTaskIds、options（1 到 4 个 title/detail）、warnings。不要返回 Markdown。"
+              "返回严格 JSON：summary、feasibility（feasible|risky|needs_clarification）、affectedTaskIds、options（1 到 4 个 title/detail）、warnings。不要返回 Markdown。",
+              context
             ].join("\n")
           },
           { role: "user", content: JSON.stringify(request) }
