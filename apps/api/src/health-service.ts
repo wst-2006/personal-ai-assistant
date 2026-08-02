@@ -104,6 +104,50 @@ export class HealthService {
     });
   }
 
+  async createManualCandidate(input: { weekStart: string; specialContext?: string | null; content: HealthPlanContent }): Promise<HealthPlanWithDays> {
+    const [profileRecord, basePlan] = await Promise.all([
+      this.requireProfile(this.db),
+      this.findPlan(input.weekStart, "active")
+    ]);
+    const profile = profileRecord.profile as HealthProfile;
+    return this.storeCandidate({
+      weekStart: input.weekStart,
+      profileVersion: profileRecord.version,
+      city: profile.city,
+      solarTerm: solarTermFor(input.weekStart),
+      specialContext: input.specialContext ?? null,
+      source: "manual",
+      content: healthPlanContentSchema.parse(input.content),
+      basedOnPlanId: basePlan?.plan.id,
+      basedOnPlanVersion: basePlan?.plan.version,
+      revisionReason: basePlan ? "由你手动编辑生成本周修订候选。确认前，原本周参考保持不变。" : "由你手动编辑生成本周参考候选；确认后才会生效。"
+    });
+  }
+
+  async updateManualCandidate(id: string, input: { expectedVersion: number; content: HealthPlanContent }): Promise<HealthPlanWithDays> {
+    const content = healthPlanContentSchema.parse(input.content);
+    return this.runSerializable(async (transaction) => {
+      const current = await this.requirePlan(transaction, id);
+      if (current.plan.version !== input.expectedVersion) throw new HealthPlanVersionConflictError(current);
+      if (current.plan.state !== "candidate") throw new HealthPlanStateError(current.plan.state, "edit");
+      const now = new Date();
+      const [updated] = await transaction.update(healthWeekPlans).set({
+        source: "manual",
+        overview: content.overview,
+        supplements: content.supplements,
+        revisionReason: "由你手动编辑当前本周候选。确认前，生效版本保持不变。",
+        version: current.plan.version + 1,
+        updatedAt: now
+      }).where(and(eq(healthWeekPlans.id, id), eq(healthWeekPlans.version, input.expectedVersion), eq(healthWeekPlans.state, "candidate"))).returning();
+      if (!updated) throw new HealthPlanVersionConflictError(await this.requirePlan(transaction, id));
+      await transaction.delete(healthDailyReferences).where(eq(healthDailyReferences.healthWeekPlanId, id));
+      await transaction.insert(healthDailyReferences).values(content.days.map((day, dayIndex) => ({
+        id: randomUUID(), healthWeekPlanId: id, localDate: localDatesForHealthWeek(updated.weekStart)[dayIndex]!, dayIndex, content: day, createdAt: now
+      })));
+      return { plan: updated, days: await this.daysForPlan(transaction, id) };
+    });
+  }
+
   async createAiCandidate(weekStart: string, specialContext: string | null, planner: HealthPlanner): Promise<HealthPlanWithDays> {
     const profileRecord = await this.requireProfile(this.db);
     const profile = profileRecord.profile as HealthProfile;
@@ -222,7 +266,7 @@ export class HealthService {
     city: string | null;
     solarTerm: string;
     specialContext: string | null;
-    source: "template" | "ai";
+    source: "template" | "ai" | "manual";
     content: HealthPlanContent;
     basedOnPlanId?: string;
     basedOnPlanVersion?: number;

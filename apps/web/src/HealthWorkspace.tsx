@@ -41,6 +41,7 @@ type HealthPlan = {
   revisionReason: string | null;
   days: DayReference[];
 };
+type ManualPlanDraft = { overview: string; supplements: string; days: Array<DayReference["content"]> };
 type SleepAnalysis = {
   id: string;
   localDate: string;
@@ -112,6 +113,20 @@ function revisionChanges(previous: DayReference, next: DayReference): string[] {
   return changes;
 }
 
+function manualDraftFromPlan(plan: HealthPlan): ManualPlanDraft {
+  return {
+    overview: plan.overview,
+    supplements: plan.supplements.join("\n"),
+    days: plan.days.map((day) => ({
+      ...day.content,
+      proteinRangeGrams: { ...day.content.proteinRangeGrams },
+      plateGuidance: [...day.content.plateGuidance],
+      seasonalVegetables: [...day.content.seasonalVegetables],
+      movement: { ...day.content.movement, durationMinutes: { ...day.content.movement.durationMinutes } }
+    }))
+  };
+}
+
 async function request<T>(path: string, method = "GET", payload?: Record<string, unknown>): Promise<T> {
   const response = await fetch(`${apiBaseUrl}${path}`, { method, headers: payload ? { "content-type": "application/json" } : undefined, body: payload ? JSON.stringify(payload) : undefined });
   const body = response.status === 204 ? {} : await response.json().catch(() => ({}));
@@ -137,10 +152,12 @@ export function HealthWorkspace() {
   const [error, setError] = useState<string | null>(null);
   const [sleepAnalyses, setSleepAnalyses] = useState<SleepAnalysis[]>([]);
   const [sleepFile, setSleepFile] = useState<File | null>(null);
+  const [manualDraft, setManualDraft] = useState<ManualPlanDraft | null>(null);
   const autoCandidateRequested = useRef<string | null>(null);
   const visiblePlan = candidate ?? active;
   const selectedReference = visiblePlan?.days[selectedDay] ?? null;
   const sleepDate = selectedReference?.localDate ?? shanghaiDate();
+  const candidateIsUneditedSleepRevision = candidate?.source === "ai" && candidate.sourceSleepAnalysisId !== null;
 
   useEffect(() => { void reload(); }, [weekStart]);
 
@@ -312,6 +329,49 @@ export function HealthWorkspace() {
     } finally { setBusy(false); }
   }
 
+  function openManualEditor() {
+    const source = candidate ?? active;
+    if (!source) return;
+    setManualDraft(manualDraftFromPlan(source));
+    setSelectedDay(0);
+    setError(null);
+  }
+
+  function updateManualDay(patch: Partial<DayReference["content"]>) {
+    setManualDraft((current) => {
+      if (!current) return current;
+      const days = [...current.days];
+      days[selectedDay] = { ...days[selectedDay]!, ...patch };
+      return { ...current, days };
+    });
+  }
+
+  function updateManualMovement(patch: Partial<DayReference["content"]["movement"]>) {
+    setManualDraft((current) => {
+      if (!current) return current;
+      const days = [...current.days];
+      const day = days[selectedDay]!;
+      days[selectedDay] = { ...day, movement: { ...day.movement, ...patch } };
+      return { ...current, days };
+    });
+  }
+
+  async function saveManualCandidate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!manualDraft) return;
+    setBusy(true); setError(null);
+    try {
+      const content = { ...manualDraft, overview: manualDraft.overview.trim(), supplements: listText(manualDraft.supplements) };
+      const result = candidate
+        ? await request<{ plan: HealthPlan }>(`/api/v1/health/weeks/${candidate.id}/manual-candidate`, "PUT", { expectedVersion: candidate.version, content })
+        : await request<{ plan: HealthPlan }>("/api/v1/health/weeks/manual-candidates", "POST", { weekStart, content });
+      setCandidate(result.plan);
+      setManualDraft(null);
+    } catch {
+      setError("手动候选保存失败，当前生效参考没有被覆盖。请检查必填内容后重试。");
+    } finally { setBusy(false); }
+  }
+
   return <section className="health-workspace">
     <header className="health-heading">
       <div><p className="section-kicker">健康参考</p><h1>把身体照顾在计划之外。</h1><p>只给出本周可查看的饮食与运动范围，不安排任务、不要求打卡。</p></div>
@@ -359,13 +419,33 @@ export function HealthWorkspace() {
       <section className="health-generation">
         <div><p className="section-kicker">本周候选</p><h2>{candidate ? "候选尚未生效" : active ? "当前参考保持稳定" : "先生成一份本周参考"}</h2><small>最多补充一句本周的运动、外出、身体不适或饮食场景；跳过也能生成。</small></div>
         <textarea aria-label="本周健康特殊情况" rows={3} maxLength={1000} value={specialContext} onChange={(event) => setSpecialContext(event.target.value)} placeholder="可选，例如：周三有排球，周末需要外出" />
-        <div className="health-generation-actions"><button className="quiet-button" type="button" disabled={busy || !profile} onClick={() => void createCandidate("template")}><Leaf />生成基础候选</button><button className="primary-button" type="button" disabled={busy || !profile} onClick={() => void createCandidate("ai")}><Sparkles />让 AI 细化候选</button></div>
+        <div className="health-generation-actions"><button className="quiet-button" type="button" disabled={busy || !profile} onClick={() => void createCandidate("template")}><Leaf />生成基础候选</button><button className="quiet-button" type="button" disabled={busy || !profile || !visiblePlan} onClick={openManualEditor}><ClipboardPenLine />手动编辑候选</button><button className="primary-button" type="button" disabled={busy || !profile} onClick={() => void createCandidate("ai")}><Sparkles />让 AI 细化候选</button></div>
       </section>
+      {manualDraft && <form className="health-manual-editor" onSubmit={saveManualCandidate}>
+        <header><div><p className="section-kicker">手动周参考候选</p><h2>你决定每一项内容。</h2><small>保存后只会形成待确认候选，不会立即覆盖当前生效版本。</small></div><button className="quiet-button" type="button" disabled={busy} onClick={() => setManualDraft(null)}>取消编辑</button></header>
+        <label><span>本周概览</span><textarea value={manualDraft.overview} onChange={(event) => setManualDraft((current) => current ? { ...current, overview: event.target.value } : current)} rows={3} maxLength={2000} required /></label>
+        <label><span>补充剂参考（逗号或换行分隔）</span><textarea value={manualDraft.supplements} onChange={(event) => setManualDraft((current) => current ? { ...current, supplements: event.target.value } : current)} rows={2} /></label>
+        <div className="health-manual-days" role="tablist" aria-label="手动编辑的日期">{manualDraft.days.map((_, dayIndex) => <button key={dayIndex} role="tab" aria-selected={selectedDay === dayIndex} className={selectedDay === dayIndex ? "active" : ""} type="button" onClick={() => setSelectedDay(dayIndex)}><span>{weekday[dayIndex]}</span><strong>{String(dayIndex + 1).padStart(2, "0")}</strong></button>)}</div>
+        {manualDraft.days[selectedDay] && <section className="health-manual-day-fields">
+          <label className="wide"><span>{weekday[selectedDay]}饮食方向</span><textarea value={manualDraft.days[selectedDay]!.nutritionDirection} onChange={(event) => updateManualDay({ nutritionDirection: event.target.value })} rows={3} maxLength={700} required /></label>
+          <label><span>蛋白质下限（g）</span><input type="number" min="1" max="300" value={manualDraft.days[selectedDay]!.proteinRangeGrams.minimum} onChange={(event) => updateManualDay({ proteinRangeGrams: { ...manualDraft.days[selectedDay]!.proteinRangeGrams, minimum: Number(event.target.value) } })} required /></label>
+          <label><span>蛋白质上限（g）</span><input type="number" min="1" max="300" value={manualDraft.days[selectedDay]!.proteinRangeGrams.maximum} onChange={(event) => updateManualDay({ proteinRangeGrams: { ...manualDraft.days[selectedDay]!.proteinRangeGrams, maximum: Number(event.target.value) } })} required /></label>
+          <label className="wide"><span>餐盘提示（逗号或换行分隔）</span><textarea value={manualDraft.days[selectedDay]!.plateGuidance.join("\n")} onChange={(event) => updateManualDay({ plateGuidance: listText(event.target.value) })} rows={2} required /></label>
+          <label className="wide"><span>时令蔬菜提示（逗号或换行分隔）</span><textarea value={manualDraft.days[selectedDay]!.seasonalVegetables.join("，")} onChange={(event) => updateManualDay({ seasonalVegetables: listText(event.target.value) })} rows={2} required /></label>
+          <label><span>运动类别</span><select value={manualDraft.days[selectedDay]!.movement.category} onChange={(event) => updateManualMovement({ category: event.target.value as DayReference["content"]["movement"]["category"] })}><option value="strength">力量训练</option><option value="volleyball">排球</option><option value="running">跑步</option><option value="cycling">骑行</option><option value="recovery">轻量恢复</option><option value="rest">休息</option></select></label>
+          <label><span>运动强度</span><select value={manualDraft.days[selectedDay]!.movement.intensity} onChange={(event) => updateManualMovement({ intensity: event.target.value as DayReference["content"]["movement"]["intensity"] })}><option value="rest">休息</option><option value="low">低强度</option><option value="moderate">中等强度</option><option value="high">高强度</option></select></label>
+          <label><span>运动下限（分钟）</span><input type="number" min="0" max="240" value={manualDraft.days[selectedDay]!.movement.durationMinutes.minimum} onChange={(event) => updateManualMovement({ durationMinutes: { ...manualDraft.days[selectedDay]!.movement.durationMinutes, minimum: Number(event.target.value) } })} required /></label>
+          <label><span>运动上限（分钟）</span><input type="number" min="0" max="300" value={manualDraft.days[selectedDay]!.movement.durationMinutes.maximum} onChange={(event) => updateManualMovement({ durationMinutes: { ...manualDraft.days[selectedDay]!.movement.durationMinutes, maximum: Number(event.target.value) } })} required /></label>
+          <label className="health-checkbox wide"><input type="checkbox" checked={manualDraft.days[selectedDay]!.movement.highIntensity} onChange={(event) => updateManualMovement({ highIntensity: event.target.checked })} /><span>这是高强度日</span></label>
+          <label className="wide"><span>安全提醒</span><textarea value={manualDraft.days[selectedDay]!.movement.safetyReminder} onChange={(event) => updateManualMovement({ safetyReminder: event.target.value })} rows={2} maxLength={400} required /></label>
+        </section>}
+        <footer><button className="primary-button" type="submit" disabled={busy}>{busy ? <LoaderCircle className="spin" /> : <Check />}保存为待确认候选</button></footer>
+      </form>}
       {visiblePlan ? <section className="health-plan">
-        <header className="health-plan-header"><div><p className="section-kicker">{candidate ? "待确认版本" : "本周生效版本"}</p><h2>{visiblePlan.solarTerm} · {visiblePlan.city ?? "通用时令参考"}</h2><small>{candidate ? (visiblePlan.source === "ai" ? "AI 只生成候选，确认后才会替换本周参考。" : "基础候选需经你确认后才会生效。") : "本周参考不会因一天睡眠或运动变化自动改写。"}</small></div>{candidate && <div className="candidate-actions"><button className="quiet-button" type="button" disabled={busy} onClick={() => void discardCandidate()}>放弃候选</button><button className="primary-button" type="button" disabled={busy} onClick={() => void confirmCandidate()}>{busy ? <LoaderCircle className="spin" /> : <Check />}确认并使用</button></div>}</header>
+        <header className="health-plan-header"><div><p className="section-kicker">{candidate ? "待确认版本" : "本周生效版本"}</p><h2>{visiblePlan.solarTerm} · {visiblePlan.city ?? "通用时令参考"}</h2><small>{candidate ? (visiblePlan.source === "ai" ? "AI 只生成候选，确认后才会替换本周参考。" : visiblePlan.source === "manual" ? "由你手动编辑的候选，确认后才会替换本周参考。" : "基础候选需经你确认后才会生效。") : "本周参考不会因一天睡眠或运动变化自动改写。"}</small></div>{candidate && <div className="candidate-actions"><button className="quiet-button" type="button" disabled={busy} onClick={() => void discardCandidate()}>放弃候选</button><button className="primary-button" type="button" disabled={busy} onClick={() => void confirmCandidate()}>{busy ? <LoaderCircle className="spin" /> : <Check />}确认并使用</button></div>}</header>
         <p className="health-overview">{visiblePlan.overview}</p>
-        {candidate?.revisionReason && active && candidate.basedOnPlanId === active.id && <section className="health-revision-preview" aria-label="睡眠修订前后差异">
-          <header><Sparkles /><div><p className="section-kicker">本次修订依据</p><strong>候选尚未生效</strong></div></header>
+        {candidate?.revisionReason && active && candidate.basedOnPlanId === active.id && <section className="health-revision-preview" aria-label={candidateIsUneditedSleepRevision ? "睡眠修订前后差异" : "候选前后差异"}>
+          <header><Sparkles /><div><p className="section-kicker">{candidateIsUneditedSleepRevision ? "本次修订依据" : "候选说明"}</p><strong>候选尚未生效</strong></div></header>
           <p>{candidate.revisionReason}</p>
           <div className="health-revision-diff">{candidate.days.map((day) => {
             const previous = active.days.find((item) => item.dayIndex === day.dayIndex);

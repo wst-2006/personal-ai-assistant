@@ -99,4 +99,70 @@ describe("sleep screenshot routes", () => {
       });
     }
   });
+
+  it("accepts a complete manual candidate and keeps the active plan unchanged before confirmation", async () => {
+    const weekStart = "2099-03-22";
+    const base = await service.createTemplateCandidate(weekStart, null);
+    const active = await service.confirm(base.plan.id, base.plan.version);
+    let manualId: string | null = null;
+    try {
+      const response = await app.inject({ method: "POST", url: "/api/v1/health/weeks/manual-candidates", payload: {
+        weekStart,
+        content: {
+          overview: "这是用户手动编辑的候选。",
+          supplements: ["仅供查看。"],
+          days: Array.from({ length: 7 }, () => ({
+            nutritionDirection: "维持正常餐盘结构。",
+            proteinRangeGrams: { minimum: 90, maximum: 120 },
+            plateGuidance: ["每餐有主要蛋白质来源。"],
+            seasonalVegetables: ["番茄"],
+            movement: { category: "recovery", durationMinutes: { minimum: 20, maximum: 30 }, intensity: "low", highIntensity: false, safetyReminder: "按当天实际舒适度决定。" }
+          }))
+        }
+      } });
+      expect(response.statusCode).toBe(201);
+      const manual = response.json().plan as { id: string; source: string; state: string; version: number; basedOnPlanId: string };
+      manualId = manual.id;
+      expect(manual).toMatchObject({ source: "manual", state: "candidate", basedOnPlanId: active.plan.id });
+      expect((await service.getWeek(weekStart)).active?.plan.id).toBe(active.plan.id);
+      const updated = await app.inject({ method: "PUT", url: `/api/v1/health/weeks/${manual.id}/manual-candidate`, payload: {
+        expectedVersion: manual.version,
+        content: {
+          overview: "这是用户再次编辑后的候选。",
+          supplements: ["仅供查看。"],
+          days: Array.from({ length: 7 }, () => ({
+            nutritionDirection: "维持正常餐盘结构。",
+            proteinRangeGrams: { minimum: 90, maximum: 120 },
+            plateGuidance: ["每餐有主要蛋白质来源。"],
+            seasonalVegetables: ["番茄"],
+            movement: { category: "recovery", durationMinutes: { minimum: 20, maximum: 30 }, intensity: "low", highIntensity: false, safetyReminder: "按当天实际舒适度决定。" }
+          }))
+        }
+      } });
+      expect(updated.statusCode).toBe(200);
+      expect(updated.json().plan).toMatchObject({ id: manual.id, source: "manual", overview: "这是用户再次编辑后的候选。" });
+      const stale = await app.inject({ method: "PUT", url: `/api/v1/health/weeks/${manual.id}/manual-candidate`, payload: {
+        expectedVersion: manual.version,
+        content: {
+          overview: "过期页面不应覆盖最新候选。",
+          supplements: ["仅供查看。"],
+          days: Array.from({ length: 7 }, () => ({
+            nutritionDirection: "维持正常餐盘结构。",
+            proteinRangeGrams: { minimum: 90, maximum: 120 },
+            plateGuidance: ["每餐有主要蛋白质来源。"],
+            seasonalVegetables: ["番茄"],
+            movement: { category: "recovery", durationMinutes: { minimum: 20, maximum: 30 }, intensity: "low", highIntensity: false, safetyReminder: "按当天实际舒适度决定。" }
+          }))
+        }
+      } });
+      expect(stale.statusCode).toBe(409);
+      expect(stale.json()).toMatchObject({ error: "health_plan_version_conflict", plan: { id: manual.id, overview: "这是用户再次编辑后的候选。" } });
+    } finally {
+      const planIds = [base.plan.id, ...(manualId ? [manualId] : [])];
+      await connection.db.transaction(async (transaction) => {
+        await transaction.delete(healthDailyReferences).where(inArray(healthDailyReferences.healthWeekPlanId, planIds));
+        await transaction.delete(healthWeekPlans).where(inArray(healthWeekPlans.id, planIds));
+      });
+    }
+  });
 });

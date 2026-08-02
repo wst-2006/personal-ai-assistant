@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { createHealthPlanCandidateSchema, healthPlanConfirmationSchema, healthSleepRevisionCandidateSchema, healthWeekStartSchema, saveHealthProfileSchema, sleepImageAnalysisRequestSchema } from "@personal-ai/domain/health";
+import { createHealthPlanCandidateSchema, createManualHealthPlanCandidateSchema, healthPlanConfirmationSchema, healthSleepRevisionCandidateSchema, healthWeekStartSchema, saveHealthProfileSchema, sleepImageAnalysisRequestSchema, updateManualHealthPlanCandidateSchema } from "@personal-ai/domain/health";
 import { reviewDateSchema } from "@personal-ai/domain/review";
 import { z } from "zod";
 import {
@@ -68,6 +68,27 @@ export async function healthRoutes(app: FastifyInstance, options: { healthServic
     if (!input.success) return reply.status(400).send({ error: "invalid_health_candidate", details: input.error.flatten() });
     try {
       return reply.status(201).send({ plan: serializePlan(await healthService.createTemplateCandidate(input.data.weekStart, input.data.specialContext ?? null)) });
+    } catch (error) {
+      return healthError(reply, error);
+    }
+  });
+
+  app.post("/health/weeks/manual-candidates", async (request, reply) => {
+    const input = createManualHealthPlanCandidateSchema.safeParse(request.body);
+    if (!input.success) return reply.status(400).send({ error: "invalid_manual_health_candidate", details: input.error.flatten() });
+    try {
+      return reply.status(201).send({ plan: serializePlan(await healthService.createManualCandidate(input.data)) });
+    } catch (error) {
+      return healthError(reply, error);
+    }
+  });
+
+  app.put("/health/weeks/:id/manual-candidate", async (request, reply) => {
+    const params = planIdParams.safeParse(request.params);
+    const input = updateManualHealthPlanCandidateSchema.safeParse(request.body);
+    if (!params.success || !input.success) return reply.status(400).send({ error: "invalid_manual_health_candidate_update" });
+    try {
+      return reply.status(200).send({ plan: serializePlan(await healthService.updateManualCandidate(params.data.id, input.data)) });
     } catch (error) {
       return healthError(reply, error);
     }

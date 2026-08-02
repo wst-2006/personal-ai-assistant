@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { healthPlanContentSchema, healthSleepRevisionCandidateSchema, healthWeekStartSchema, localDatesForHealthWeek, sleepImageAnalysisRequestSchema, sleepImageAnalysisSchema } from "./health.js";
+import { createManualHealthPlanCandidateSchema, healthPlanContentSchema, healthSleepRevisionCandidateSchema, healthWeekStartSchema, localDatesForHealthWeek, sleepImageAnalysisRequestSchema, sleepImageAnalysisSchema } from "./health.js";
 
 const day = {
   nutritionDirection: "正常餐盘结构，优先蛋白质和两类蔬菜。",
@@ -42,5 +42,11 @@ describe("health reference contracts", () => {
       weekStart: "2026-08-03",
       sleepAnalysisId: "not-a-uuid"
     }).success).toBe(false);
+  });
+
+  it("requires a complete valid week when the user creates a manual candidate", () => {
+    const content = { overview: "由用户手动调整的本周参考。", supplements: ["查看产品标签。"], days: Array.from({ length: 7 }, () => day) };
+    expect(createManualHealthPlanCandidateSchema.safeParse({ weekStart: "2026-08-02", content }).success).toBe(true);
+    expect(createManualHealthPlanCandidateSchema.safeParse({ weekStart: "2026-08-02", content: { ...content, days: [day] } }).success).toBe(false);
   });
 });

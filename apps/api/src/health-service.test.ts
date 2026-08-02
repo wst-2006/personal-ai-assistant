@@ -111,4 +111,53 @@ describe("health reference persistence", () => {
       });
     }
   });
+
+  it("stores a user-edited weekly reference as a manual candidate before it replaces the active week", async () => {
+    const weekStart = "2099-03-15";
+    const base = await service.createTemplateCandidate(weekStart, null);
+    const active = await service.confirm(base.plan.id, base.plan.version);
+    let manualId: string | null = null;
+    try {
+      const manual = await service.createManualCandidate({
+        weekStart,
+        content: {
+          overview: "这是用户主动编辑的本周参考。",
+          supplements: ["用户选择保留为查看参考。"],
+          days: Array.from({ length: 7 }, () => ({
+            nutritionDirection: "维持正常餐盘结构。",
+            proteinRangeGrams: { minimum: 90, maximum: 120 },
+            plateGuidance: ["每餐有主要蛋白质来源。"],
+            seasonalVegetables: ["番茄"],
+            movement: { category: "recovery", durationMinutes: { minimum: 20, maximum: 30 }, intensity: "low", highIntensity: false, safetyReminder: "按当天实际舒适度决定。" }
+          }))
+        }
+      });
+      manualId = manual.plan.id;
+      expect(manual.plan).toMatchObject({ state: "candidate", source: "manual", basedOnPlanId: active.plan.id, basedOnPlanVersion: active.plan.version });
+      expect((await service.getWeek(weekStart)).active?.plan.id).toBe(active.plan.id);
+      const updated = await service.updateManualCandidate(manual.plan.id, {
+        expectedVersion: manual.plan.version,
+        content: {
+          overview: "这是经过用户再次手动编辑的本周参考。",
+          supplements: ["用户确认保留为查看参考。"],
+          days: Array.from({ length: 7 }, () => ({
+            nutritionDirection: "维持正常餐盘结构。",
+            proteinRangeGrams: { minimum: 90, maximum: 120 },
+            plateGuidance: ["每餐有主要蛋白质来源。"],
+            seasonalVegetables: ["番茄"],
+            movement: { category: "recovery", durationMinutes: { minimum: 20, maximum: 30 }, intensity: "low", highIntensity: false, safetyReminder: "按当天实际舒适度决定。" }
+          }))
+        }
+      });
+      expect(updated.plan).toMatchObject({ id: manual.plan.id, state: "candidate", source: "manual", version: manual.plan.version + 1, overview: "这是经过用户再次手动编辑的本周参考。" });
+      const confirmed = await service.confirm(updated.plan.id, updated.plan.version);
+      expect(confirmed.plan).toMatchObject({ id: updated.plan.id, state: "active", source: "manual" });
+    } finally {
+      const planIds = [base.plan.id, ...(manualId ? [manualId] : [])];
+      await connection.db.transaction(async (transaction) => {
+        await transaction.delete(healthDailyReferences).where(inArray(healthDailyReferences.healthWeekPlanId, planIds));
+        await transaction.delete(healthWeekPlans).where(inArray(healthWeekPlans.id, planIds));
+      });
+    }
+  });
 });
