@@ -105,6 +105,27 @@ test.describe("真实今日时间轴",()=>{
     }finally{await cleanup(request,ids);}
   });
 
+  test("开放任务块支持键盘按30分钟移动和拉伸，并刷新恢复",async({page,request})=>{
+    const ids:string[]=[];const title=`E2E 键盘排期 ${Date.now().toString(36)}`;const testDate=isolatedDate();
+    try{
+      await page.goto("/");
+      await page.getByLabel("时间轴日期").fill(testDate);
+      const task=await createExactTask(page,title,"13:00","14:00");ids.push(task.id);
+      const block=page.locator(`[data-task-id="${task.id}"]`);
+      await block.focus();
+      const moved=page.waitForResponse((response)=>response.url().endsWith(`/api/v1/tasks/${task.id}`)&&response.request().method()==="PATCH"&&response.status()===200);
+      await page.keyboard.press("ArrowDown");
+      const movedTask=(await (await moved).json()).task as {startAt:string;endAt:string};
+      expect(movedTask.startAt).toContain("05:30:00.000Z");expect(movedTask.endAt).toContain("06:30:00.000Z");
+      const resized=page.waitForResponse((response)=>response.url().endsWith(`/api/v1/tasks/${task.id}`)&&response.request().method()==="PATCH"&&response.status()===200);
+      await page.keyboard.press("Shift+ArrowDown");
+      const resizedTask=(await (await resized).json()).task as {startAt:string;endAt:string};
+      expect(resizedTask.startAt).toContain("05:30:00.000Z");expect(resizedTask.endAt).toContain("07:00:00.000Z");
+      await page.reload();await page.getByLabel("时间轴日期").fill(testDate);
+      await expect(page.locator(`[data-task-id="${task.id}"]`)).toContainText("13:30–15:00");
+    }finally{await cleanup(request,ids);}
+  });
+
   test("今日任务操作可带入真实专注页",async({page,request})=>{
     const ids:string[]=[];const title=`E2E 专注入口 ${Date.now().toString(36)}`;
     try{
