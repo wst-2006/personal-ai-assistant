@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import type { AppDatabase } from "@personal-ai/db/client";
+import { recordFocusNoResponseOutcome } from "@personal-ai/db/focus-no-response";
 
 export type FocusTimerJob = {
   id: string;
@@ -76,12 +77,16 @@ export class FocusTimerWorker {
           await this.cancelJob(db, job.id, "focus session is no longer awaiting confirmation", now);
           return "cancelled";
         }
-        await db.execute(sql`
+        const stoppedResult = await db.execute(sql`
           UPDATE focus_sessions
           SET state = 'stopped_no_response', ended_at = ${now}, stopped_reason = '5 分钟未响应',
             version = version + 1, updated_at = ${now}
           WHERE id = ${session.id} AND version = ${job.expectedSessionVersion} AND state = 'reminded'
+          RETURNING id
         `);
+        if (stoppedResult.rows.length > 0) {
+          await recordFocusNoResponseOutcome(db, { taskId: session.taskId, focusSessionId: session.id, now, reason: "5 分钟未响应" });
+        }
         await this.completeJob(db, job.id, now);
         return "completed";
       }

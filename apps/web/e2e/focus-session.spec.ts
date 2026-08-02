@@ -40,7 +40,7 @@ async function expirePreparation(id: string) {
   }
 }
 
-async function runFocusWorker(now: Date, sessionId?: string, kind?: "preparation_complete" | "segment_transition") {
+async function runFocusWorker(now: Date, sessionId?: string, kind?: "preparation_complete" | "confirmation_timeout" | "segment_transition") {
   const { client, db } = await connectVerifiedDatabase(loadDatabaseConfig());
   try {
     const worker = new FocusTimerWorker(db);
@@ -189,6 +189,44 @@ test("390px 移动端可恢复真实专注会话并结束计时", async ({ page,
   } finally {
     if (taskId) await cleanup(request, taskId);
   }
+});
+
+test("5 分钟未响应由本地 Worker 关闭任务并追加系统未完成结果", async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const date = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const title = `E2E 无响应提醒 ${Date.now().toString(36)}`;
+  let taskId = "";
+  try {
+    const created = await request.post(`${apiBase}/api/v1/tasks`, { data: { title, scheduleKind: "none", localDate: date, timeZone: "Asia/Shanghai" } });
+    expect(created.status()).toBe(201);
+    const task = (await created.json()).task as { id: string; version: number };
+    taskId = task.id;
+    const started = await request.post(`${apiBase}/api/v1/focus-sessions`, { data: { taskId, expectedTaskVersion: task.version, mode: "remind" } });
+    expect(started.status()).toBe(201);
+    const session = (await started.json()).session as { id: string };
+    const { client, db } = await connectVerifiedDatabase(loadDatabaseConfig());
+    try {
+      await db.update(focusTimerJobs).set({ dueAt: new Date(Date.now() - 1_000) }).where(and(
+        eq(focusTimerJobs.focusSessionId, session.id),
+        eq(focusTimerJobs.kind, "confirmation_timeout"),
+        eq(focusTimerJobs.status, "pending")
+      ));
+    } finally { await client.end(); }
+    await runFocusWorker(new Date(), session.id, "confirmation_timeout");
+
+    const detail = await request.get(`${apiBase}/api/v1/tasks/${taskId}`);
+    expect(detail.status()).toBe(200);
+    const body = await detail.json() as { task: { lifecycleStatus: string; currentOutcome: string; scheduleRevision: number }; outcomes: Array<{ focusSessionId: string | null; outcome: string; source: string }> };
+    expect(body.task).toMatchObject({ lifecycleStatus: "closed", currentOutcome: "not_completed", scheduleRevision: 2 });
+    expect(body.outcomes.some((outcome) => outcome.focusSessionId === session.id && outcome.outcome === "not_completed" && outcome.source === "system")).toBe(true);
+
+    const current = await request.get(`${apiBase}/api/v1/focus-sessions/current`);
+    expect(current.status()).toBe(200);
+    expect((await current.json()).session).toBeNull();
+    await page.goto("/");
+    await page.locator(".app-rail").getByRole("button", { name: "专注" }).click();
+    await expect(page.getByText("选择一件任务，留在此刻", { exact: true })).toBeVisible();
+  } finally { if (taskId) await cleanup(request, taskId); }
 });
 
 test("真实结构执行会持久化段运行并自动切换到休息段", async ({ page, request }) => {

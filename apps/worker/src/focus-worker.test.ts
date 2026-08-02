@@ -13,11 +13,16 @@ describe("FocusTimerWorker", () => {
     const execute = vi.fn()
       .mockResolvedValueOnce({ rows: [job] })
       .mockResolvedValueOnce({ rows: [{ id: "session-1", taskId: "task-1", state: "reminded", version: 1, startedAt: null, activeSinceAt: null }] })
+      .mockResolvedValueOnce({ rows: [{ id: "session-1" }] })
+      .mockResolvedValueOnce({ rows: [{ id: "task-1", lifecycleStatus: "open", version: 4 }] })
+      .mockResolvedValueOnce({ rows: [{ id: "task-1" }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
     const worker = new FocusTimerWorker({ execute, transaction: async (callback: (db: unknown) => unknown) => callback({ execute }) } as unknown as AppDatabase);
     await expect(worker.processNext(now)).resolves.toBe("completed");
-    expect(execute).toHaveBeenCalledTimes(4);
+    expect(execute).toHaveBeenCalledTimes(8);
   });
 
   it("starts a prepared session and activates its task", async () => {

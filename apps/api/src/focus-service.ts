@@ -1,13 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import type { AppDatabase } from "@personal-ai/db/client";
+import { recordFocusNoResponseOutcome } from "@personal-ai/db/focus-no-response";
 import { focusSessionSegmentRuns, focusSessions, focusStructureSegments, focusStructures, focusTimerJobs, taskFeedback, taskLifecycleEvents, taskOutcomes, tasks } from "@personal-ai/db/schema";
 import { calculateEffectiveFocusSeconds, type FocusSatisfaction, type FocusSessionState } from "@personal-ai/domain/focus";
 import type { TaskOutcome } from "@personal-ai/domain/task";
 import { syncTaskStartReminder } from "./reminder-scheduler.js";
 
 const recoverableStates: FocusSessionState[] = ["reminded", "preparing", "running"];
-const currentStates: FocusSessionState[] = [...recoverableStates, "ended", "stopped_no_response", "stopped_for_change"];
+const currentStates: FocusSessionState[] = [...recoverableStates, "ended"];
 const activeTimerStates: FocusSessionState[] = ["running"];
 
 export type StoredFocusSession = typeof focusSessions.$inferSelect;
@@ -292,7 +293,7 @@ export class FocusService {
     if (current.state === "reminded" && current.remindedAt && now.getTime() - current.remindedAt.getTime() >= 300_000) {
       const [stopped] = await db.update(focusSessions).set({ state: "stopped_no_response", endedAt: now, stoppedReason: "5 分钟未响应", version: current.version + 1, updatedAt: now })
         .where(and(eq(focusSessions.id, current.id), eq(focusSessions.version, current.version))).returning();
-      if (stopped) await this.awaitTaskOutcome(db, current.taskId, now, "5 分钟未响应");
+      if (stopped) await recordFocusNoResponseOutcome(db, { taskId: current.taskId, focusSessionId: current.id, now, reason: "5 分钟未响应" });
       return stopped ?? current;
     }
     if (current.state !== "preparing" || !current.preparingEndsAt || current.preparingEndsAt > now) return current;

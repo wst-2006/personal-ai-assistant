@@ -16,6 +16,10 @@
       "types": "./dist/migration-guard.d.ts",
       "default": "./dist/migration-guard.js"
     },
+    "./focus-no-response": {
+      "types": "./dist/focus-no-response.d.ts",
+      "default": "./dist/focus-no-response.js"
+    },
     "./schema": {
       "types": "./dist/schema.d.ts",
       "default": "./dist/schema.js"

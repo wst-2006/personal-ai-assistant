@@ -30,8 +30,9 @@ subjective satisfaction.
 evaluated`
 
 "Other arrangement" ends the session and opens a plan-change conversation. A
-five-minute non-response ends the session with a provisional `not_completed`
-outcome. There is no pause, soft start, or manual restart. Once preparation
+five-minute non-response ends the session, appends a system-sourced
+`not_completed` outcome, closes the task, and leaves reopening as an explicit
+user decision. There is no pause, soft start, or manual restart. Once preparation
 begins, the focus structure is immutable. A late start is clipped to the
 task's fixed `endAt`; it never extends the task or creates a new session after
 the fixed end. Only `partial` and `complete` evaluations count accumulated
