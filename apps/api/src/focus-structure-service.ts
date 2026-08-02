@@ -130,6 +130,24 @@ export class FocusStructureService {
     });
   }
 
+  async cancel(id: string, expectedVersion: number): Promise<FocusStructureWithSegments> {
+    return this.runSerializable(async (transaction) => {
+      const current = await this.requireStructure(transaction, id);
+      if (current.structure.version !== expectedVersion) throw new FocusStructureVersionConflictError(current);
+      if (current.structure.state !== "candidate") throw new FocusStructureStateError(current.structure.state, "cancel");
+      const now = new Date();
+      const [cancelled] = await transaction.update(focusStructures).set({
+        state: "cancelled", version: current.structure.version + 1, updatedAt: now
+      }).where(and(
+        eq(focusStructures.id, id),
+        eq(focusStructures.version, expectedVersion),
+        eq(focusStructures.state, "candidate")
+      )).returning();
+      if (!cancelled) throw new FocusStructureVersionConflictError(await this.requireStructure(transaction, id));
+      return { structure: cancelled, segments: await this.listSegments(transaction, id) };
+    });
+  }
+
   private async requireTask(db: AppDatabase, id: string): Promise<typeof tasks.$inferSelect> {
     const [task] = await db.select().from(tasks).where(and(eq(tasks.id, id), isNull(tasks.deletedAt))).limit(1);
     if (!task) throw new FocusStructureNotFoundError();

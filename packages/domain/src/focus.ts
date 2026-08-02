@@ -18,6 +18,7 @@ export const focusStructureSourceSchema = z.enum(["manual", "template", "ai"]);
 export const focusStructureStateSchema = z.enum(["candidate", "active", "superseded", "invalidated", "cancelled"]);
 export const focusStructureModeSchema = z.enum(["continuous", "segmented"]);
 export const focusSegmentTypeSchema = z.enum(["focus", "break"]);
+export const focusDistributionSchema = z.enum(["equal", "increasing", "decreasing"]);
 
 type FocusStructureInputShape = {
   taskId: string;
@@ -93,6 +94,7 @@ export type FocusStructureSource = z.infer<typeof focusStructureSourceSchema>;
 export type FocusStructureState = z.infer<typeof focusStructureStateSchema>;
 export type FocusStructureMode = z.infer<typeof focusStructureModeSchema>;
 export type FocusSegment = z.infer<typeof focusSegmentSchema>;
+export type FocusDistribution = z.infer<typeof focusDistributionSchema>;
 
 export type FocusStructureInput = z.infer<typeof focusStructureInputSchema>;
 
@@ -172,9 +174,56 @@ export function allocateContinuousFocusStructure(input: {
 }
 
 /**
- * Validates a user-provided segmented plan. The final segment may be a break:
- * a long plan can reserve its final minutes for rest while still ending at the
- * task's fixed end. No operation is allowed to extend the task interval.
+ * Builds a deterministic integer-minute template inside a fixed task window.
+ * Equal templates place unavoidable remainder minutes at the beginning.
+ * Increasing/decreasing templates reserve a one-minute staircase first, then
+ * spread the remaining minutes evenly without changing the task boundaries.
+ */
+export function allocateTemplateFocusStructure(input: {
+  totalStartAt: Date | string;
+  totalEndAt: Date | string;
+  focusCount: number;
+  distribution: FocusDistribution;
+  breakMinutes?: number;
+}): FocusStructure {
+  if (!Number.isInteger(input.focusCount) || input.focusCount < 1) {
+    throw new Error("Focus count must be a positive integer");
+  }
+  if (input.focusCount === 1) {
+    return allocateContinuousFocusStructure(input);
+  }
+
+  const start = toValidDate(input.totalStartAt, "totalStartAt");
+  const end = toValidDate(input.totalEndAt, "totalEndAt");
+  const totalMinutes = (end.getTime() - start.getTime()) / 60_000;
+  if (!Number.isInteger(totalMinutes) || totalMinutes < 30 || totalMinutes % 30 !== 0) {
+    throw new Error("Focus task duration must be a positive multiple of 30 minutes");
+  }
+  const breakMinutes = input.breakMinutes ?? 5;
+  if (!Number.isInteger(breakMinutes) || breakMinutes < 5 || breakMinutes > 15) {
+    throw new Error("Break duration must be between 5 and 15 minutes");
+  }
+
+  const focusMinutes = totalMinutes - input.focusCount * breakMinutes;
+  const minimumFocusMinutes = input.focusCount * 30;
+  if (focusMinutes < minimumFocusMinutes) {
+    throw new Error("The task interval cannot contain the requested number of focus segments");
+  }
+
+  const durations = input.distribution === "equal"
+    ? distributeEqual(focusMinutes, input.focusCount)
+    : distributeStepped(focusMinutes, input.focusCount, input.distribution);
+  const segments = durations.flatMap<FocusSegment>((durationMinutes) => [
+    { segmentType: "focus", durationMinutes },
+    { segmentType: "break", durationMinutes: breakMinutes }
+  ]);
+  return validateSegmentedFocusStructure({ totalStartAt: start, totalEndAt: end, segments });
+}
+
+/**
+ * Validates a user-provided segmented plan. Every focus segment has a matching
+ * break, including the final focus segment. No operation is allowed to extend
+ * the task interval.
  */
 export function validateSegmentedFocusStructure(input: {
   totalStartAt: Date | string;
@@ -199,6 +248,14 @@ export function validateSegmentedFocusStructure(input: {
     if (segments[index]?.segmentType === segments[index - 1]?.segmentType) {
       throw new Error("Focus and break segments must alternate");
     }
+  }
+  if (segments.length > 1 && segments.at(-1)?.segmentType !== "break") {
+    throw new Error("Every focus segment must be followed by a break segment");
+  }
+  if (segments.length > 1) {
+    const focusCount = segments.filter((segment) => segment.segmentType === "focus").length;
+    const breakCount = segments.filter((segment) => segment.segmentType === "break").length;
+    if (focusCount !== breakCount) throw new Error("Every focus segment must have one corresponding break segment");
   }
   const breakMinutes = segments.filter((segment) => segment.segmentType === "break")
     .reduce((sum, segment) => sum + segment.durationMinutes, 0);
@@ -240,4 +297,21 @@ function toValidDate(value: Date | string, field: string): Date {
   const date = value instanceof Date ? new Date(value.getTime()) : new Date(value);
   if (!Number.isFinite(date.getTime())) throw new Error(`${field} must be a valid date`);
   return date;
+}
+
+function distributeEqual(total: number, count: number): number[] {
+  const base = Math.floor(total / count);
+  const remainder = total % count;
+  return Array.from({ length: count }, (_, index) => base + (index < remainder ? 1 : 0));
+}
+
+function distributeStepped(total: number, count: number, direction: "increasing" | "decreasing"): number[] {
+  const staircase = (count * (count - 1)) / 2;
+  if (total < count * 30 + staircase) {
+    throw new Error(`The task interval is too short for a strictly ${direction} structure`);
+  }
+  const shared = Math.floor((total - staircase) / count);
+  const remainder = (total - staircase) % count;
+  const increasing = Array.from({ length: count }, (_, index) => shared + index + (index >= count - remainder ? 1 : 0));
+  return direction === "increasing" ? increasing : increasing.reverse();
 }

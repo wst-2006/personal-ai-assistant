@@ -88,4 +88,46 @@ describe("focus structure persistence", () => {
       breakMinutes: 5
     })).rejects.toBeInstanceOf(FocusStructureTaskConflictError);
   });
+
+  it("persists a segmented candidate across reads and explicitly cancels it", async () => {
+    const taskId = randomUUID();
+    cleanupIds.push(taskId);
+    const [task] = await connection.db.insert(tasks).values({
+      id: taskId,
+      title: "Candidate recovery test",
+      lifecycleStatus: "open",
+      scheduleKind: "exact",
+      localDate: "2099-07-27",
+      startAt: new Date("2099-07-27T05:00:00.000Z"),
+      endAt: new Date("2099-07-27T06:30:00.000Z"),
+      timeZone: "Asia/Shanghai",
+      version: 1,
+      scheduleRevision: 1
+    }).returning();
+    if (!task) throw new Error("test task was not created");
+
+    const candidate = await service.createCandidate({
+      taskId,
+      taskVersion: task.version,
+      taskScheduleRevision: task.scheduleRevision,
+      source: "template",
+      mode: "segmented",
+      totalStartAt: task.startAt!.toISOString(),
+      totalEndAt: task.endAt!.toISOString(),
+      breakMinutes: 5,
+      segments: [
+        { segmentType: "focus", durationMinutes: 40 },
+        { segmentType: "break", durationMinutes: 5 },
+        { segmentType: "focus", durationMinutes: 40 },
+        { segmentType: "break", durationMinutes: 5 }
+      ]
+    });
+    const recovered = (await service.list(taskId)).find((item) => item.structure.id === candidate.structure.id);
+    expect(recovered?.structure.state).toBe("candidate");
+    expect(recovered?.segments).toHaveLength(4);
+
+    const cancelled = await service.cancel(candidate.structure.id, candidate.structure.version);
+    expect(cancelled.structure.state).toBe("cancelled");
+    expect(cancelled.structure.version).toBe(2);
+  });
 });

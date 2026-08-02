@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   allocateContinuousFocusStructure,
+  allocateTemplateFocusStructure,
   calculateEffectiveFocusSeconds,
   createFocusSessionSchema,
   evaluateFocusSessionSchema,
@@ -104,11 +105,10 @@ describe("focus structure allocation", () => {
       totalStartAt: start,
       totalEndAt: "2026-07-27T11:00:00+08:00",
       segments: [
-        { segmentType: "focus", durationMinutes: 30 },
+        { segmentType: "focus", durationMinutes: 55 },
         { segmentType: "break", durationMinutes: 5 },
-        { segmentType: "focus", durationMinutes: 50 },
-        { segmentType: "break", durationMinutes: 5 },
-        { segmentType: "focus", durationMinutes: 30 }
+        { segmentType: "focus", durationMinutes: 55 },
+        { segmentType: "break", durationMinutes: 5 }
       ]
     });
     expect(result.effectiveFocusMinutes).toBe(110);
@@ -127,5 +127,60 @@ describe("focus structure allocation", () => {
     });
     expect(result.effectiveFocusMinutes).toBe(100);
     expect(result.breakMinutes).toBe(20);
+  });
+
+  it.each([
+    ["equal", [40, 40]],
+    ["increasing", [39, 41]],
+    ["decreasing", [41, 39]]
+  ] as const)("allocates a deterministic %s two-block template", (distribution, focusDurations) => {
+    const result = allocateTemplateFocusStructure({
+      totalStartAt: start,
+      totalEndAt: "2026-07-27T10:30:00+08:00",
+      focusCount: 2,
+      distribution,
+      breakMinutes: 5
+    });
+    expect(result.segments).toEqual([
+      { segmentType: "focus", durationMinutes: focusDurations[0] },
+      { segmentType: "break", durationMinutes: 5 },
+      { segmentType: "focus", durationMinutes: focusDurations[1] },
+      { segmentType: "break", durationMinutes: 5 }
+    ]);
+    expect(result.totalMinutes).toBe(90);
+  });
+
+  it("puts equal-template remainder minutes at the beginning", () => {
+    const result = allocateTemplateFocusStructure({
+      totalStartAt: start,
+      totalEndAt: "2026-07-27T12:30:00+08:00",
+      focusCount: 4,
+      distribution: "equal",
+      breakMinutes: 5
+    });
+    expect(result.segments.filter((segment) => segment.segmentType === "focus").map((segment) => segment.durationMinutes))
+      .toEqual([48, 48, 47, 47]);
+  });
+
+  it("rejects a segment count that cannot fit its minimum focus and rest", () => {
+    expect(() => allocateTemplateFocusStructure({
+      totalStartAt: start,
+      totalEndAt: "2026-07-27T10:00:00+08:00",
+      focusCount: 2,
+      distribution: "equal",
+      breakMinutes: 5
+    })).toThrow("cannot contain");
+  });
+
+  it("requires every segmented focus block to end with its own break", () => {
+    expect(() => validateSegmentedFocusStructure({
+      totalStartAt: start,
+      totalEndAt: "2026-07-27T11:00:00+08:00",
+      segments: [
+        { segmentType: "focus", durationMinutes: 30 },
+        { segmentType: "break", durationMinutes: 5 },
+        { segmentType: "focus", durationMinutes: 85 }
+      ]
+    })).toThrow("followed by a break");
   });
 });

@@ -17,6 +17,7 @@ const confirmSchema = z.object({
   expectedTaskVersion: z.number().int().positive(),
   expectedTaskScheduleRevision: z.number().int().positive()
 }).strict();
+const cancelSchema = z.object({ expectedVersion: z.number().int().positive() }).strict();
 
 export async function focusStructureRoutes(app: FastifyInstance, options: { focusStructureService: FocusStructureService }) {
   const { focusStructureService } = options;
@@ -52,6 +53,17 @@ export async function focusStructureRoutes(app: FastifyInstance, options: { focu
         input.data.expectedTaskVersion,
         input.data.expectedTaskScheduleRevision
       )) };
+    } catch (error) {
+      return focusStructureError(reply, error);
+    }
+  });
+
+  app.post("/focus-structures/:id/cancel", async (request, reply) => {
+    const params = structureParamsSchema.safeParse(request.params);
+    const input = cancelSchema.safeParse(request.body);
+    if (!params.success || !input.success) return reply.status(400).send({ error: "invalid_focus_structure_cancellation" });
+    try {
+      return { focusStructure: serialize(await focusStructureService.cancel(params.data.id, input.data.expectedVersion)) };
     } catch (error) {
       return focusStructureError(reply, error);
     }

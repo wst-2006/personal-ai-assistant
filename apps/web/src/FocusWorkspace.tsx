@@ -8,6 +8,8 @@ import {
   Play,
   XCircle,
 } from "lucide-react";
+import { FocusStructureEditor, type FocusStructureRecord } from "./FocusStructureEditor";
+import type { FocusSegment } from "@personal-ai/domain/focus";
 
 type Task = {
   id: string;
@@ -18,12 +20,10 @@ type Task = {
     | "awaiting_outcome"
     | "closed"
     | "cancelled";
-  plannedEffortMinutes: number | null;
-  difficulty: "low" | "medium" | "high" | null;
-  requiresContinuousFocus: boolean | null;
   scheduleKind: "none" | "daypart" | "exact";
   startAt: string | null;
   endAt: string | null;
+  timeZone: string;
   scheduleRevision: number;
   version: number;
 };
@@ -45,15 +45,10 @@ type Session = {
   effectiveFocusSeconds: number;
   focusStructureId: string | null;
   currentSegmentPosition: number | null;
+  currentSegmentStartedAt: string | null;
   currentSegmentElapsedSeconds: number;
   version: number;
   stoppedReason: string | null;
-};
-type FocusStructure = {
-  id: string;
-  state: "candidate" | "active" | "superseded" | "invalidated" | "cancelled";
-  version: number;
-  segments: Array<{ position: number; segmentType: "focus" | "break"; durationMinutes: number }>;
 };
 type Outcome = "not_completed" | "partial" | "complete";
 type Satisfaction = "satisfied" | "neutral" | "dissatisfied";
@@ -68,7 +63,9 @@ const nowDate = () =>
   }).format(new Date());
 const time = (seconds: number) =>
   `${String(Math.floor(Math.max(0, seconds) / 60)).padStart(2, "0")}:${String(Math.max(0, seconds) % 60).padStart(2, "0")}`;
-const difficulty = { low: "轻量", medium: "适中", high: "深度" };
+const clock = (value: string, timeZone: string) => new Intl.DateTimeFormat("zh-CN", {
+  timeZone, hour: "2-digit", minute: "2-digit", hour12: false
+}).format(new Date(value));
 
 async function request<T>(
   path: string,
@@ -98,8 +95,9 @@ export function FocusWorkspace({
 }) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [session, setSession] = useState<Session | null>(null);
-  const [activeStructure, setActiveStructure] = useState<FocusStructure | null>(null);
-  const [breakMinutes, setBreakMinutes] = useState("5");
+  const [activeStructure, setActiveStructure] = useState<FocusStructureRecord | null>(null);
+  const [candidateStructure, setCandidateStructure] = useState<FocusStructureRecord | null>(null);
+  const [structureLoading, setStructureLoading] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(preferredTaskId);
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -109,20 +107,23 @@ export function FocusWorkspace({
   const [satisfaction, setSatisfaction] = useState<Satisfaction>("satisfied");
   const [note, setNote] = useState("");
   const load = useCallback(async () => {
-    const [list, current] = await Promise.all([
+    const [list, current, preferred] = await Promise.all([
       request<{ tasks: Task[] }>(`/api/v1/tasks?date=${nowDate()}`),
       request<{ session: Session | null }>("/api/v1/focus-sessions/current"),
+      preferredTaskId
+        ? request<{ task: Task }>(`/api/v1/tasks/${preferredTaskId}`).catch(() => ({ task: null as Task | null }))
+        : Promise.resolve({ task: null as Task | null })
     ]);
-    setTasks(
-      list.tasks.filter(
+    const visible = list.tasks.filter(
         (task) =>
           task.lifecycleStatus !== "closed" &&
           task.lifecycleStatus !== "cancelled",
-      ),
-    );
+      );
+    if (preferred.task && !visible.some((task) => task.id === preferred.task?.id)) visible.push(preferred.task);
+    setTasks(visible);
     setSession(current.session);
     if (current.session) setSelectedId(current.session.taskId);
-  }, []);
+  }, [preferredTaskId]);
   useEffect(() => {
     void load().catch(() =>
       setError("无法恢复专注会话，请确认 API 正在运行。"),
@@ -136,14 +137,30 @@ export function FocusWorkspace({
   useEffect(() => {
     if (!selected || selected.scheduleKind !== "exact") {
       setActiveStructure(null);
+      setCandidateStructure(null);
       return;
     }
     let cancelled = false;
-    void request<{ focusStructures: FocusStructure[] }>(`/api/v1/tasks/${selected.id}/focus-structures`)
+    setStructureLoading(true);
+    void request<{ focusStructures: FocusStructureRecord[] }>(`/api/v1/tasks/${selected.id}/focus-structures`)
       .then((result) => {
-        if (!cancelled) setActiveStructure(result.focusStructures.find((item) => item.state === "active") ?? null);
+        if (cancelled) return;
+        const current = result.focusStructures.filter((item) =>
+          item.taskScheduleRevision === selected.scheduleRevision &&
+          new Date(item.totalStartAt).getTime() === new Date(selected.startAt!).getTime() &&
+          new Date(item.totalEndAt).getTime() === new Date(selected.endAt!).getTime()
+        );
+        setActiveStructure(current.find((item) => item.state === "active") ?? null);
+        setCandidateStructure(current.find((item) => item.state === "candidate") ?? null);
       })
-      .catch(() => { if (!cancelled) setActiveStructure(null); });
+      .catch(() => {
+        if (!cancelled) {
+          setActiveStructure(null);
+          setCandidateStructure(null);
+          setError("无法读取已保存的专注结构，请刷新后重试。");
+        }
+      })
+      .finally(() => { if (!cancelled) setStructureLoading(false); });
     return () => { cancelled = true; };
   }, [selected]);
   useEffect(() => {
@@ -201,33 +218,74 @@ export function FocusWorkspace({
     return () => { cancelled = true; };
   }, [session, tasks]);
 
-  async function ensureStructure(task: Task): Promise<void> {
-    if (task.scheduleKind !== "exact" || !task.startAt || !task.endAt) return;
-    if (activeStructure?.state === "active") return;
-    const candidate = await request<{ focusStructure: FocusStructure }>(
+  async function saveStructure(segments: FocusSegment[], source: "manual" | "template"): Promise<void> {
+    if (!selected || selected.scheduleKind !== "exact" || !selected.startAt || !selected.endAt) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const breakMinutes = segments.find((segment) => segment.segmentType === "break")?.durationMinutes ?? 0;
+      const continuous = segments.filter((segment) => segment.segmentType === "focus").length === 1;
+      const candidate = await request<{ focusStructure: FocusStructureRecord }>(
       "/api/v1/focus-structures/candidates",
       "POST",
       {
-        taskId: task.id,
-        taskVersion: task.version,
-        taskScheduleRevision: task.scheduleRevision,
-        source: "manual",
-        mode: "continuous",
-        totalStartAt: task.startAt,
-        totalEndAt: task.endAt,
-        breakMinutes: Number(breakMinutes)
+        taskId: selected.id,
+        taskVersion: selected.version,
+        taskScheduleRevision: selected.scheduleRevision,
+        source,
+        mode: continuous ? "continuous" : "segmented",
+        totalStartAt: selected.startAt,
+        totalEndAt: selected.endAt,
+        breakMinutes,
+        ...(continuous ? {} : { segments })
       }
-    );
-    const confirmed = await request<{ focusStructure: FocusStructure }>(
-      `/api/v1/focus-structures/${candidate.focusStructure.id}/confirm`,
-      "POST",
-      {
-        expectedVersion: candidate.focusStructure.version,
-        expectedTaskVersion: task.version,
-        expectedTaskScheduleRevision: task.scheduleRevision
-      }
-    );
-    setActiveStructure(confirmed.focusStructure);
+      );
+      setCandidateStructure(candidate.focusStructure);
+    } catch (error: any) {
+      setError(error.body?.error === "focus_structure_task_conflict"
+        ? "任务排期已经变化，请刷新后重新安排结构。"
+        : "候选结构没有保存，请检查各段时间后重试。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirmStructure(): Promise<void> {
+    if (!selected || !candidateStructure) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const confirmed = await request<{ focusStructure: FocusStructureRecord }>(
+        `/api/v1/focus-structures/${candidateStructure.id}/confirm`, "POST", {
+          expectedVersion: candidateStructure.version,
+          expectedTaskVersion: selected.version,
+          expectedTaskScheduleRevision: selected.scheduleRevision
+        });
+      setActiveStructure(confirmed.focusStructure);
+      setCandidateStructure(null);
+    } catch (error: any) {
+      setError(error.body?.error?.includes("conflict")
+        ? "候选或任务已在其他位置更新，请刷新后重新确认。"
+        : "候选结构没有确认，请重试。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function discardCandidate(): Promise<void> {
+    if (!candidateStructure) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await request(`/api/v1/focus-structures/${candidateStructure.id}/cancel`, "POST", {
+        expectedVersion: candidateStructure.version
+      });
+      setCandidateStructure(null);
+    } catch {
+      setError("候选结构没有放弃，请刷新后重试。");
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function begin(mode: "prepare" | "remind" = "prepare") {
@@ -235,7 +293,10 @@ export function FocusWorkspace({
     setBusy(true);
     setError(null);
     try {
-      if (mode === "prepare") await ensureStructure(selected);
+      if (selected.scheduleKind === "exact" && !activeStructure) {
+        setError("请先保存候选并明确确认专注结构。");
+        return;
+      }
       const result = await request<{ session: Session }>(
         "/api/v1/focus-sessions",
         "POST",
@@ -342,6 +403,17 @@ export function FocusWorkspace({
   const selectedMinutes = selected?.startAt && selected.endAt
     ? Math.round((new Date(selected.endAt).getTime() - new Date(selected.startAt).getTime()) / 60_000)
     : null;
+  const currentSegment = activeStructure && session && session.currentSegmentPosition !== null
+    ? activeStructure.segments[session.currentSegmentPosition] ?? null
+    : null;
+  const currentSegmentElapsed = stage === "running" && session?.currentSegmentStartedAt
+    ? Math.max(0, Math.floor((Date.now() - new Date(session.currentSegmentStartedAt).getTime()) / 1000))
+    : session?.currentSegmentElapsedSeconds ?? 0;
+  const currentSegmentRemaining = currentSegment
+    ? Math.max(0, currentSegment.durationMinutes * 60 - currentSegmentElapsed)
+    : 0;
+  const timerTotal = stage === "preparing" ? 60 : currentSegment ? currentSegment.durationMinutes * 60 : Math.max(1, (selectedMinutes ?? 0) * 60);
+  const timerElapsed = stage === "preparing" ? 60 - prepLeft : currentSegment ? timerTotal - currentSegmentRemaining : elapsed;
   return (
     <section className="focus-workspace page" aria-labelledby="focus-title">
       <div className="focus-stage">
@@ -369,12 +441,15 @@ export function FocusWorkspace({
           </h1>
           <p className="focus-meta">
             {selected
-              ? `${selected.plannedEffortMinutes ?? 25} 分钟预计投入 · ${difficulty[selected.difficulty ?? "medium"]}${selected.requiresContinuousFocus ? " · 连续专注" : ""}`
+              ? selected.startAt && selected.endAt
+                ? `${clock(selected.startAt, selected.timeZone)}–${clock(selected.endAt, selected.timeZone)} · ${selectedMinutes} 分钟固定时间块`
+                : "这项任务尚未设置精确起止时间"
               : "从今日时间轴或右侧列表选择任务"}
           </p>
           {session && activeStructure && session.currentSegmentPosition !== null && (
             <p className="focus-segment-status">
-              第 {session.currentSegmentPosition + 1} 段 · {activeStructure.segments[session.currentSegmentPosition]?.segmentType === "break" ? "休息" : "专注"}
+              第 {session.currentSegmentPosition + 1} 段 · {currentSegment?.segmentType === "break" ? "休息" : "专注"}
+              {currentSegment?.segmentType === "break" && session.currentSegmentPosition === activeStructure.segments.length - 1 ? " · 最后一次休息" : ""}
             </p>
           )}
           <div
@@ -389,24 +464,17 @@ export function FocusWorkspace({
                 r="80"
                 style={{
                   strokeDashoffset:
-                    stage === "preparing"
-                      ? 503 - (503 * (60 - prepLeft)) / 60
-                      : selected?.plannedEffortMinutes
-                        ? Math.max(
-                            0,
-                            503 -
-                              (503 * elapsed) /
-                                (selected.plannedEffortMinutes * 60),
-                          )
-                        : 503,
+                    Math.max(0, 503 - (503 * timerElapsed) / timerTotal),
                 }}
               />
             </svg>
             <strong>
               {stage === "preparing"
                 ? `00:${String(prepLeft).padStart(2, "0")}`
-                : selected
-                  ? time(elapsed)
+                : currentSegment
+                  ? time(currentSegmentRemaining)
+                  : selected
+                    ? time(elapsed)
                   : "--:--"}
             </strong>
           </div>
@@ -437,30 +505,18 @@ export function FocusWorkspace({
               </div>
             </div>
           )}
-          {!session && selected?.scheduleKind === "exact" && !activeStructure && (
-            <section className="focus-structure-panel" aria-label="专注结构">
-              <p className="section-kicker">先确定执行结构</p>
-              <strong>连续专注</strong>
-              <p>
-                {selectedMinutes !== null && selectedMinutes <= 30
-                  ? "30 分钟任务保持连续专注，不插入休息。"
-                  : "最后保留一段休息，任务总结束时间不变。"}
-              </p>
-              {selectedMinutes !== null && selectedMinutes > 30 && (
-                <label>
-                  末尾休息
-                  <input
-                    type="number"
-                    min="5"
-                    max="15"
-                    step="1"
-                    value={breakMinutes}
-                    onChange={(event) => setBreakMinutes(event.target.value)}
-                  />
-                  <em>分钟</em>
-                </label>
-              )}
-            </section>
+          {!session && selected?.scheduleKind === "exact" && selected.startAt && selected.endAt && (
+            structureLoading
+              ? <p className="focus-structure-loading">正在恢复已保存的专注结构…</p>
+              : <FocusStructureEditor
+                  task={{ id: selected.id, startAt: selected.startAt, endAt: selected.endAt, timeZone: selected.timeZone }}
+                  active={activeStructure}
+                  candidate={candidateStructure}
+                  busy={busy}
+                  onSave={saveStructure}
+                  onConfirm={confirmStructure}
+                  onDiscard={discardCandidate}
+                />
           )}
           <div className="focus-controls">
             {stage === "running" && (
@@ -478,11 +534,11 @@ export function FocusWorkspace({
             {stage === "idle" && (
               <button
                 className="focus-main-action"
-                disabled={!selected || busy}
+                disabled={!selected || busy || (selected.scheduleKind === "exact" && !activeStructure)}
                 onClick={() => void begin()}
               >
                 <Play />
-                {selected?.scheduleKind === "exact" && !activeStructure ? "确认结构并开始" : "开始专注"}
+                {selected?.scheduleKind === "exact" && !activeStructure ? "先确认专注结构" : candidateStructure && activeStructure ? "按已确认结构开始" : "开始专注"}
               </button>
             )}
             {stage === "ended" && (
@@ -589,7 +645,7 @@ export function FocusWorkspace({
                       : "待开始"}
                 </span>
                 <strong>{task.title}</strong>
-                <small>{task.plannedEffortMinutes ?? 30}m</small>
+                <small>{task.startAt && task.endAt ? `${clock(task.startAt, task.timeZone)}–${clock(task.endAt, task.timeZone)}` : "未设置精确时间"}</small>
               </button>
             ))
           )}
