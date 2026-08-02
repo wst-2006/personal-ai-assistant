@@ -89,9 +89,11 @@ async function request<T>(
 export function FocusWorkspace({
   preferredTaskId,
   onBack,
+  onPlanChange,
 }: {
   preferredTaskId: string | null;
   onBack: () => void;
+  onPlanChange: (task: { id: string; title: string }) => void;
 }) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [session, setSession] = useState<Session | null>(null);
@@ -379,6 +381,9 @@ export function FocusWorkspace({
         );
       setSession(result.session);
       await load();
+      if (action === "other-arrangement") {
+        onPlanChange({ id: result.session.taskId, title: selected?.title ?? "这项任务" });
+      }
     } catch (error: any) {
       setError(
         error.body?.error === "focus_session_version_conflict"

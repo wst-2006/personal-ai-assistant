@@ -1,4 +1,5 @@
 import type { TaskParser } from "./ai/task-parser.js";
+import type { PlanChangeAdviceRequest, PlanChangeAdvisor } from "./ai/plan-change-advisor.js";
 import { buildApp } from "./app.js";
 import { TaskService } from "./task-service.js";
 import { MemoryTaskStore } from "./testing/memory-task-store.js";
@@ -172,5 +173,85 @@ describe("AI task parsing", () => {
     expect(response.json().candidate.title).toBe("学习线性代数");
     expect(aiStore.tasks).toHaveLength(0);
     await aiApp.close();
+  });
+});
+
+describe("AI plan-change consultation", () => {
+  it("uses explicit task/day context and never writes an advisory as a task change", async () => {
+    let received: PlanChangeAdviceRequest | null = null;
+    const advisor: PlanChangeAdvisor = {
+      async advise(request) {
+        received = request;
+        return {
+          summary: "今天仍有空档，但需要由用户决定是否移动这项任务。",
+          feasibility: "risky",
+          affectedTaskIds: [request.task.id, "00000000-0000-4000-8000-000000000000"],
+          options: [
+            { title: "保持原计划", detail: "先处理临时安排，之后回到原来的时间块。" },
+            { title: "手动调整", detail: "回到时间轴选择一个可接受的时间，再明确确认冲突。" }
+          ],
+          warnings: ["这只是建议，尚未修改任何任务。"]
+        };
+      }
+    };
+    const consultationStore = new MemoryTaskStore();
+    const consultationApp = buildApp({
+      taskService: new TaskService(consultationStore),
+      planChangeAdvisor: advisor
+    });
+    try {
+      const created = await consultationApp.inject({
+        method: "POST",
+        url: "/api/v1/tasks",
+        payload: { title: "完成阶段报告", scheduleKind: "none", localDate: "2090-03-16", timeZone: "Asia/Shanghai" }
+      });
+      expect(created.statusCode).toBe(201);
+      const task = created.json().task as { id: string; version: number; scheduleRevision: number };
+      const before = structuredClone(consultationStore.tasks);
+
+      const response = await consultationApp.inject({
+        method: "POST",
+        url: "/api/v1/ai/plan-change-advisories",
+        payload: { taskId: task.id, message: "临时要处理另一件事，下午才有空。" }
+      });
+
+      expect(response.statusCode).toBe(200);
+      const receivedRequest = received as PlanChangeAdviceRequest | null;
+      expect(receivedRequest).toMatchObject({
+        message: "临时要处理另一件事，下午才有空。",
+        referenceDate: "2090-03-16",
+        task: { id: task.id, title: "完成阶段报告", version: task.version, scheduleRevision: task.scheduleRevision }
+      });
+      expect(receivedRequest?.dayTasks.some((candidate) => candidate.id === task.id)).toBe(true);
+      expect(response.json().advisory).toMatchObject({
+        taskId: task.id,
+        taskVersion: task.version,
+        taskScheduleRevision: task.scheduleRevision,
+        affectedTasks: [{ id: task.id, title: "完成阶段报告" }]
+      });
+      expect(response.json().advisory.affectedTasks).toHaveLength(1);
+      expect(consultationStore.tasks).toEqual(before);
+      expect(consultationStore.lifecycleEvents).toHaveLength(1);
+    } finally {
+      await consultationApp.close();
+    }
+  });
+
+  it("rejects a consultation without the user's own explanation", async () => {
+    const consultationApp = buildApp({
+      taskService: new TaskService(new MemoryTaskStore()),
+      planChangeAdvisor: { async advise() { throw new Error("must not run"); } }
+    });
+    try {
+      const response = await consultationApp.inject({
+        method: "POST",
+        url: "/api/v1/ai/plan-change-advisories",
+        payload: { taskId: "00000000-0000-4000-8000-000000000000", message: "" }
+      });
+      expect(response.statusCode).toBe(400);
+      expect(response.json().error).toBe("invalid_plan_change_consultation");
+    } finally {
+      await consultationApp.close();
+    }
   });
 });

@@ -3,6 +3,7 @@ import { loadDatabaseConfig } from "@personal-ai/db/config";
 import { buildApp } from "./app.js";
 import { loadDeepSeekConfig } from "./ai/config.js";
 import { DeepSeekTaskParser } from "./ai/task-parser.js";
+import { DeepSeekPlanChangeAdvisor } from "./ai/plan-change-advisor.js";
 import { DeepSeekFocusStructurePlanner } from "./ai/focus-structure-planner.js";
 import { loadServerConfig } from "./config.js";
 import { PostgresTaskStore } from "./task-repository.js";
@@ -41,7 +42,8 @@ const app = buildApp({
   healthPlanner: new DeepSeekHealthPlanner(deepSeekConfig),
   sleepImageAnalyzer: new DeepSeekSleepImageAnalyzer(deepSeekConfig),
   feishuWebhookService: feishuConfig ? new FeishuWebhookService(feishuConfig, taskService, focusService) : undefined,
-  taskParser: new DeepSeekTaskParser(deepSeekConfig)
+  taskParser: new DeepSeekTaskParser(deepSeekConfig),
+  planChangeAdvisor: new DeepSeekPlanChangeAdvisor(deepSeekConfig)
 });
 
 app.addHook("onClose", async () => {

@@ -191,6 +191,120 @@ test("390px 移动端可恢复真实专注会话并结束计时", async ({ page,
   }
 });
 
+test("另有安排会打开只读协商，不会自动修改任务或日程", async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const date = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const title = `E2E 另有安排 ${Date.now().toString(36)}`;
+  let taskId = "";
+  let taskWrites = 0;
+  let receivedPayload: { taskId: string; message: string } | null = null;
+  page.on("request", (outgoing) => {
+    if ((outgoing.method() === "PATCH" || outgoing.method() === "DELETE") && outgoing.url().includes("/api/v1/tasks/")) taskWrites += 1;
+  });
+  await page.route("**/api/v1/ai/plan-change-advisories", async (route) => {
+    receivedPayload = route.request().postDataJSON() as { taskId: string; message: string };
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ advisory: {
+        taskId,
+        taskVersion: 1,
+        taskScheduleRevision: 1,
+        summary: "下午仍有空间，但请由你决定是否移动当前任务。",
+        feasibility: "risky",
+        affectedTasks: [{ id: taskId, title, startAt: null, endAt: null }],
+        options: [
+          { title: "保持原计划", detail: "先处理临时安排，稍后回到原任务。" },
+          { title: "回到时间轴再调整", detail: "仅在你明确保存后才会改变排期。" }
+        ],
+        warnings: ["当前建议没有修改任何任务。"]
+      } })
+    });
+  });
+  try {
+    const created = await request.post(`${apiBase}/api/v1/tasks`, { data: { title, scheduleKind: "none", localDate: date, timeZone: "Asia/Shanghai" } });
+    expect(created.status()).toBe(201);
+    const task = (await created.json()).task as { id: string; version: number };
+    taskId = task.id;
+    const reminder = await request.post(`${apiBase}/api/v1/focus-sessions`, { data: { taskId, expectedTaskVersion: task.version, mode: "remind" } });
+    expect(reminder.status()).toBe(201);
+
+    await page.goto("/");
+    await page.locator(".app-rail").getByRole("button", { name: "专注", exact: true }).click();
+    await expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible();
+    const stopped = page.waitForResponse((response) => response.url().endsWith("/respond") && response.request().method() === "POST" && response.status() === 200);
+    await page.getByRole("button", { name: "另有安排", exact: true }).click();
+    await stopped;
+
+    await expect(page.getByRole("heading", { name: "先看影响，再由你决定。", exact: true })).toBeVisible();
+    await page.getByLabel("变更说明").fill("临时要处理一件事，下午才有时间。");
+    const consulted = page.waitForResponse((response) => response.url().endsWith("/plan-change-advisories") && response.request().method() === "POST" && response.status() === 200);
+    await page.getByRole("button", { name: "查看协商建议", exact: true }).click();
+    await consulted;
+    await expect(page.getByText("下午仍有空间，但请由你决定是否移动当前任务。", { exact: true })).toBeVisible();
+    await expect(page.getByText("保持原计划", { exact: true })).toBeVisible();
+    expect(receivedPayload).toEqual({ taskId, message: "临时要处理一件事，下午才有时间。" });
+    expect(taskWrites).toBe(0);
+
+    const detail = await request.get(`${apiBase}/api/v1/tasks/${taskId}`);
+    expect(detail.status()).toBe(200);
+    expect((await detail.json()).task).toMatchObject({ id: taskId, lifecycleStatus: "open", version: task.version, scheduleRevision: 1 });
+    const current = await request.get(`${apiBase}/api/v1/focus-sessions/current`);
+    expect((await current.json()).session).toBeNull();
+
+    await page.getByRole("button", { name: /回到时间轴，自己决定调整/ }).click();
+    await expect(page.getByRole("heading", { name: "把今天放回时间里。", exact: true })).toBeVisible();
+    await page.reload();
+    const afterRefresh = await request.get(`${apiBase}/api/v1/tasks/${taskId}`);
+    expect((await afterRefresh.json()).task).toMatchObject({ lifecycleStatus: "open", version: task.version, scheduleRevision: 1 });
+  } finally {
+    if (taskId) await cleanup(request, taskId);
+  }
+});
+
+test("390px 下另有安排协商可用且不发生横向溢出", async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const date = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const title = `E2E 移动协商 ${Date.now().toString(36)}`;
+  let taskId = "";
+  await page.route("**/api/v1/ai/plan-change-advisories", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ advisory: {
+        taskId,
+        taskVersion: 1,
+        taskScheduleRevision: 1,
+        summary: "请先决定是否回到时间轴修改。",
+        feasibility: "needs_clarification",
+        affectedTasks: [],
+        options: [{ title: "暂时保留", detail: "任务仍在原安排中。" }],
+        warnings: ["这只是建议。"]
+      } })
+    });
+  });
+  try {
+    const created = await request.post(`${apiBase}/api/v1/tasks`, { data: { title, scheduleKind: "none", localDate: date, timeZone: "Asia/Shanghai" } });
+    expect(created.status()).toBe(201);
+    const task = (await created.json()).task as { id: string; version: number };
+    taskId = task.id;
+    const reminder = await request.post(`${apiBase}/api/v1/focus-sessions`, { data: { taskId, expectedTaskVersion: task.version, mode: "remind" } });
+    expect(reminder.status()).toBe(201);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/");
+    await page.locator(".mobile-nav").getByRole("button", { name: "专注", exact: true }).click();
+    await page.getByRole("button", { name: "另有安排", exact: true }).click();
+    await expect(page.getByLabel("变更说明")).toBeVisible();
+    await page.getByLabel("变更说明").fill("临时调整一下。");
+    await page.getByRole("button", { name: "查看协商建议", exact: true }).click();
+    await expect(page.getByText("暂时保留", { exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  } finally {
+    if (taskId) await cleanup(request, taskId);
+  }
+});
+
 test("5 分钟未响应由本地 Worker 关闭任务并追加系统未完成结果", async ({ page, request }) => {
   test.setTimeout(120_000);
   const date = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());

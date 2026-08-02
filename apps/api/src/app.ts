@@ -3,6 +3,7 @@ import Fastify from "fastify";
 import { aiRoutes } from "./ai/routes.js";
 import { inboxRoutes } from "./inbox-routes.js";
 import type { TaskParser } from "./ai/task-parser.js";
+import type { PlanChangeAdvisor } from "./ai/plan-change-advisor.js";
 import { taskRoutes } from "./task-routes.js";
 import type { TaskService } from "./task-service.js";
 import { focusRoutes } from "./focus-routes.js";
@@ -40,6 +41,7 @@ type AppOptions = {
   growthService?: GrowthService;
   feishuWebhookService?: FeishuWebhookService;
   taskParser?: TaskParser;
+  planChangeAdvisor?: PlanChangeAdvisor;
   backupService?: BackupExporter;
   healthService?: HealthService;
   healthPlanner?: HealthPlanner;
@@ -93,10 +95,12 @@ export function buildApp(options: AppOptions = {}) {
   if (options.backupService) app.register(backupRoutes, { prefix: "/api/v1", backupService: options.backupService });
   if (options.healthService) app.register(healthRoutes, { prefix: "/api/v1", healthService: options.healthService, healthPlanner: options.healthPlanner, sleepImageAnalyzer: options.sleepImageAnalyzer });
 
-  if (options.taskParser) {
+  if (options.taskParser || (options.taskService && options.planChangeAdvisor)) {
     app.register(aiRoutes, {
       prefix: "/api/v1/ai",
-      taskParser: options.taskParser
+      taskParser: options.taskParser,
+      taskService: options.taskService,
+      planChangeAdvisor: options.planChangeAdvisor
     });
   }
 

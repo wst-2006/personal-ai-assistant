@@ -4,6 +4,7 @@ import { DiaryWorkspace } from "./DiaryWorkspace";
 import { FocusWorkspace } from "./FocusWorkspace";
 import { GrowthWorkspace } from "./GrowthWorkspace";
 import { HealthWorkspace } from "./HealthWorkspace";
+import { PlanChangeDrawer } from "./PlanChangeDrawer";
 import { ReviewWorkspace } from "./ReviewWorkspace";
 import { TodayWorkspace } from "./TodayWorkspace";
 
@@ -41,6 +42,7 @@ type StandaloneBrief = {
   sources: Array<{ label: string; url?: string }>;
   createdAt: string;
 };
+type PlanChangeContext = { taskId: string; taskTitle: string };
 
 class ApiError extends Error {
   constructor(readonly status: number, readonly body: ApiErrorBody) {
@@ -187,6 +189,7 @@ export function App() {
   const [aiLoading, setAiLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [aiCandidate, setAiCandidate] = useState<CandidateDraft | null>(null);
+  const [planChange, setPlanChange] = useState<PlanChangeContext | null>(null);
   const [standaloneBriefs, setStandaloneBriefs] = useState<StandaloneBrief[]>([]);
   const [selectedStandaloneBriefId, setSelectedStandaloneBriefId] = useState<string | null>(null);
   const [standaloneLoading, setStandaloneLoading] = useState(false);
@@ -207,8 +210,28 @@ export function App() {
   }
 
   function openAiDrawer() {
+    setPlanChange(null);
     setAiOpen(true);
     void loadStandaloneBriefs();
+  }
+
+  function closeAiDrawer() {
+    setAiOpen(false);
+    setPlanChange(null);
+  }
+
+  function openPlanChange(task: { id: string; title: string }) {
+    setAiCandidate(null);
+    setPlanChange({ taskId: task.id, taskTitle: task.title });
+    setAiOpen(true);
+  }
+
+  function returnToTimelineFromPlanChange() {
+    setAiOpen(false);
+    setPlanChange(null);
+    setSelectedTaskId(null);
+    setView("today");
+    setTodayRefreshToken((value) => value + 1);
   }
 
   async function parseWithAi() {
@@ -351,15 +374,15 @@ export function App() {
       <header className="topbar"><div className="context-line"><span className="live-dot" />{displayDate()}<span>/</span>{activeNavLabel}</div><div className="topbar-actions"><a className="quiet-icon backup-trigger" href={`${apiBaseUrl}/api/v1/backups/export`} download aria-label="备份所有数据" title="备份所有数据"><HardDriveDownload /></a><button className="ai-trigger" type="button" onClick={openAiDrawer}><Bot /> 与 AI 一起整理</button></div></header>
       {error && <div className="error-banner" role="alert"><X />{error}<button type="button" aria-label="关闭错误提示" onClick={() => setError(null)}><X /></button></div>}
       {view === "today" && <TodayWorkspace refreshToken={todayRefreshToken} onFocus={(id) => { setSelectedTaskId(id); setView("focus"); }} />}
-      {view === "focus" && <FocusWorkspace preferredTaskId={selectedTaskId} onBack={() => setView("today")} />}
+      {view === "focus" && <FocusWorkspace preferredTaskId={selectedTaskId} onBack={() => setView("today")} onPlanChange={openPlanChange} />}
       {view === "review" && <ReviewWorkspace />}
       {view === "diary" && <DiaryWorkspace onOpenReview={() => setView("review")} />}
       {view === "growth" && <GrowthWorkspace />}
       {view === "health" && <HealthWorkspace />}
     </section>
-    <aside className={`ai-drawer ${aiOpen ? "open" : ""}`} aria-label="AI 助手" aria-hidden={!aiOpen}>
-      <div className="drawer-header"><div><span className="bot-orb"><Bot /></span><div><p>AI 整理助手</p><strong>把一句话变得清楚</strong></div></div><button className="quiet-icon" type="button" aria-label="关闭 AI 助手" onClick={() => setAiOpen(false)}><X /></button></div>
-      {!aiCandidate ? <div className="drawer-entry">
+    <aside className={`ai-drawer ${aiOpen ? "open" : ""}`} aria-label={planChange ? "计划变更协商" : "AI 助手"} aria-hidden={!aiOpen}>
+      <div className="drawer-header"><div><span className="bot-orb"><Bot /></span><div><p>{planChange ? "计划变更协商" : "AI 整理助手"}</p><strong>{planChange ? "建议可见，决定仍在你手上" : "把一句话变得清楚"}</strong></div></div><button className="quiet-icon" type="button" aria-label="关闭 AI 助手" onClick={closeAiDrawer}><X /></button></div>
+      {planChange ? <PlanChangeDrawer taskId={planChange.taskId} taskTitle={planChange.taskTitle} onBackToTimeline={returnToTimelineFromPlanChange} /> : !aiCandidate ? <div className="drawer-entry">
         <div className="drawer-prompt"><p>说说你想记下什么。</p><small>可以整理成任务候选；或由你明确决定，用这段话生成独立简报。</small></div>
         <textarea aria-label="AI 输入内容" value={aiInput} onChange={(event) => setAiInput(event.target.value)} placeholder="例如：明天上午九点用六十分钟学习线性代数" rows={7} maxLength={4000} />
         <div className="drawer-actions">
@@ -376,7 +399,7 @@ export function App() {
         </section>
       </div> : <div className="candidate-view"><p className="section-kicker">待你确认</p><div className="candidate-title"><span>{entryLabels[aiCandidate.entryType]}</span><h2>逐项确认后再保存</h2><small>AI 只提供候选，任何内容都不会在此之前写入你的计划。</small></div><form className="candidate-form" onSubmit={saveAiCandidate}><label className="candidate-wide"><span>候选类型</span><select aria-label="候选类型" value={aiCandidate.entryType} onChange={(event) => setAiCandidate((current) => current ? { ...current, entryType: event.target.value as EntryType, scheduleKind: event.target.value === "task" ? current.scheduleKind : "none" } : current)}><option value="task">任务</option><option value="idea">想法</option><option value="question">问题</option></select></label><label className="candidate-wide"><span>{aiCandidate.entryType === "task" ? "任务标题" : aiCandidate.entryType === "idea" ? "想法内容" : "问题内容"}</span><input aria-label="候选标题" required maxLength={200} value={aiCandidate.title} onChange={(event) => setAiCandidate((current) => current ? { ...current, title: event.target.value } : current)} /></label>{aiCandidate.entryType === "task" && <><label><span>排期方式</span><select aria-label="候选排期方式" value={aiCandidate.scheduleKind} onChange={(event) => setAiCandidate((current) => current ? { ...current, scheduleKind: event.target.value as ScheduleKind, localDate: current.localDate || shanghaiDate() } : current)}><option value="none">未排期</option><option value="daypart">时间段</option><option value="exact">精确时间</option></select></label><label><span>日期{aiCandidate.scheduleKind === "none" ? "（可选）" : ""}</span><input aria-label="候选日期" type="date" required={aiCandidate.scheduleKind !== "none"} value={aiCandidate.localDate} onChange={(event) => setAiCandidate((current) => current ? { ...current, localDate: event.target.value } : current)} /></label>{aiCandidate.scheduleKind === "daypart" && <label className="candidate-wide"><span>时间段</span><select aria-label="候选时间段" value={aiCandidate.daypart} onChange={(event) => setAiCandidate((current) => current ? { ...current, daypart: event.target.value as Daypart } : current)}><option value="morning">上午</option><option value="afternoon">下午</option><option value="evening">晚上</option></select></label>}{aiCandidate.scheduleKind === "exact" && <><label><span>开始时间</span><input aria-label="候选开始时间" type="time" step="1800" min={aiCandidate.localDate === today ? timeFromMinute(nextAvailableMinuteForToday(aiCandidate.localDate)) : "00:00"} required value={aiCandidate.start} onChange={(event) => setAiCandidate((current) => current ? { ...current, start: event.target.value } : current)} /></label><label><span>结束时间</span><input aria-label="候选结束时间" type="time" step="1800" max="23:30" required value={aiCandidate.end} onChange={(event) => setAiCandidate((current) => current ? { ...current, end: event.target.value } : current)} /></label></>}</>}<label className="candidate-wide"><span>备注（可选）</span><textarea aria-label="候选备注" rows={3} maxLength={4000} value={aiCandidate.notes} onChange={(event) => setAiCandidate((current) => current ? { ...current, notes: event.target.value } : current)} /></label>{candidateMissingFields(aiCandidate).length > 0 && <p className="candidate-note candidate-wide">仍待补充：{candidateMissingFields(aiCandidate).join("、")}</p>}<footer className="candidate-wide"><button className="primary-button full-width" type="submit" disabled={saving}>{saving ? <LoaderCircle className="spin" /> : <Check />}{candidateSaveLabel(aiCandidate)}</button><button className="text-button centered" type="button" disabled={saving} onClick={() => setAiCandidate(null)}>返回修改原句</button></footer></form></div>}
     </aside>
-    {aiOpen && <button className="drawer-scrim" type="button" aria-label="关闭 AI 助手" onClick={() => setAiOpen(false)} />}
+    {aiOpen && <button className="drawer-scrim" type="button" aria-label="关闭 AI 助手" onClick={closeAiDrawer} />}
     <nav className="mobile-nav" aria-label="移动端主要导航">{navItems.map(({ id, label, icon: Icon }) => <button className={view === id ? "active" : ""} type="button" key={id} onClick={() => setView(id)}><Icon /><span>{label}</span></button>)}</nav>
   </main>;
 }
