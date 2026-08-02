@@ -54,15 +54,18 @@ try {
 } finally {
   await app.close();
   if (createdTaskId) {
-    await connection.client.query("BEGIN");
+    const transactionClient = await connection.client.connect();
     try {
-      await connection.client.query("DELETE FROM reminder_jobs WHERE task_id = $1", [createdTaskId]);
-      await connection.client.query("DELETE FROM task_lifecycle_events WHERE task_id = $1", [createdTaskId]);
-      await connection.client.query("DELETE FROM tasks WHERE id = $1", [createdTaskId]);
-      await connection.client.query("COMMIT");
+      await transactionClient.query("BEGIN");
+      await transactionClient.query("DELETE FROM reminder_jobs WHERE task_id = $1", [createdTaskId]);
+      await transactionClient.query("DELETE FROM task_lifecycle_events WHERE task_id = $1", [createdTaskId]);
+      await transactionClient.query("DELETE FROM tasks WHERE id = $1", [createdTaskId]);
+      await transactionClient.query("COMMIT");
     } catch (error) {
-      await connection.client.query("ROLLBACK");
+      await transactionClient.query("ROLLBACK");
       throw error;
+    } finally {
+      transactionClient.release();
     }
   }
   await connection.client.end();

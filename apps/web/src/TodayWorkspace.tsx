@@ -74,8 +74,9 @@ export function TodayWorkspace({ onFocus, refreshToken=0 }:{ onFocus:(id:string)
   const [actionTaskId,setActionTaskId]=useState<string|null>(null); const [outcomeDraft,setOutcomeDraft]=useState<OutcomeDraft|null>(null);
   const [range,setRange]=useState<RangeState|null>(null);
   const scrollRef=useRef<HTMLDivElement>(null); const dragRef=useRef<DragState|null>(null); const rangeRef=useRef<RangeState|null>(null);
+  const loadRequestRef=useRef(0);
 
-  const load=useCallback(async()=>{ setError(null); const [taskData,inboxData]=await Promise.all([json<{tasks:Task[];blockingConflicts:Pair[];historicalOverlaps:Pair[]}>(`/api/v1/tasks?date=${date}`),json<InboxEntry[]>("/api/v1/inbox-entries")]); setTasks(taskData.tasks); setPairs(taskData.blockingConflicts); setHistory(taskData.historicalOverlaps); setInbox(inboxData); },[date]);
+  const load=useCallback(async()=>{ const requestId=++loadRequestRef.current;setError(null);try{const [taskData,inboxData]=await Promise.all([json<{tasks:Task[];blockingConflicts:Pair[];historicalOverlaps:Pair[]}>(`/api/v1/tasks?date=${date}`),json<InboxEntry[]>("/api/v1/inbox-entries")]);if(requestId!==loadRequestRef.current)return;setTasks(taskData.tasks);setPairs(taskData.blockingConflicts);setHistory(taskData.historicalOverlaps);setInbox(inboxData);}catch(error){if(requestId!==loadRequestRef.current)return;throw error;}},[date]);
   useEffect(()=>{ void load().catch(()=>setError("无法读取安排，请确认 API 正在运行。")); },[load,refreshToken]);
   useEffect(()=>{ const exact=tasks.filter(t=>t.scheduleKind==="exact"&&t.startAt).sort((a,b)=>minuteOf(a.startAt)-minuteOf(b.startAt)); const target=date===today()?minuteOf(new Date().toISOString()):exact.length?minuteOf(exact[0]!.startAt):480; requestAnimationFrame(()=>scrollRef.current?.scrollTo({top:Math.max(0,target/60*HOUR_PX-160)})); },[date,tasks.length]);
 
