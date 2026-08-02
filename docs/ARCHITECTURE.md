@@ -13,6 +13,12 @@ application state and the future job queue.
 - `apps/web` owns presentation and local interaction only.
 - `apps/api` owns use cases, authorization boundary, API contracts, and
   provider orchestration.
+
+The standalone Windows bundle includes the API/Worker runtime and only a
+secret-free `.env.example`. On first launch Tauri creates the user-owned
+`%APPDATA%\\com.personalai.assistant\\.env`; database credentials and provider
+keys are entered there and are never copied into the installer or committed to
+the repository.
 - `packages/domain` owns explicit state values and input schemas.
 - `packages/db` owns PostgreSQL schema, migrations, and migration safety guard.
 - External model, search, weather, Feishu, and calendar clients implement

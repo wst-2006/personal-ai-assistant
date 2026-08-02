@@ -14,11 +14,11 @@ import { fileURLToPath } from "node:url";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const runtimeRoot = join(repositoryRoot, "apps", "desktop", "src-tauri", "runtime");
-const envSource = join(repositoryRoot, ".env");
+const envTemplateSource = join(repositoryRoot, ".env.example");
 const stagingRoot = join(tmpdir(), `personal-ai-assistant-runtime-${process.pid}`);
 
-if (!existsSync(envSource)) {
-  throw new Error("桌面独立发行版需要仓库根目录的 .env；未找到该文件，已停止打包。");
+if (!existsSync(envTemplateSource)) {
+  throw new Error("桌面独立发行版需要仓库根目录的 .env.example；未找到该文件，已停止打包。");
 }
 
 rmSync(runtimeRoot, { recursive: true, force: true });
@@ -122,8 +122,10 @@ rmSync(stagingRoot, { recursive: true, force: true });
 
 // The runtime is intentionally copied from the machine used to build this private
 // single-user release, so the installed app does not depend on a system Node install.
+// Never copy the builder's .env: installers must not contain database passwords or
+// API keys. The app creates a user-owned config file from this template on first run.
 copyFileSync(process.execPath, join(runtimeRoot, "node.exe"));
-copyFileSync(envSource, join(runtimeRoot, ".env"));
+copyFileSync(envTemplateSource, join(runtimeRoot, ".env.example"));
 
 console.log("Prepared standalone desktop runtime:");
 console.log(`  ${runtimeRoot}`);

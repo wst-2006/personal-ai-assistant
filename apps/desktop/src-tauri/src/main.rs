@@ -21,9 +21,13 @@ impl LocalRuntime {
         let node = runtime.join("node.exe");
         let api = runtime.join("api").join("dist").join("server.js");
         let worker = runtime.join("worker").join("dist").join("worker.js");
-        let bundled_env = runtime.join(".env");
+        let bundled_env_template = runtime.join(".env.example");
 
-        if !node.is_file() || !api.is_file() || !worker.is_file() || !bundled_env.is_file() {
+        if !node.is_file()
+            || !api.is_file()
+            || !worker.is_file()
+            || !bundled_env_template.is_file()
+        {
             return Err(format!(
                 "standalone runtime is incomplete under {}",
                 runtime.display()
@@ -38,9 +42,21 @@ impl LocalRuntime {
             .map_err(|error| format!("failed to create application data directory: {error}"))?;
         let user_env = app_data_dir.join(".env");
         if !user_env.is_file() {
-            fs::copy(&bundled_env, &user_env).map_err(|error| {
+            fs::copy(&bundled_env_template, &user_env).map_err(|error| {
                 format!("failed to initialize application configuration: {error}")
             })?;
+            return Err(format!(
+                "application configuration was created at {}; fill in the local database settings and restart",
+                user_env.display()
+            ));
+        }
+        let configuration = fs::read_to_string(&user_env)
+            .map_err(|error| format!("failed to read application configuration: {error}"))?;
+        if configuration.contains("replace-with-url-encoded-password") {
+            return Err(format!(
+                "application configuration at {} still contains placeholders; fill in the local database settings and restart",
+                user_env.display()
+            ));
         }
 
         self.spawn_node(&runtime, &node, &api, &user_env, &app_data_dir, "api")?;

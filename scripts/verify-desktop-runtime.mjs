@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const runtimeRoot = join(repositoryRoot, "apps", "desktop", "src-tauri", "runtime");
+const envFile = join(repositoryRoot, ".env");
 const node = join(runtimeRoot, "node.exe");
 const api = join(runtimeRoot, "api", "dist", "server.js");
 const worker = join(runtimeRoot, "worker", "dist", "worker.js");
@@ -13,6 +14,9 @@ const port = "39091";
 
 if (!existsSync(node) || !existsSync(api) || !existsSync(worker)) {
   throw new Error("standalone runtime is missing; run pnpm prepare:desktop-runtime first");
+}
+if (!existsSync(envFile)) {
+  throw new Error("local verification requires the ignored repository .env file");
 }
 
 const child = spawn(node, [api], {
@@ -22,7 +26,7 @@ const child = spawn(node, [api], {
     ...process.env,
     API_HOST: "127.0.0.1",
     API_PORT: port,
-    PERSONAL_AI_ENV_FILE: join(runtimeRoot, ".env")
+    PERSONAL_AI_ENV_FILE: envFile
   }
 });
 const workerChild = spawn(node, [worker], {
@@ -30,7 +34,7 @@ const workerChild = spawn(node, [worker], {
   stdio: ["ignore", "ignore", "pipe"],
   env: {
     ...process.env,
-    PERSONAL_AI_ENV_FILE: join(runtimeRoot, ".env")
+    PERSONAL_AI_ENV_FILE: envFile
   }
 });
 
