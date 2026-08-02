@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, RotateCcw, Save, Trash2 } from "lucide-react";
 import {
   allocateContinuousFocusStructure,
   allocateTemplateFocusStructure,
+  adjustAdjacentFocusSegments,
   type FocusDistribution,
   type FocusSegment
 } from "@personal-ai/domain/focus";
@@ -50,6 +51,7 @@ export function FocusStructureEditor({ task, active, candidate, busy, onSave, on
   const [segments, setSegments] = useState<FocusSegment[]>([]);
   const [expanded, setExpanded] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  const dragRef = useRef<null | { boundaryIndex: number; startX: number; width: number; initial: FocusSegment[] }>(null);
   const maxCount = totalMinutes === 30 ? 1 : Math.max(1, Math.floor(totalMinutes / (30 + Math.max(5, breakMinutes))));
 
   useEffect(() => {
@@ -124,6 +126,26 @@ export function FocusStructureEditor({ task, active, candidate, busy, onSave, on
   function updateSegment(index: number, durationMinutes: number) {
     setDistribution("custom");
     setSegments((current) => current.map((segment, position) => position === index ? { ...segment, durationMinutes } : segment));
+  }
+
+  function beginBoundaryDrag(event: React.PointerEvent<HTMLButtonElement>, boundaryIndex: number) {
+    if (busy) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const width = event.currentTarget.closest(".structure-timeline")?.getBoundingClientRect().width ?? 1;
+    dragRef.current = { boundaryIndex, startX: event.clientX, width, initial: segments };
+    setDistribution("custom");
+  }
+
+  function moveBoundary(event: React.PointerEvent<HTMLButtonElement>) {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const delta = Math.round(((event.clientX - drag.startX) / drag.width) * totalMinutes);
+    setSegments(adjustAdjacentFocusSegments(drag.initial, drag.boundaryIndex, delta));
+  }
+
+  function endBoundaryDrag() {
+    dragRef.current = null;
   }
 
   function restoreActive() {
@@ -228,6 +250,18 @@ export function FocusStructureEditor({ task, active, candidate, busy, onSave, on
             <strong>{segment.segmentType === "focus" ? "专注" : "休息"}</strong>
             <span>{segment.durationMinutes}m</span>
             <small>{segment.start}–{segment.end}</small>
+            {index < timeline.length - 1 && (
+              <button
+                className="structure-boundary"
+                type="button"
+                aria-label={`调整第 ${index + 1} 与第 ${index + 2} 段边界`}
+                disabled={busy}
+                onPointerDown={(event) => beginBoundaryDrag(event, index)}
+                onPointerMove={moveBoundary}
+                onPointerUp={endBoundaryDrag}
+                onPointerCancel={endBoundaryDrag}
+              ><span /></button>
+            )}
           </div>
         ))}
       </div>

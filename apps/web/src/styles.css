@@ -201,12 +201,15 @@ textarea, input, select { width: 100%; min-width: 0; border: 1px solid #ccd8d0; 
 .structure-rest-control > span { margin-right: 3px; color: #8fa99f; font-size: 11px; }
 .structure-rest-control em { color: #8fa99f; font-size: 10px; font-style: normal; }
 .structure-timeline { display: flex; width: 100%; min-height: 74px; gap: 3px; overflow-x: auto; padding-bottom: 3px; scrollbar-color: rgba(119,174,153,.35) transparent; }
-.structure-timeline > div { display: grid; min-width: 66px; align-content: center; gap: 2px; padding: 8px; border-radius: 5px; }
+.structure-timeline > div { position: relative; display: grid; min-width: 66px; align-content: center; gap: 2px; padding: 8px; border-radius: 5px; }
 .structure-timeline .focus { color: #e6f5ed; background: #2f8068; }
 .structure-timeline .break { color: #ffe9d9; background: #a8644e; }
 .structure-timeline strong { font-size: 11px; }
 .structure-timeline span { font-size: 15px; font-weight: 700; }
 .structure-timeline small { font-size: 9px; white-space: nowrap; opacity: .76; }
+.structure-boundary { position: absolute; z-index: 3; top: 0; right: -7px; bottom: 0; width: 12px; padding: 0; border: 0; background: transparent; cursor: ew-resize; touch-action: none; }
+.structure-boundary span { display: block; width: 3px; height: 28px; margin: auto; border-radius: 3px; background: rgba(242,248,244,.72); box-shadow: 0 0 0 2px rgba(8,31,28,.4); transition: transform .15s ease,background .15s ease; }
+.structure-boundary:hover span, .structure-boundary:focus-visible span { transform: scaleY(1.25); background: #fff; }
 .structure-expand { display: inline-flex; width: max-content; min-height: 30px; align-items: center; gap: 5px; padding: 0; border: 0; color: #a9c1b7; background: transparent; font-size: 12px; }
 .structure-expand svg { width: 15px; transition: transform .18s ease; }
 .structure-expand[aria-expanded="true"] svg { transform: rotate(180deg); }
@@ -228,5 +231,5 @@ textarea, input, select { width: 100%; min-width: 0; border: 1px solid #ccd8d0; 
 .structure-note { margin: -4px 0 0; color: #789288; font-size: 10px; line-height: 1.45; }
 
 @media (max-width: 1050px) { .focus-workspace { grid-template-columns: minmax(0,1fr); }.focus-workspace .focus-picker { display: none; } }
-@media (max-width: 760px) { .focus-structure-editor { padding: 14px; }.structure-heading { align-items: flex-start; flex-direction: column; gap: 5px; }.structure-template-row { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); }.structure-template-row button, .structure-template-row label { width: 100%; justify-content: center; }.structure-modes { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); }.structure-modes button { width: 100%; }.structure-stage-row { grid-template-columns: 44px minmax(0,1fr); }.structure-stage-row label { grid-column: 2; }.structure-actions { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); }.structure-actions button { width: 100%; min-width: 0; }.focus-stage { min-height: 760px; }.focus-center { padding-right: 14px; padding-left: 14px; } }
+@media (max-width: 760px) { .focus-structure-editor { padding: 14px; }.structure-heading { align-items: flex-start; flex-direction: column; gap: 5px; }.structure-template-row { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); }.structure-template-row button, .structure-template-row label { width: 100%; justify-content: center; }.structure-modes { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); }.structure-modes button { width: 100%; }.structure-boundary { display: none; }.structure-stage-row { grid-template-columns: 44px minmax(0,1fr); }.structure-stage-row label { grid-column: 2; }.structure-actions { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); }.structure-actions button { width: 100%; min-width: 0; }.focus-stage { min-height: 760px; }.focus-center { padding-right: 14px; padding-left: 14px; } }
 @media (max-width: 390px) { .structure-rest-control { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); }.structure-rest-control > span { grid-column: 1/-1; }.structure-rest-control button, .structure-rest-control label { width: 100%; justify-content: center; }.structure-stage-row { grid-template-columns: 1fr; }.structure-stage-row > strong, .structure-stage-row label { grid-column: 1; }.structure-actions { grid-template-columns: 1fr; } }

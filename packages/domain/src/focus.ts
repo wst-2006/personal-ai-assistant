@@ -220,6 +220,29 @@ export function allocateTemplateFocusStructure(input: {
   return validateSegmentedFocusStructure({ totalStartAt: start, totalEndAt: end, segments });
 }
 
+export function adjustAdjacentFocusSegments(
+  segments: FocusSegment[],
+  boundaryIndex: number,
+  requestedDeltaMinutes: number
+): FocusSegment[] {
+  if (!Number.isInteger(boundaryIndex) || boundaryIndex < 0 || boundaryIndex >= segments.length - 1) {
+    throw new Error("Focus segment boundary is out of range");
+  }
+  if (!Number.isInteger(requestedDeltaMinutes)) throw new Error("Focus segment adjustment must use whole minutes");
+  const left = segments[boundaryIndex]!;
+  const right = segments[boundaryIndex + 1]!;
+  const leftRange = segmentDurationRange(left.segmentType);
+  const rightRange = segmentDurationRange(right.segmentType);
+  const minimumDelta = Math.max(leftRange.minimum - left.durationMinutes, right.durationMinutes - rightRange.maximum);
+  const maximumDelta = Math.min(leftRange.maximum - left.durationMinutes, right.durationMinutes - rightRange.minimum);
+  const delta = Math.max(minimumDelta, Math.min(maximumDelta, requestedDeltaMinutes));
+  return segments.map((segment, index) => index === boundaryIndex
+    ? { ...segment, durationMinutes: segment.durationMinutes + delta }
+    : index === boundaryIndex + 1
+      ? { ...segment, durationMinutes: segment.durationMinutes - delta }
+      : { ...segment });
+}
+
 /**
  * Validates a user-provided segmented plan. Every focus segment has a matching
  * break, including the final focus segment. No operation is allowed to extend
@@ -314,4 +337,10 @@ function distributeStepped(total: number, count: number, direction: "increasing"
   const remainder = (total - staircase) % count;
   const increasing = Array.from({ length: count }, (_, index) => shared + index + (index >= count - remainder ? 1 : 0));
   return direction === "increasing" ? increasing : increasing.reverse();
+}
+
+function segmentDurationRange(segmentType: "focus" | "break") {
+  return segmentType === "focus"
+    ? { minimum: 30, maximum: Number.POSITIVE_INFINITY }
+    : { minimum: 5, maximum: 15 };
 }

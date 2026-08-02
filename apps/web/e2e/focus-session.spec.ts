@@ -287,6 +287,22 @@ test("手动专注结构可保存候选、刷新恢复、确认并在移动端�
     await expect(page.locator(".structure-timeline > div")).toHaveCount(8);
     await expect(page.getByText("刚好填满任务时间", { exact: true })).toBeVisible();
 
+    await page.getByRole("button", { name: "精确编辑", exact: true }).click();
+    const firstFocus = page.getByLabel("第 1 段专注分钟");
+    const firstBreak = page.getByLabel("第 1 段休息分钟");
+    const focusBeforeDrag = Number(await firstFocus.inputValue());
+    const breakBeforeDrag = Number(await firstBreak.inputValue());
+    const firstBoundary = page.getByRole("button", { name: "调整第 1 与第 2 段边界", exact: true });
+    const boundaryBox = await firstBoundary.boundingBox();
+    expect(boundaryBox).not.toBeNull();
+    await page.mouse.move(boundaryBox!.x + boundaryBox!.width / 2, boundaryBox!.y + boundaryBox!.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(boundaryBox!.x - 20, boundaryBox!.y + boundaryBox!.height / 2, { steps: 4 });
+    await page.mouse.up();
+    expect(Number(await firstFocus.inputValue())).toBeLessThan(focusBeforeDrag);
+    expect(Number(await firstBreak.inputValue())).toBeGreaterThan(breakBeforeDrag);
+    await expect(page.getByText("刚好填满任务时间", { exact: true })).toBeVisible();
+
     const saved = page.waitForResponse((response) => response.url().endsWith("/api/v1/focus-structures/candidates") && response.request().method() === "POST" && response.status() === 201);
     await page.getByRole("button", { name: "保存为候选", exact: true }).click();
     await saved;

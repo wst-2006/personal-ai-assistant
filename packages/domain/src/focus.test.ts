@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   allocateContinuousFocusStructure,
   allocateTemplateFocusStructure,
+  adjustAdjacentFocusSegments,
   calculateEffectiveFocusSeconds,
   createFocusSessionSchema,
   evaluateFocusSessionSchema,
@@ -182,5 +183,30 @@ describe("focus structure allocation", () => {
         { segmentType: "focus", durationMinutes: 85 }
       ]
     })).toThrow("followed by a break");
+  });
+
+  it("moves an adjacent boundary without changing total duration", () => {
+    const result = adjustAdjacentFocusSegments([
+      { segmentType: "focus", durationMinutes: 40 },
+      { segmentType: "break", durationMinutes: 5 },
+      { segmentType: "focus", durationMinutes: 40 },
+      { segmentType: "break", durationMinutes: 5 }
+    ], 0, -8);
+    expect(result.slice(0, 2)).toEqual([
+      { segmentType: "focus", durationMinutes: 32 },
+      { segmentType: "break", durationMinutes: 13 }
+    ]);
+    expect(result.reduce((sum, segment) => sum + segment.durationMinutes, 0)).toBe(90);
+  });
+
+  it("clamps a dragged boundary at both segment constraints", () => {
+    const result = adjustAdjacentFocusSegments([
+      { segmentType: "focus", durationMinutes: 40 },
+      { segmentType: "break", durationMinutes: 5 }
+    ], 0, -30);
+    expect(result).toEqual([
+      { segmentType: "focus", durationMinutes: 30 },
+      { segmentType: "break", durationMinutes: 15 }
+    ]);
   });
 });
