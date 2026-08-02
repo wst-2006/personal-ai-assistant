@@ -107,19 +107,27 @@ export function FocusWorkspace({
   const [satisfaction, setSatisfaction] = useState<Satisfaction>("satisfied");
   const [note, setNote] = useState("");
   const load = useCallback(async () => {
-    const [list, current, preferred] = await Promise.all([
+    const [list, current] = await Promise.all([
       request<{ tasks: Task[] }>(`/api/v1/tasks?date=${nowDate()}`),
-      request<{ session: Session | null }>("/api/v1/focus-sessions/current"),
-      preferredTaskId
-        ? request<{ task: Task }>(`/api/v1/tasks/${preferredTaskId}`).catch(() => ({ task: null as Task | null }))
-        : Promise.resolve({ task: null as Task | null })
+      request<{ session: Session | null }>("/api/v1/focus-sessions/current")
     ]);
+    const additionalTaskIds = [...new Set([
+      current.session?.taskId,
+      preferredTaskId
+    ].filter((id): id is string => Boolean(id)))];
+    const additionalTasks = await Promise.all(additionalTaskIds.map((id) =>
+      request<{ task: Task }>(`/api/v1/tasks/${id}`)
+        .then((result) => result.task)
+        .catch(() => null)
+    ));
     const visible = list.tasks.filter(
         (task) =>
           task.lifecycleStatus !== "closed" &&
           task.lifecycleStatus !== "cancelled",
       );
-    if (preferred.task && !visible.some((task) => task.id === preferred.task?.id)) visible.push(preferred.task);
+    for (const task of additionalTasks) {
+      if (task && !visible.some((visibleTask) => visibleTask.id === task.id)) visible.push(task);
+    }
     setTasks(visible);
     setSession(current.session);
     if (current.session) setSelectedId(current.session.taskId);

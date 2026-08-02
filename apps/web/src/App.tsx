@@ -1,15 +1,16 @@
 import { useMemo, useState, type FormEvent } from "react";
-import { BarChart3, Bot, BrainCircuit, CalendarDays, Check, CircleHelp, Download, HardDriveDownload, LoaderCircle, NotebookPen, Sparkles, Target, X } from "lucide-react";
+import { BarChart3, Bot, BrainCircuit, CalendarDays, Check, CircleHelp, Download, HardDriveDownload, HeartPulse, LoaderCircle, NotebookPen, Sparkles, Target, X } from "lucide-react";
 import { DiaryWorkspace } from "./DiaryWorkspace";
 import { FocusWorkspace } from "./FocusWorkspace";
 import { GrowthWorkspace } from "./GrowthWorkspace";
+import { HealthWorkspace } from "./HealthWorkspace";
 import { ReviewWorkspace } from "./ReviewWorkspace";
 import { TodayWorkspace } from "./TodayWorkspace";
 
 type EntryType = "task" | "idea" | "question";
 type ScheduleKind = "none" | "daypart" | "exact";
 type Daypart = "morning" | "afternoon" | "evening";
-type View = "today" | "focus" | "review" | "diary" | "growth";
+type View = "today" | "focus" | "review" | "diary" | "growth" | "health";
 type NaturalLanguageTaskCandidate = {
   title: string;
   entryType: EntryType;
@@ -55,6 +56,7 @@ const navItems: Array<{ id: View; label: string; icon: typeof CalendarDays }> = 
   { id: "review", label: "复盘", icon: Sparkles },
   { id: "diary", label: "日记", icon: NotebookPen },
   { id: "growth", label: "成长", icon: BarChart3 },
+  { id: "health", label: "健康", icon: HeartPulse },
 ];
 
 function shanghaiDate() {
@@ -353,6 +355,7 @@ export function App() {
       {view === "review" && <ReviewWorkspace />}
       {view === "diary" && <DiaryWorkspace onOpenReview={() => setView("review")} />}
       {view === "growth" && <GrowthWorkspace />}
+      {view === "health" && <HealthWorkspace />}
     </section>
     <aside className={`ai-drawer ${aiOpen ? "open" : ""}`} aria-label="AI 助手" aria-hidden={!aiOpen}>
       <div className="drawer-header"><div><span className="bot-orb"><Bot /></span><div><p>AI 整理助手</p><strong>把一句话变得清楚</strong></div></div><button className="quiet-icon" type="button" aria-label="关闭 AI 助手" onClick={() => setAiOpen(false)}><X /></button></div>

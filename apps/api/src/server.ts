@@ -15,6 +15,8 @@ import { DiaryService } from "./diary-service.js";
 import { GrowthService } from "./growth-service.js";
 import { FeishuWebhookService, loadFeishuWebhookConfig } from "./feishu-webhook.js";
 import { BackupService } from "./backup-service.js";
+import { HealthService } from "./health-service.js";
+import { DeepSeekHealthPlanner } from "./ai/health-planner.js";
 
 const config = loadServerConfig();
 const database = await connectVerifiedDatabase(loadDatabaseConfig());
@@ -34,6 +36,8 @@ const app = buildApp({
   diaryService: new DiaryService(database.db),
   growthService: new GrowthService(database.db),
   backupService: new BackupService(database.db),
+  healthService: new HealthService(database.db),
+  healthPlanner: new DeepSeekHealthPlanner(deepSeekConfig),
   feishuWebhookService: feishuConfig ? new FeishuWebhookService(feishuConfig, taskService, focusService) : undefined,
   taskParser: new DeepSeekTaskParser(deepSeekConfig)
 });

@@ -4,6 +4,9 @@ import {
   focusStructureSegments,
   focusStructures,
   focusTimerJobs,
+  healthDailyReferences,
+  healthProfiles,
+  healthWeekPlans,
   inboxEntries,
   reminderJobs,
   taskLegacyMetadata,
@@ -48,5 +51,14 @@ describe("formal task and inbox schema contract", () => {
     expect(focusSessionSegmentRuns.plannedDurationSeconds.name).toBe("planned_duration_seconds");
     expect(focusTimerJobs.expectedSessionVersion.name).toBe("expected_session_version");
     expect(focusTimerJobs.dueAt.name).toBe("due_at");
+  });
+
+  it("keeps health profiles and weekly references outside task and growth records", () => {
+    expect(healthProfiles.profile.name).toBe("profile");
+    expect(healthProfiles.version.name).toBe("version");
+    expect(healthWeekPlans.weekStart.name).toBe("week_start");
+    expect(healthWeekPlans.profileVersion.name).toBe("profile_version");
+    expect(healthDailyReferences.healthWeekPlanId.name).toBe("health_week_plan_id");
+    expect(healthDailyReferences.content.name).toBe("content");
   });
 });

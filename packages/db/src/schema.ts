@@ -417,3 +417,58 @@ export const reminderJobs = pgTable("reminder_jobs", {
   check("reminder_jobs_attempts_check", sql`${table.attempts} >= 0`),
   check("reminder_jobs_schedule_revision_check", sql`${table.scheduleRevision} > 0`)
 ]);
+
+export const healthProfiles = pgTable("health_profiles", {
+  id: uuid("id").primaryKey(),
+  profile: jsonb("profile").notNull(),
+  version: integer("version").notNull().default(1),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+}, (table) => [check("health_profiles_version_check", sql`${table.version} > 0`)]);
+
+export const healthWeekPlans = pgTable(
+  "health_week_plans",
+  {
+    id: uuid("id").primaryKey(),
+    weekStart: date("week_start", { mode: "string" }).notNull(),
+    state: varchar("state", { length: 16 }).notNull().default("candidate"),
+    source: varchar("source", { length: 16 }).notNull(),
+    profileVersion: integer("profile_version").notNull(),
+    city: varchar("city", { length: 120 }),
+    solarTerm: varchar("solar_term", { length: 32 }).notNull(),
+    specialContext: text("special_context"),
+    overview: text("overview").notNull(),
+    supplements: jsonb("supplements").notNull(),
+    version: integer("version").notNull().default(1),
+    confirmedAt: timestamp("confirmed_at", { withTimezone: true }),
+    supersededAt: timestamp("superseded_at", { withTimezone: true }),
+    cancelledAt: timestamp("cancelled_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    index("health_week_plans_week_idx").on(table.weekStart, table.createdAt),
+    uniqueIndex("health_week_plans_active_week_unique").on(table.weekStart).where(sql`${table.state} = 'active'`),
+    check("health_week_plans_state_check", sql`${table.state} in ('candidate', 'active', 'superseded', 'cancelled')`),
+    check("health_week_plans_source_check", sql`${table.source} in ('template', 'ai', 'manual')`),
+    check("health_week_plans_profile_version_check", sql`${table.profileVersion} > 0`),
+    check("health_week_plans_version_check", sql`${table.version} > 0`)
+  ]
+);
+
+export const healthDailyReferences = pgTable(
+  "health_daily_references",
+  {
+    id: uuid("id").primaryKey(),
+    healthWeekPlanId: uuid("health_week_plan_id").notNull().references(() => healthWeekPlans.id),
+    localDate: date("local_date", { mode: "string" }).notNull(),
+    dayIndex: integer("day_index").notNull(),
+    content: jsonb("content").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    uniqueIndex("health_daily_references_plan_day_unique").on(table.healthWeekPlanId, table.dayIndex),
+    index("health_daily_references_date_idx").on(table.localDate),
+    check("health_daily_references_day_index_check", sql`${table.dayIndex} between 0 and 6`)
+  ]
+);

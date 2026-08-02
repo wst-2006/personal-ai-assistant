@@ -23,6 +23,10 @@
     "./diary": {
       "types": "./dist/diary.d.ts",
       "default": "./dist/diary.js"
+    },
+    "./health": {
+      "types": "./dist/health.d.ts",
+      "default": "./dist/health.js"
     }
   },
   "scripts": {

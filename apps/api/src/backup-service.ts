@@ -8,6 +8,9 @@ import {
   focusStructureSegments,
   focusStructures,
   focusTimerJobs,
+  healthDailyReferences,
+  healthProfiles,
+  healthWeekPlans,
   inboxEntries,
   reminderJobs,
   reviewMessages,
@@ -29,6 +32,9 @@ export type LogicalBackup = {
   exportedAt: string;
   data: {
     inboxEntries: Array<typeof inboxEntries.$inferSelect>;
+    healthProfiles: Array<typeof healthProfiles.$inferSelect>;
+    healthWeekPlans: Array<typeof healthWeekPlans.$inferSelect>;
+    healthDailyReferences: Array<typeof healthDailyReferences.$inferSelect>;
     tasks: Array<typeof tasks.$inferSelect>;
     taskLegacyMetadata: Array<typeof taskLegacyMetadata.$inferSelect>;
     taskOutcomes: Array<typeof taskOutcomes.$inferSelect>;
@@ -65,6 +71,9 @@ export class BackupService implements BackupExporter {
 
       // A transaction uses one PostgreSQL connection, so its snapshot reads must stay sequential.
       const inboxEntryRows = await transaction.select().from(inboxEntries).orderBy(asc(inboxEntries.createdAt), asc(inboxEntries.id));
+      const healthProfileRows = await transaction.select().from(healthProfiles).orderBy(asc(healthProfiles.createdAt), asc(healthProfiles.id));
+      const healthWeekPlanRows = await transaction.select().from(healthWeekPlans).orderBy(asc(healthWeekPlans.weekStart), asc(healthWeekPlans.createdAt), asc(healthWeekPlans.id));
+      const healthDailyReferenceRows = await transaction.select().from(healthDailyReferences).orderBy(asc(healthDailyReferences.localDate), asc(healthDailyReferences.dayIndex), asc(healthDailyReferences.id));
       const taskRows = await transaction.select().from(tasks).orderBy(asc(tasks.createdAt), asc(tasks.id));
       const legacyMetadataRows = await transaction.select().from(taskLegacyMetadata).orderBy(asc(taskLegacyMetadata.archivedAt), asc(taskLegacyMetadata.id));
       const outcomeRows = await transaction.select().from(taskOutcomes).orderBy(asc(taskOutcomes.recordedAt), asc(taskOutcomes.id));
@@ -88,6 +97,9 @@ export class BackupService implements BackupExporter {
         exportedAt,
         data: {
           inboxEntries: inboxEntryRows,
+          healthProfiles: healthProfileRows,
+          healthWeekPlans: healthWeekPlanRows,
+          healthDailyReferences: healthDailyReferenceRows,
           tasks: taskRows,
           taskLegacyMetadata: legacyMetadataRows,
           taskOutcomes: outcomeRows,

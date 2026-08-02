@@ -80,6 +80,15 @@ try {
         OR (table_name = 'focus_timer_jobs' AND column_name IN ('expected_session_version', 'due_at', 'status')))
     ORDER BY table_name, column_name
   `);
+  const healthColumnsResult = await client.query<{ table_name: string; column_name: string }>(`
+    SELECT table_name, column_name
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND ((table_name = 'health_profiles' AND column_name IN ('profile', 'version'))
+        OR (table_name = 'health_week_plans' AND column_name IN ('week_start', 'state', 'source', 'profile_version', 'city', 'solar_term', 'version'))
+        OR (table_name = 'health_daily_references' AND column_name IN ('health_week_plan_id', 'local_date', 'day_index', 'content')))
+    ORDER BY table_name, column_name
+  `);
   const tableNames = tablesResult.rows.map((row) => row.table_name);
   const taskColumns = taskColumnsResult.rows.map((row) => row.column_name);
   const taskConstraints = taskConstraintsResult.rows.map((row) => row.conname);
@@ -87,7 +96,8 @@ try {
   const reminderContract = reminderContractResult.rows.map((row) => row.name);
   const focusTables = focusTablesResult.rows.map((row) => row.table_name);
   const focusColumns = focusColumnsResult.rows.map((row) => `${row.table_name}.${row.column_name}`);
-  const expectedTables = ["inbox_entries", "tasks"];
+  const healthColumns = healthColumnsResult.rows.map((row) => `${row.table_name}.${row.column_name}`);
+  const expectedTables = ["health_daily_references", "health_profiles", "health_week_plans", "inbox_entries", "tasks"];
   const expectedColumns = ["source_inbox_entry_id"];
   const retiredTaskColumns = ["planned_effort_minutes", "difficulty", "task_type", "requires_continuous_focus"];
   const expectedConstraints = [
@@ -113,6 +123,21 @@ try {
     "focus_timer_jobs.due_at",
     "focus_timer_jobs.status"
   ];
+  const expectedHealthColumns = [
+    "health_profiles.profile",
+    "health_profiles.version",
+    "health_week_plans.week_start",
+    "health_week_plans.state",
+    "health_week_plans.source",
+    "health_week_plans.profile_version",
+    "health_week_plans.city",
+    "health_week_plans.solar_term",
+    "health_week_plans.version",
+    "health_daily_references.health_week_plan_id",
+    "health_daily_references.local_date",
+    "health_daily_references.day_index",
+    "health_daily_references.content"
+  ];
 
   if (expectedTables.some((name) => !tableNames.includes(name))
     || expectedColumns.some((name) => !taskColumns.includes(name))
@@ -122,8 +147,9 @@ try {
     || expectedReminderColumns.some((name) => !reminderColumns.includes(name))
     || expectedReminderContract.some((name) => !reminderContract.includes(name))
     || expectedFocusTables.some((name) => !focusTables.includes(name))
-    || expectedFocusColumns.some((name) => !focusColumns.includes(name))) {
-    throw new Error("Database schema does not match the live task, focus structure, inbox, or reminder migration contract.");
+    || expectedFocusColumns.some((name) => !focusColumns.includes(name))
+    || expectedHealthColumns.some((name) => !healthColumns.includes(name))) {
+    throw new Error("Database schema does not match the live task, focus structure, inbox, reminder, or health migration contract.");
   }
 
   console.log(JSON.stringify({
@@ -135,7 +161,8 @@ try {
     reminderColumns,
     reminderContract,
     focusTables,
-    focusColumns
+    focusColumns,
+    healthColumns
   }, null, 2));
 } finally {
   await client.end();

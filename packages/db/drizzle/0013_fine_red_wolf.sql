@@ -1,0 +1,1 @@
+ALTER TABLE "health_week_plans" ALTER COLUMN "city" DROP NOT NULL;

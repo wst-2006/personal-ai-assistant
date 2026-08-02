@@ -9,7 +9,7 @@ const backupService: BackupExporter = {
       formatVersion: logicalBackupFormatVersion,
       exportedAt: "2026-08-02T12:34:56.789Z",
       data: {
-        inboxEntries: [], tasks: [], taskLegacyMetadata: [], taskOutcomes: [], taskFeedback: [], taskLifecycleEvents: [], taskConflictAcceptances: [], reminderJobs: [], focusStructures: [], focusStructureSegments: [], focusSessions: [], focusSessionSegmentRuns: [], focusTimerJobs: [], reviewSessions: [], reviewMessages: [], dailyBriefs: [], cyberDiaries: []
+        inboxEntries: [], healthProfiles: [], healthWeekPlans: [], healthDailyReferences: [], tasks: [], taskLegacyMetadata: [], taskOutcomes: [], taskFeedback: [], taskLifecycleEvents: [], taskConflictAcceptances: [], reminderJobs: [], focusStructures: [], focusStructureSegments: [], focusSessions: [], focusSessionSegmentRuns: [], focusTimerJobs: [], reviewSessions: [], reviewMessages: [], dailyBriefs: [], cyberDiaries: []
       }
     };
   }
