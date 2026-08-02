@@ -14,6 +14,7 @@ import { BriefService } from "./brief-service.js";
 import { DiaryService } from "./diary-service.js";
 import { GrowthService } from "./growth-service.js";
 import { FeishuWebhookService, loadFeishuWebhookConfig } from "./feishu-webhook.js";
+import { BackupService } from "./backup-service.js";
 
 const config = loadServerConfig();
 const database = await connectVerifiedDatabase(loadDatabaseConfig());
@@ -32,6 +33,7 @@ const app = buildApp({
   briefService: new BriefService(database.db),
   diaryService: new DiaryService(database.db),
   growthService: new GrowthService(database.db),
+  backupService: new BackupService(database.db),
   feishuWebhookService: feishuConfig ? new FeishuWebhookService(feishuConfig, taskService, focusService) : undefined,
   taskParser: new DeepSeekTaskParser(deepSeekConfig)
 });

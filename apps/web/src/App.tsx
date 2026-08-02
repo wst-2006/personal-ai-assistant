@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent } from "react";
-import { BarChart3, Bot, BrainCircuit, CalendarDays, Check, CircleHelp, Download, LoaderCircle, NotebookPen, Sparkles, Target, X } from "lucide-react";
+import { BarChart3, Bot, BrainCircuit, CalendarDays, Check, CircleHelp, Download, HardDriveDownload, LoaderCircle, NotebookPen, Sparkles, Target, X } from "lucide-react";
 import { DiaryWorkspace } from "./DiaryWorkspace";
 import { FocusWorkspace } from "./FocusWorkspace";
 import { GrowthWorkspace } from "./GrowthWorkspace";
@@ -346,7 +346,7 @@ export function App() {
       <div className="rail-footer" title="只记录你主动输入的内容"><CircleHelp /></div>
     </aside>
     <section className="app-canvas">
-      <header className="topbar"><div className="context-line"><span className="live-dot" />{displayDate()}<span>/</span>{activeNavLabel}</div><div className="topbar-actions"><button className="ai-trigger" type="button" onClick={openAiDrawer}><Bot /> 与 AI 一起整理</button></div></header>
+      <header className="topbar"><div className="context-line"><span className="live-dot" />{displayDate()}<span>/</span>{activeNavLabel}</div><div className="topbar-actions"><a className="quiet-icon backup-trigger" href={`${apiBaseUrl}/api/v1/backups/export`} download aria-label="备份所有数据" title="备份所有数据"><HardDriveDownload /></a><button className="ai-trigger" type="button" onClick={openAiDrawer}><Bot /> 与 AI 一起整理</button></div></header>
       {error && <div className="error-banner" role="alert"><X />{error}<button type="button" aria-label="关闭错误提示" onClick={() => setError(null)}><X /></button></div>}
       {view === "today" && <TodayWorkspace refreshToken={todayRefreshToken} onFocus={(id) => { setSelectedTaskId(id); setView("focus"); }} />}
       {view === "focus" && <FocusWorkspace preferredTaskId={selectedTaskId} onBack={() => setView("today")} />}
