@@ -1,7 +1,11 @@
 use std::fs::{self, OpenOptions};
+use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
+use std::thread;
+use std::time::Duration;
 
 use tauri::{AppHandle, Manager, RunEvent};
 
@@ -34,12 +38,14 @@ impl LocalRuntime {
             .map_err(|error| format!("failed to create application data directory: {error}"))?;
         let user_env = app_data_dir.join(".env");
         if !user_env.is_file() {
-            fs::copy(&bundled_env, &user_env)
-                .map_err(|error| format!("failed to initialize application configuration: {error}"))?;
+            fs::copy(&bundled_env, &user_env).map_err(|error| {
+                format!("failed to initialize application configuration: {error}")
+            })?;
         }
 
         self.spawn_node(&runtime, &node, &api, &user_env, &app_data_dir, "api")?;
         self.spawn_node(&runtime, &node, &worker, &user_env, &app_data_dir, "worker")?;
+        wait_for_local_api()?;
         Ok(())
     }
 
@@ -86,6 +92,8 @@ impl LocalRuntime {
             .current_dir(runtime)
             .env("NODE_ENV", "production")
             .env("PERSONAL_AI_ENV_FILE", env_file)
+            .env("API_HOST", "127.0.0.1")
+            .env("API_PORT", "3000")
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr));
         configure_command(&mut command);
@@ -109,6 +117,43 @@ impl LocalRuntime {
     }
 }
 
+fn wait_for_local_api() -> Result<(), String> {
+    let address: SocketAddr = "127.0.0.1:3000"
+        .parse()
+        .map_err(|error| format!("invalid bundled API address: {error}"))?;
+    let mut last_error = "API did not accept a connection".to_string();
+
+    for _ in 0..50 {
+        match TcpStream::connect_timeout(&address, Duration::from_millis(250)) {
+            Ok(mut stream) => {
+                let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
+                let _ = stream.set_write_timeout(Some(Duration::from_millis(500)));
+                let request =
+                    b"GET /health HTTP/1.1\r\nHost: 127.0.0.1:3000\r\nConnection: close\r\n\r\n";
+                if let Err(error) = stream.write_all(request) {
+                    last_error = format!("failed to query bundled API health: {error}");
+                } else {
+                    let mut response = String::new();
+                    match stream.read_to_string(&mut response) {
+                        Ok(_) if response.contains("\"status\":\"ok\"") => return Ok(()),
+                        Ok(_) => {
+                            last_error =
+                                "bundled API returned an unexpected health response".to_string()
+                        }
+                        Err(error) => {
+                            last_error = format!("failed to read bundled API health: {error}")
+                        }
+                    }
+                }
+            }
+            Err(error) => last_error = format!("bundled API is not ready: {error}"),
+        }
+        thread::sleep(Duration::from_millis(200));
+    }
+
+    Err(format!("bundled API did not become healthy: {last_error}"))
+}
+
 fn workspace_root() -> Option<PathBuf> {
     let executable = std::env::current_exe().ok()?;
     executable
@@ -122,7 +167,10 @@ fn bundled_runtime_dir(app: &AppHandle) -> Result<Option<PathBuf>, String> {
         .path()
         .resource_dir()
         .map_err(|error| format!("failed to resolve application resources: {error}"))?;
-    let mut candidates = vec![resource_dir.join("runtime"), resource_dir.join("resources").join("runtime")];
+    let mut candidates = vec![
+        resource_dir.join("runtime"),
+        resource_dir.join("resources").join("runtime"),
+    ];
     if let Ok(executable) = std::env::current_exe() {
         if let Some(parent) = executable.parent() {
             candidates.push(parent.join("runtime"));
@@ -132,7 +180,11 @@ fn bundled_runtime_dir(app: &AppHandle) -> Result<Option<PathBuf>, String> {
     Ok(candidates.into_iter().find(|runtime| {
         runtime.join("node.exe").is_file()
             && runtime.join("api").join("dist").join("server.js").is_file()
-            && runtime.join("worker").join("dist").join("worker.js").is_file()
+            && runtime
+                .join("worker")
+                .join("dist")
+                .join("worker.js")
+                .is_file()
     }))
 }
 
