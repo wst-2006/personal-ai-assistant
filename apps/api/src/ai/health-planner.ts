@@ -1,4 +1,4 @@
-import { healthPlanContentSchema, type HealthPlanContent, type HealthProfile } from "@personal-ai/domain/health";
+import { healthPlanContentSchema, type HealthPlanContent } from "@personal-ai/domain/health";
 import type { HealthPlanner } from "../health-service.js";
 import type { DeepSeekConfig } from "./config.js";
 
@@ -7,13 +7,7 @@ type ChatCompletionResponse = { choices?: Array<{ message?: { content?: string }
 export class DeepSeekHealthPlanner implements HealthPlanner {
   constructor(private readonly config: DeepSeekConfig) {}
 
-  async plan(input: {
-    profile: HealthProfile;
-    weekStart: string;
-    solarTerm: string;
-    scheduledActivities: Array<{ localDate: string; title: string }>;
-    specialContext: string | null;
-  }): Promise<HealthPlanContent> {
+  async plan(input: Parameters<HealthPlanner["plan"]>[0]): Promise<HealthPlanContent> {
     let lastError: unknown;
     for (let attempt = 0; attempt <= this.config.DEEPSEEK_MAX_RETRIES; attempt += 1) {
       try {
@@ -47,6 +41,7 @@ export class DeepSeekHealthPlanner implements HealthPlanner {
               "饮食只能给范围、餐盘结构、时令蔬菜和高强度日方向，不给克数菜谱、每日打卡或必须吃的食物。",
               "运动只能给类别、时长范围、强度和一句安全提醒，不给动作、组数、重量、配速或康复治疗建议。",
               "不把建议写成任务，不要求反馈，不自动改变用户资料。必须避免相邻高冲击高强度日。",
+              "当输入包含 sleepAnalysis 时，它是用户主动要求的单次修订依据：只使用其中非空、可见的指标生成候选，不诊断睡眠问题，不将一次记录写成长期结论，也不自动改变任何现有周计划。",
               "节气内容只作为传统饮食文化和时令提示，不做中医体质诊断或治疗宣称。",
               "补充剂内容仅提示标签、成分重复和咨询专业人士的场景；不提供确定剂量、不自动加入肌酸。",
               "只返回 JSON，不要 Markdown。"

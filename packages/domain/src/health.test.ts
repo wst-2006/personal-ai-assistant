@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { healthPlanContentSchema, healthWeekStartSchema, localDatesForHealthWeek, sleepImageAnalysisRequestSchema, sleepImageAnalysisSchema } from "./health.js";
+import { healthPlanContentSchema, healthSleepRevisionCandidateSchema, healthWeekStartSchema, localDatesForHealthWeek, sleepImageAnalysisRequestSchema, sleepImageAnalysisSchema } from "./health.js";
 
 const day = {
   nutritionDirection: "正常餐盘结构，优先蛋白质和两类蔬菜。",
@@ -31,5 +31,16 @@ describe("health reference contracts", () => {
       awakeCount: null, sleepStart: null, wakeTime: "07:30", deviceScore: null, deviceNotes: null,
       visibleMetrics: ["总睡眠 7 小时"], interpretation: ["截图显示总睡眠约 7 小时。"], limitations: ["仅基于截图中可见信息。"]
     }).success).toBe(true);
+  });
+
+  it("accepts a sleep revision only with an explicit weekly target and analysis id", () => {
+    expect(healthSleepRevisionCandidateSchema.safeParse({
+      weekStart: "2026-08-02",
+      sleepAnalysisId: "00000000-0000-4000-8000-000000000001"
+    }).success).toBe(true);
+    expect(healthSleepRevisionCandidateSchema.safeParse({
+      weekStart: "2026-08-03",
+      sleepAnalysisId: "not-a-uuid"
+    }).success).toBe(false);
   });
 });

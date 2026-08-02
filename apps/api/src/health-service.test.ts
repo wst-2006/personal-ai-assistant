@@ -2,7 +2,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { connectVerifiedDatabase } from "@personal-ai/db/client";
 import { loadDatabaseConfig } from "@personal-ai/db/config";
 import { healthDailyReferences, healthSleepAnalyses, healthWeekPlans } from "@personal-ai/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { HealthService } from "./health-service.js";
 
 const connection = await connectVerifiedDatabase(loadDatabaseConfig());
@@ -52,6 +52,63 @@ describe("health reference persistence", () => {
       expect(await service.listSleepAnalyses("2099-01-05")).toHaveLength(1);
     } finally {
       await connection.db.delete(healthSleepAnalyses).where(eq(healthSleepAnalyses.id, record.id));
+    }
+  });
+
+  it("creates a sleep-based revision candidate without changing the active week until explicit confirmation", async () => {
+    const weekStart = "2099-03-01";
+    const base = await service.createTemplateCandidate(weekStart, null);
+    const active = await service.confirm(base.plan.id, base.plan.version);
+    const png = `data:image/png;base64,${Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString("base64")}`;
+    const sleep = await service.analyzeSleepImage({ localDate: "2099-03-02", fileName: "sleep.png", mimeType: "image/png", dataUrl: png }, {
+      async analyze() {
+        return {
+          totalSleepMinutes: 360, deepSleepMinutes: 60, lightSleepMinutes: null, remSleepMinutes: null,
+          awakeCount: 3, sleepStart: null, wakeTime: null, deviceScore: 72, deviceNotes: null,
+          visibleMetrics: ["总睡眠", "深睡", "评分"], interpretation: ["截图中显示睡眠时长。"], limitations: ["仅基于截图中可见信息。"]
+        };
+      }
+    });
+    let revisionId: string | null = null;
+    try {
+      const revision = await service.createSleepRevisionCandidate({ weekStart, sleepAnalysisId: sleep.id, specialContext: "周二只安排轻量活动" }, {
+        async plan(input) {
+          expect(input.sleepAnalysis).toMatchObject({ localDate: "2099-03-02", analysis: { totalSleepMinutes: 360 } });
+          return {
+            overview: "本次只生成待确认的睡眠修订候选。",
+            supplements: ["不因一次截图改变补充剂。"],
+            days: Array.from({ length: 7 }, () => ({
+              nutritionDirection: "维持正常餐盘结构。",
+              proteinRangeGrams: { minimum: 90, maximum: 120 },
+              plateGuidance: ["每餐有主要蛋白质来源。"],
+              seasonalVegetables: ["番茄"],
+              movement: { category: "recovery", durationMinutes: { minimum: 20, maximum: 30 }, intensity: "low", highIntensity: false, safetyReminder: "按实际舒适度决定。" }
+            }))
+          };
+        }
+      });
+      revisionId = revision.plan.id;
+      expect(revision.plan.state).toBe("candidate");
+      expect(revision.plan.basedOnPlanId).toBe(active.plan.id);
+      expect(revision.plan.basedOnPlanVersion).toBe(active.plan.version);
+      expect(revision.plan.sourceSleepAnalysisId).toBe(sleep.id);
+      expect(revision.plan.revisionReason).toContain("2099-03-02");
+
+      const beforeConfirmation = await service.getWeek(weekStart);
+      expect(beforeConfirmation.active?.plan.id).toBe(active.plan.id);
+      expect(beforeConfirmation.candidate?.plan.id).toBe(revision.plan.id);
+
+      const confirmed = await service.confirm(revision.plan.id, revision.plan.version);
+      expect(confirmed.plan.id).toBe(revision.plan.id);
+      expect(confirmed.plan.state).toBe("active");
+      expect((await service.getWeek(weekStart)).active?.plan.id).toBe(revision.plan.id);
+    } finally {
+      const planIds = [base.plan.id, ...(revisionId ? [revisionId] : [])];
+      await connection.db.transaction(async (transaction) => {
+        await transaction.delete(healthDailyReferences).where(inArray(healthDailyReferences.healthWeekPlanId, planIds));
+        await transaction.delete(healthWeekPlans).where(inArray(healthWeekPlans.id, planIds));
+        await transaction.delete(healthSleepAnalyses).where(eq(healthSleepAnalyses.id, sleep.id));
+      });
     }
   });
 });

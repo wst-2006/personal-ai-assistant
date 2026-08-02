@@ -1,8 +1,8 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { connectVerifiedDatabase } from "@personal-ai/db/client";
 import { loadDatabaseConfig } from "@personal-ai/db/config";
-import { healthSleepAnalyses } from "@personal-ai/db/schema";
-import { eq } from "drizzle-orm";
+import { healthDailyReferences, healthSleepAnalyses, healthWeekPlans } from "@personal-ai/db/schema";
+import { eq, inArray } from "drizzle-orm";
 import { buildApp } from "./app.js";
 import { HealthService } from "./health-service.js";
 
@@ -10,6 +10,21 @@ const connection = await connectVerifiedDatabase(loadDatabaseConfig());
 const service = new HealthService(connection.db);
 const app = buildApp({
   healthService: service,
+  healthPlanner: {
+    async plan() {
+      return {
+        overview: "只作为待确认的睡眠修订候选。",
+        supplements: ["不根据一次截图自动改变补充剂。"],
+        days: Array.from({ length: 7 }, () => ({
+          nutritionDirection: "维持正常餐盘结构。",
+          proteinRangeGrams: { minimum: 90, maximum: 120 },
+          plateGuidance: ["每餐有主要蛋白质来源。"],
+          seasonalVegetables: ["番茄"],
+          movement: { category: "recovery", durationMinutes: { minimum: 20, maximum: 30 }, intensity: "low", highIntensity: false, safetyReminder: "按实际舒适度决定。" }
+        }))
+      };
+    }
+  },
   sleepImageAnalyzer: {
     async analyze() {
       return {
@@ -47,5 +62,41 @@ describe("sleep screenshot routes", () => {
     } });
     expect(invalid.statusCode).toBe(400);
     await connection.db.delete(healthSleepAnalyses).where(eq(healthSleepAnalyses.id, record.id));
+  });
+
+  it("creates a user-requested sleep revision candidate without replacing the active week", async () => {
+    const weekStart = "2099-03-08";
+    const base = await service.createTemplateCandidate(weekStart, null);
+    const active = await service.confirm(base.plan.id, base.plan.version);
+    const png = `data:image/png;base64,${Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString("base64")}`;
+    const sleep = await service.analyzeSleepImage({ localDate: "2099-03-09", fileName: "sleep.png", mimeType: "image/png", dataUrl: png }, {
+      async analyze() {
+        return {
+          totalSleepMinutes: 390, deepSleepMinutes: null, lightSleepMinutes: null, remSleepMinutes: null,
+          awakeCount: null, sleepStart: null, wakeTime: null, deviceScore: null, deviceNotes: null,
+          visibleMetrics: ["总睡眠"], interpretation: ["截图显示总睡眠。"], limitations: ["仅基于截图中可见信息。"]
+        };
+      }
+    });
+    let revisionId: string | null = null;
+    try {
+      const response = await app.inject({ method: "POST", url: "/api/v1/health/weeks/sleep-revision-candidates", payload: {
+        weekStart,
+        sleepAnalysisId: sleep.id
+      } });
+      expect(response.statusCode).toBe(201);
+      const candidate = response.json().plan as { id: string; state: string; basedOnPlanId: string; sourceSleepAnalysisId: string; revisionReason: string };
+      revisionId = candidate.id;
+      expect(candidate).toMatchObject({ state: "candidate", basedOnPlanId: active.plan.id, sourceSleepAnalysisId: sleep.id });
+      expect(candidate.revisionReason).toContain("2099-03-09");
+      expect((await service.getWeek(weekStart)).active?.plan.id).toBe(active.plan.id);
+    } finally {
+      const planIds = [base.plan.id, ...(revisionId ? [revisionId] : [])];
+      await connection.db.transaction(async (transaction) => {
+        await transaction.delete(healthDailyReferences).where(inArray(healthDailyReferences.healthWeekPlanId, planIds));
+        await transaction.delete(healthWeekPlans).where(inArray(healthWeekPlans.id, planIds));
+        await transaction.delete(healthSleepAnalyses).where(eq(healthSleepAnalyses.id, sleep.id));
+      });
+    }
   });
 });

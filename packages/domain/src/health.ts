@@ -79,6 +79,11 @@ export const saveHealthProfileSchema = z.object({
   profile: healthProfileSchema
 }).strict();
 export const healthPlanConfirmationSchema = z.object({ expectedVersion: z.number().int().positive() }).strict();
+export const healthSleepRevisionCandidateSchema = z.object({
+  weekStart: healthWeekStartSchema,
+  sleepAnalysisId: z.string().uuid(),
+  specialContext: z.string().trim().max(1000).nullable().optional()
+}).strict();
 
 const sleepImageMimeTypeSchema = z.enum(["image/png", "image/jpeg", "image/webp"]);
 const sleepImageDataUrlSchema = z.string().max(8_000_000).regex(
@@ -113,6 +118,7 @@ export type HealthDailyReference = z.infer<typeof healthDailyReferenceSchema>;
 export type HealthPlanContent = z.infer<typeof healthPlanContentSchema>;
 export type SleepImageAnalysisRequest = z.infer<typeof sleepImageAnalysisRequestSchema>;
 export type SleepImageAnalysis = z.infer<typeof sleepImageAnalysisSchema>;
+export type HealthSleepRevisionCandidate = z.infer<typeof healthSleepRevisionCandidateSchema>;
 
 export function localDatesForHealthWeek(weekStart: string): string[] {
   const start = new Date(`${weekStart}T00:00:00.000Z`);

@@ -27,6 +27,7 @@ export type HealthPlanner = {
     solarTerm: string;
     scheduledActivities: Array<{ localDate: string; title: string }>;
     specialContext: string | null;
+    sleepAnalysis: { localDate: string; analysis: SleepImageAnalysis } | null;
   }): Promise<HealthPlanContent>;
 };
 
@@ -45,6 +46,12 @@ export class HealthPlanVersionConflictError extends Error {
 export class HealthPlanStateError extends Error {
   constructor(readonly state: string, readonly operation: string) { super(`Cannot ${operation} a health plan in ${state} state.`); }
 }
+export class HealthPlanBaseChangedError extends Error {
+  constructor(readonly current: HealthPlanWithDays | null) { super("The health plan used as the candidate base has changed."); }
+}
+export class HealthActivePlanRequiredError extends Error {}
+export class SleepAnalysisNotFoundError extends Error {}
+export class SleepAnalysisOutsideWeekError extends Error {}
 export class SleepImageValidationError extends Error {}
 
 export class HealthService {
@@ -102,8 +109,45 @@ export class HealthService {
     const profile = profileRecord.profile as HealthProfile;
     const scheduledActivities = await this.weekActivities(weekStart);
     const solarTerm = solarTermFor(weekStart);
-    const content = healthPlanContentSchema.parse(await planner.plan({ profile, weekStart, solarTerm, scheduledActivities, specialContext }));
+    const content = healthPlanContentSchema.parse(await planner.plan({ profile, weekStart, solarTerm, scheduledActivities, specialContext, sleepAnalysis: null }));
     return this.storeCandidate({ weekStart, profileVersion: profileRecord.version, city: profile.city, solarTerm, specialContext, source: "ai", content });
+  }
+
+  async createSleepRevisionCandidate(input: { weekStart: string; sleepAnalysisId: string; specialContext?: string | null }, planner: HealthPlanner): Promise<HealthPlanWithDays> {
+    const [profileRecord, basePlan, sleepRecord] = await Promise.all([
+      this.requireProfile(this.db),
+      this.findPlan(input.weekStart, "active"),
+      this.findSleepAnalysis(input.sleepAnalysisId)
+    ]);
+    if (!basePlan) throw new HealthActivePlanRequiredError();
+    if (!sleepRecord) throw new SleepAnalysisNotFoundError();
+    if (!localDatesForHealthWeek(input.weekStart).includes(sleepRecord.localDate)) throw new SleepAnalysisOutsideWeekError();
+
+    const profile = profileRecord.profile as HealthProfile;
+    const scheduledActivities = await this.weekActivities(input.weekStart);
+    const solarTerm = solarTermFor(input.weekStart);
+    const sleepAnalysis = sleepRecord.analysis as SleepImageAnalysis;
+    const content = healthPlanContentSchema.parse(await planner.plan({
+      profile,
+      weekStart: input.weekStart,
+      solarTerm,
+      scheduledActivities,
+      specialContext: input.specialContext ?? null,
+      sleepAnalysis: { localDate: sleepRecord.localDate, analysis: sleepAnalysis }
+    }));
+    return this.storeCandidate({
+      weekStart: input.weekStart,
+      profileVersion: profileRecord.version,
+      city: profile.city,
+      solarTerm,
+      specialContext: input.specialContext ?? null,
+      source: "ai",
+      content,
+      basedOnPlanId: basePlan.plan.id,
+      basedOnPlanVersion: basePlan.plan.version,
+      sourceSleepAnalysisId: sleepRecord.id,
+      revisionReason: sleepRevisionReason(sleepRecord.localDate, sleepAnalysis)
+    });
   }
 
   async confirm(id: string, expectedVersion: number): Promise<HealthPlanWithDays> {
@@ -113,6 +157,14 @@ export class HealthService {
       if (current.plan.state === "active") return current;
       if (current.plan.state !== "candidate") throw new HealthPlanStateError(current.plan.state, "confirm");
       const now = new Date();
+      if (current.plan.basedOnPlanId) {
+        const [active] = await transaction.select().from(healthWeekPlans)
+          .where(and(eq(healthWeekPlans.weekStart, current.plan.weekStart), eq(healthWeekPlans.state, "active")))
+          .limit(1);
+        if (!active || active.id !== current.plan.basedOnPlanId || active.version !== current.plan.basedOnPlanVersion) {
+          throw new HealthPlanBaseChangedError(active ? { plan: active, days: await this.daysForPlan(transaction, active.id) } : null);
+        }
+      }
       await transaction.update(healthWeekPlans).set({ state: "superseded", supersededAt: now, version: sql`${healthWeekPlans.version} + 1`, updatedAt: now })
         .where(and(eq(healthWeekPlans.weekStart, current.plan.weekStart), eq(healthWeekPlans.state, "active")));
       const [confirmed] = await transaction.update(healthWeekPlans).set({ state: "active", confirmedAt: now, version: current.plan.version + 1, updatedAt: now })
@@ -172,6 +224,10 @@ export class HealthService {
     specialContext: string | null;
     source: "template" | "ai";
     content: HealthPlanContent;
+    basedOnPlanId?: string;
+    basedOnPlanVersion?: number;
+    sourceSleepAnalysisId?: string;
+    revisionReason?: string;
   }): Promise<HealthPlanWithDays> {
     const parsed = healthPlanContentSchema.parse(input.content);
     return this.runSerializable(async (transaction) => {
@@ -180,7 +236,10 @@ export class HealthService {
       const now = new Date();
       const [plan] = await transaction.insert(healthWeekPlans).values({
         id: randomUUID(), weekStart: input.weekStart, state: "candidate", source: input.source, profileVersion: input.profileVersion,
-        city: input.city, solarTerm: input.solarTerm, specialContext: input.specialContext, overview: parsed.overview, supplements: parsed.supplements,
+        city: input.city, solarTerm: input.solarTerm, specialContext: input.specialContext,
+        basedOnPlanId: input.basedOnPlanId ?? null, basedOnPlanVersion: input.basedOnPlanVersion ?? null,
+        sourceSleepAnalysisId: input.sourceSleepAnalysisId ?? null, revisionReason: input.revisionReason ?? null,
+        overview: parsed.overview, supplements: parsed.supplements,
         version: 1, createdAt: now, updatedAt: now
       }).returning();
       if (!plan) throw new Error("PostgreSQL did not return the health candidate.");
@@ -217,6 +276,11 @@ export class HealthService {
     const [plan] = await db.select().from(healthWeekPlans).where(eq(healthWeekPlans.id, id)).limit(1);
     if (!plan) throw new HealthPlanNotFoundError();
     return { plan, days: await this.daysForPlan(db, id) };
+  }
+
+  private async findSleepAnalysis(id: string) {
+    const [record] = await this.db.select().from(healthSleepAnalyses).where(eq(healthSleepAnalyses.id, id)).limit(1);
+    return record ?? null;
   }
 
   private daysForPlan(db: AppDatabase, planId: string) {
@@ -293,6 +357,16 @@ function includesActivity(title: string, kind: string): boolean {
     || (kind === "running" && /跑步|慢跑/.test(title))
     || (kind === "recovery" && /恢复|拉伸|散步/.test(title))
     || lower.length < 0;
+}
+
+function sleepRevisionReason(localDate: string, analysis: SleepImageAnalysis): string {
+  const metrics: string[] = [];
+  if (analysis.totalSleepMinutes !== null) metrics.push(`总睡眠 ${analysis.totalSleepMinutes} 分钟`);
+  if (analysis.deepSleepMinutes !== null) metrics.push(`深睡 ${analysis.deepSleepMinutes} 分钟`);
+  if (analysis.awakeCount !== null) metrics.push(`清醒 ${analysis.awakeCount} 次`);
+  if (analysis.deviceScore !== null) metrics.push(`设备评分 ${analysis.deviceScore}`);
+  const visibleSummary = metrics.length > 0 ? metrics.join("、") : "截图中可见的睡眠信息";
+  return `基于你主动上传的 ${localDate} 睡眠截图（${visibleSummary}）生成本次修订候选。它不会修改健康资料；确认前，原本周参考保持不变。`;
 }
 
 function solarTermFor(localDate: string): string {

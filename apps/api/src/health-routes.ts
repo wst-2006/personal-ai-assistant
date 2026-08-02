@@ -1,15 +1,19 @@
 import type { FastifyInstance } from "fastify";
-import { createHealthPlanCandidateSchema, healthPlanConfirmationSchema, healthWeekStartSchema, saveHealthProfileSchema, sleepImageAnalysisRequestSchema } from "@personal-ai/domain/health";
+import { createHealthPlanCandidateSchema, healthPlanConfirmationSchema, healthSleepRevisionCandidateSchema, healthWeekStartSchema, saveHealthProfileSchema, sleepImageAnalysisRequestSchema } from "@personal-ai/domain/health";
 import { reviewDateSchema } from "@personal-ai/domain/review";
 import { z } from "zod";
 import {
   HealthPlanNotFoundError,
+  HealthActivePlanRequiredError,
+  HealthPlanBaseChangedError,
   HealthPlanStateError,
   HealthPlanVersionConflictError,
   HealthProfileNotFoundError,
   HealthProfileVersionConflictError,
   HealthService,
   SleepImageValidationError,
+  SleepAnalysisNotFoundError,
+  SleepAnalysisOutsideWeekError,
   type SleepImageAnalyzer,
   type HealthPlanner
 } from "./health-service.js";
@@ -81,6 +85,22 @@ export async function healthRoutes(app: FastifyInstance, options: { healthServic
     }
   });
 
+  if (healthPlanner) app.post("/health/weeks/sleep-revision-candidates", async (request, reply) => {
+    const input = healthSleepRevisionCandidateSchema.safeParse(request.body);
+    if (!input.success) return reply.status(400).send({ error: "invalid_sleep_revision_candidate", details: input.error.flatten() });
+    try {
+      return reply.status(201).send({ plan: serializePlan(await healthService.createSleepRevisionCandidate(input.data, healthPlanner)) });
+    } catch (error) {
+      if (error instanceof HealthProfileNotFoundError
+        || error instanceof HealthActivePlanRequiredError
+        || error instanceof SleepAnalysisNotFoundError
+        || error instanceof SleepAnalysisOutsideWeekError
+        || error instanceof HealthPlanBaseChangedError) return healthError(reply, error);
+      app.log.warn({ reason: error instanceof Error ? error.message : "unknown" }, "DeepSeek sleep-based health revision failed");
+      return reply.status(502).send({ error: "ai_health_plan_unavailable", message: "AI 暂时无法生成睡眠修订候选，现有参考保持不变。" });
+    }
+  });
+
   app.post("/health/weeks/:id/confirm", async (request, reply) => {
     const params = planIdParams.safeParse(request.params);
     const input = healthPlanConfirmationSchema.safeParse(request.body);
@@ -116,6 +136,10 @@ function healthError(reply: { status: (statusCode: number) => { send: (body: unk
   if (error instanceof HealthProfileNotFoundError) return reply.status(409).send({ error: "health_profile_required" });
   if (error instanceof HealthProfileVersionConflictError) return reply.status(409).send({ error: "health_profile_version_conflict", profile: serializeProfile(error.current) });
   if (error instanceof HealthPlanNotFoundError) return reply.status(404).send({ error: "health_plan_not_found" });
+  if (error instanceof HealthActivePlanRequiredError) return reply.status(409).send({ error: "health_active_plan_required" });
+  if (error instanceof SleepAnalysisNotFoundError) return reply.status(404).send({ error: "sleep_analysis_not_found" });
+  if (error instanceof SleepAnalysisOutsideWeekError) return reply.status(409).send({ error: "sleep_analysis_outside_week" });
+  if (error instanceof HealthPlanBaseChangedError) return reply.status(409).send({ error: "health_plan_base_changed", active: serializePlan(error.current) });
   if (error instanceof HealthPlanVersionConflictError) return reply.status(409).send({ error: "health_plan_version_conflict", plan: serializePlan(error.current) });
   if (error instanceof HealthPlanStateError) return reply.status(409).send({ error: "invalid_health_plan_transition", state: error.state, operation: error.operation });
   throw error;

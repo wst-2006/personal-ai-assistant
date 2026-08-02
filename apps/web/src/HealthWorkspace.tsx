@@ -25,7 +25,22 @@ type DayReference = {
     movement: { category: "strength" | "volleyball" | "running" | "cycling" | "recovery" | "rest"; durationMinutes: { minimum: number; maximum: number }; intensity: "rest" | "low" | "moderate" | "high"; highIntensity: boolean; safetyReminder: string };
   };
 };
-type HealthPlan = { id: string; weekStart: string; state: "candidate" | "active"; source: "template" | "ai" | "manual"; city: string | null; solarTerm: string; overview: string; supplements: string[]; version: number; days: DayReference[] };
+type HealthPlan = {
+  id: string;
+  weekStart: string;
+  state: "candidate" | "active";
+  source: "template" | "ai" | "manual";
+  city: string | null;
+  solarTerm: string;
+  overview: string;
+  supplements: string[];
+  version: number;
+  basedOnPlanId: string | null;
+  basedOnPlanVersion: number | null;
+  sourceSleepAnalysisId: string | null;
+  revisionReason: string | null;
+  days: DayReference[];
+};
 type SleepAnalysis = {
   id: string;
   localDate: string;
@@ -76,6 +91,25 @@ function listText(value: string) {
 
 function sleepMetric(label: string, value: number | string | null, suffix = "") {
   return value === null ? null : <div className="sleep-metric"><span>{label}</span><strong>{value}{suffix}</strong></div>;
+}
+
+function revisionChanges(previous: DayReference, next: DayReference): string[] {
+  const changes: string[] = [];
+  const beforeMovement = previous.content.movement;
+  const nextMovement = next.content.movement;
+  const beforeDuration = `${beforeMovement.durationMinutes.minimum}–${beforeMovement.durationMinutes.maximum} 分钟`;
+  const nextDuration = `${nextMovement.durationMinutes.minimum}–${nextMovement.durationMinutes.maximum} 分钟`;
+  if (beforeMovement.category !== nextMovement.category || beforeMovement.intensity !== nextMovement.intensity || beforeDuration !== nextDuration) {
+    changes.push(`运动：${activityLabel[beforeMovement.category]} ${beforeDuration} -> ${activityLabel[nextMovement.category]} ${nextDuration}`);
+  }
+  if (previous.content.nutritionDirection !== next.content.nutritionDirection) changes.push("饮食方向已调整");
+  if (previous.content.proteinRangeGrams.minimum !== next.content.proteinRangeGrams.minimum || previous.content.proteinRangeGrams.maximum !== next.content.proteinRangeGrams.maximum) {
+    changes.push(`蛋白质：${previous.content.proteinRangeGrams.minimum}–${previous.content.proteinRangeGrams.maximum} g -> ${next.content.proteinRangeGrams.minimum}–${next.content.proteinRangeGrams.maximum} g`);
+  }
+  if (previous.content.plateGuidance.join("\n") !== next.content.plateGuidance.join("\n")) changes.push("餐盘提示已调整");
+  if (previous.content.seasonalVegetables.join("\n") !== next.content.seasonalVegetables.join("\n")) changes.push("时令蔬菜提示已调整");
+  if (beforeMovement.safetyReminder !== nextMovement.safetyReminder) changes.push("安全提醒已调整");
+  return changes;
 }
 
 async function request<T>(path: string, method = "GET", payload?: Record<string, unknown>): Promise<T> {
@@ -228,6 +262,27 @@ export function HealthWorkspace() {
     } finally { setBusy(false); }
   }
 
+  async function createSleepRevisionCandidate(record: SleepAnalysis) {
+    if (!active) return;
+    setBusy(true); setError(null);
+    try {
+      const result = await request<{ plan: HealthPlan }>("/api/v1/health/weeks/sleep-revision-candidates", "POST", {
+        weekStart,
+        sleepAnalysisId: record.id
+      });
+      setCandidate(result.plan);
+      setSelectedDay(Math.max(0, result.plan.days.findIndex((day) => day.localDate === record.localDate)));
+    } catch (requestError) {
+      const code = requestError instanceof Error ? (requestError as ApiError).body?.error : undefined;
+      const message = code === "health_active_plan_required"
+        ? "请先确认一份本周参考，再请求睡眠修订。"
+        : code === "sleep_analysis_outside_week"
+          ? "这次截图不属于当前周，不能用于修订本周参考。"
+          : "睡眠修订候选暂时无法生成，原本周参考保持不变。";
+      setError(message);
+    } finally { setBusy(false); }
+  }
+
   return <section className="health-workspace">
     <header className="health-heading">
       <div><p className="section-kicker">健康参考</p><h1>把身体照顾在计划之外。</h1><p>只给出本周可查看的饮食与运动范围，不安排任务、不要求打卡。</p></div>
@@ -257,13 +312,25 @@ export function HealthWorkspace() {
       {visiblePlan ? <section className="health-plan">
         <header className="health-plan-header"><div><p className="section-kicker">{candidate ? "待确认版本" : "本周生效版本"}</p><h2>{visiblePlan.solarTerm} · {visiblePlan.city ?? "通用时令参考"}</h2><small>{candidate ? (visiblePlan.source === "ai" ? "AI 只生成候选，确认后才会替换本周参考。" : "基础候选需经你确认后才会生效。") : "本周参考不会因一天睡眠或运动变化自动改写。"}</small></div>{candidate && <div className="candidate-actions"><button className="quiet-button" type="button" disabled={busy} onClick={() => void discardCandidate()}>放弃候选</button><button className="primary-button" type="button" disabled={busy} onClick={() => void confirmCandidate()}>{busy ? <LoaderCircle className="spin" /> : <Check />}确认并使用</button></div>}</header>
         <p className="health-overview">{visiblePlan.overview}</p>
+        {candidate?.revisionReason && active && candidate.basedOnPlanId === active.id && <section className="health-revision-preview" aria-label="睡眠修订前后差异">
+          <header><Sparkles /><div><p className="section-kicker">本次修订依据</p><strong>候选尚未生效</strong></div></header>
+          <p>{candidate.revisionReason}</p>
+          <div className="health-revision-diff">{candidate.days.map((day) => {
+            const previous = active.days.find((item) => item.dayIndex === day.dayIndex);
+            const changes = previous ? revisionChanges(previous, day) : [];
+            return changes.length > 0 ? <div key={day.id}><strong>{weekday[day.dayIndex]}</strong><span>{changes.join("；")}</span></div> : null;
+          })}{candidate.days.every((day) => {
+            const previous = active.days.find((item) => item.dayIndex === day.dayIndex);
+            return !previous || revisionChanges(previous, day).length === 0;
+          }) && <div><strong>本周</strong><span>候选没有改变当前可显示的每日参考；确认前原计划仍保持不变。</span></div>}</div>
+        </section>}
         <div className="health-days" role="tablist" aria-label="本周健康参考日期">{visiblePlan.days.map((day) => <button key={day.id} role="tab" aria-selected={selectedDay === day.dayIndex} className={selectedDay === day.dayIndex ? "active" : ""} type="button" onClick={() => setSelectedDay(day.dayIndex)}><span>{weekday[day.dayIndex]}</span><strong>{day.localDate.slice(8)}</strong></button>)}</div>
         {selectedReference && <article className="health-day-detail"><section><header><Leaf /><div><p>饮食方向</p><strong>蛋白质约 {selectedReference.content.proteinRangeGrams.minimum}–{selectedReference.content.proteinRangeGrams.maximum} g / 天</strong></div></header><p>{selectedReference.content.nutritionDirection}</p><ul>{selectedReference.content.plateGuidance.map((item) => <li key={item}>{item}</li>)}</ul><div className="vegetable-tags">{selectedReference.content.seasonalVegetables.map((item) => <span key={item}>{item}</span>)}</div></section><section><header><HeartPulse /><div><p>运动范围</p><strong>{activityLabel[selectedReference.content.movement.category]} · {intensityLabel[selectedReference.content.movement.intensity]}</strong></div></header><p>{selectedReference.content.movement.durationMinutes.maximum === 0 ? "不安排训练；保持日常轻松活动即可。" : `${selectedReference.content.movement.durationMinutes.minimum}–${selectedReference.content.movement.durationMinutes.maximum} 分钟，按当天实际状态自主决定。`}</p><aside>{selectedReference.content.movement.safetyReminder}</aside></section></article>}
         <section className="health-supplements"><p className="section-kicker">补充剂参考</p>{visiblePlan.supplements.map((item) => <p key={item}>{item}</p>)}</section>
       </section> : <div className="health-empty"><HeartPulse /><strong>健康资料已准备好后，会在这里生成一份待你确认的本周参考。</strong></div>}
       <section className="health-sleep-card">
         <header><div><p className="section-kicker">睡眠截图</p><h2>只读取你主动上传的这一张。</h2><small>只分析截图中实际出现的时间、时长、阶段、设备评分和说明；原图不会保存，也不会自动修改健康资料或本周参考。</small></div><div className="health-sleep-actions"><label className="sleep-upload-control"><Upload /><span>{sleepFile ? sleepFile.name : "选择截图"}</span><input aria-label="选择睡眠截图" type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => setSleepFile(event.target.files?.[0] ?? null)} /></label><button className="primary-button" type="button" disabled={busy || !sleepFile} onClick={() => void analyzeSleepScreenshot()}>{busy ? <LoaderCircle className="spin" /> : <Sparkles />}上传并分析</button></div></header>
-        {sleepAnalyses.length === 0 ? <p className="health-sleep-empty">{sleepDate} 还没有已保存的截图分析。</p> : <div className="health-sleep-results">{sleepAnalyses.map((record) => <article key={record.id}><div className="health-sleep-result-head"><strong>{record.localDate}</strong><small>{record.originalFileName} · {new Date(record.createdAt).toLocaleString("zh-CN")}</small></div><div className="sleep-metrics">{sleepMetric("总睡眠", record.analysis.totalSleepMinutes, " 分钟")}{sleepMetric("深睡", record.analysis.deepSleepMinutes, " 分钟")}{sleepMetric("浅睡", record.analysis.lightSleepMinutes, " 分钟")}{sleepMetric("快速眼动", record.analysis.remSleepMinutes, " 分钟")}{sleepMetric("清醒次数", record.analysis.awakeCount)}{sleepMetric("设备评分", record.analysis.deviceScore, " / 100")}{sleepMetric("入睡", record.analysis.sleepStart)}{sleepMetric("起床", record.analysis.wakeTime)}</div>{record.analysis.deviceNotes && <p>{record.analysis.deviceNotes}</p>}<ul>{record.analysis.interpretation.map((item) => <li key={item}>{item}</li>)}</ul><small className="health-sleep-limitations">{record.analysis.limitations.join(" ")}</small></article>)}</div>}
+        {sleepAnalyses.length === 0 ? <p className="health-sleep-empty">{sleepDate} 还没有已保存的截图分析。</p> : <div className="health-sleep-results">{sleepAnalyses.map((record) => <article key={record.id}><div className="health-sleep-result-head"><strong>{record.localDate}</strong><small>{record.originalFileName} · {new Date(record.createdAt).toLocaleString("zh-CN")}</small></div><div className="sleep-metrics">{sleepMetric("总睡眠", record.analysis.totalSleepMinutes, " 分钟")}{sleepMetric("深睡", record.analysis.deepSleepMinutes, " 分钟")}{sleepMetric("浅睡", record.analysis.lightSleepMinutes, " 分钟")}{sleepMetric("快速眼动", record.analysis.remSleepMinutes, " 分钟")}{sleepMetric("清醒次数", record.analysis.awakeCount)}{sleepMetric("设备评分", record.analysis.deviceScore, " / 100")}{sleepMetric("入睡", record.analysis.sleepStart)}{sleepMetric("起床", record.analysis.wakeTime)}</div>{record.analysis.deviceNotes && <p>{record.analysis.deviceNotes}</p>}<ul>{record.analysis.interpretation.map((item) => <li key={item}>{item}</li>)}</ul>{active && !candidate && <button className="quiet-button sleep-revision-button" type="button" disabled={busy} onClick={() => void createSleepRevisionCandidate(record)}><Sparkles />根据这次睡眠生成修订候选</button>}<small className="health-sleep-limitations">{record.analysis.limitations.join(" ")}</small></article>)}</div>}
       </section>
     </>}
   </section>;

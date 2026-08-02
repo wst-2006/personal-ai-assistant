@@ -3,6 +3,7 @@ import {
   boolean,
   check,
   date,
+  foreignKey,
   index,
   integer,
   jsonb,
@@ -437,6 +438,10 @@ export const healthWeekPlans = pgTable(
     city: varchar("city", { length: 120 }),
     solarTerm: varchar("solar_term", { length: 32 }).notNull(),
     specialContext: text("special_context"),
+    basedOnPlanId: uuid("based_on_plan_id"),
+    basedOnPlanVersion: integer("based_on_plan_version"),
+    sourceSleepAnalysisId: uuid("source_sleep_analysis_id").references(() => healthSleepAnalyses.id),
+    revisionReason: text("revision_reason"),
     overview: text("overview").notNull(),
     supplements: jsonb("supplements").notNull(),
     version: integer("version").notNull().default(1),
@@ -448,11 +453,14 @@ export const healthWeekPlans = pgTable(
   },
   (table) => [
     index("health_week_plans_week_idx").on(table.weekStart, table.createdAt),
+    index("health_week_plans_base_plan_idx").on(table.basedOnPlanId),
+    foreignKey({ columns: [table.basedOnPlanId], foreignColumns: [table.id], name: "health_week_plans_based_on_plan_id_health_week_plans_id_fk" }),
     uniqueIndex("health_week_plans_active_week_unique").on(table.weekStart).where(sql`${table.state} = 'active'`),
     check("health_week_plans_state_check", sql`${table.state} in ('candidate', 'active', 'superseded', 'cancelled')`),
     check("health_week_plans_source_check", sql`${table.source} in ('template', 'ai', 'manual')`),
     check("health_week_plans_profile_version_check", sql`${table.profileVersion} > 0`),
-    check("health_week_plans_version_check", sql`${table.version} > 0`)
+    check("health_week_plans_version_check", sql`${table.version} > 0`),
+    check("health_week_plans_revision_base_check", sql`(${table.basedOnPlanId} is null and ${table.basedOnPlanVersion} is null) or (${table.basedOnPlanId} is not null and ${table.basedOnPlanVersion} > 0)`)
   ]
 );
 
