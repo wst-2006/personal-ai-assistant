@@ -16,6 +16,7 @@ export interface FeishuChannelClient {
   disconnect(): Promise<void>;
   forceDisconnect(): Promise<void>;
   updateCard(messageId: string, card: object): Promise<void>;
+  recallMessage(messageId: string): Promise<void>;
   sendText(targetId: string, text: string): Promise<void>;
   onCardAction(handler: CardActionHandler): void;
   onError(handler: (error: Error) => void): void;
@@ -71,11 +72,19 @@ export class FeishuLongConnectionService {
       try {
         const result = await this.actions.handle(event.operatorOpenId, event.value);
         try {
-          await channel.updateCard(event.messageId, actionResultCard(result));
+          // A reminder card is a one-shot control. Once acted on, retract the
+          // original message so an obsolete Start/Other arrangement button
+          // cannot remain in the conversation.
+          await channel.recallMessage(event.messageId);
         } catch (error) {
-          // Some Feishu tenants allow sending messages but reject message.patch.
-          // Keep the action observable instead of leaving the original card silent.
-          this.logger.warn(`Feishu card update failed; sending text fallback: ${errorMessage(error)}`);
+          // Some tenants may reject message deletion. Fall back to replacing
+          // the card with a terminal result before sending the confirmation.
+          this.logger.warn(`Feishu card recall failed; trying card update: ${errorMessage(error)}`);
+          try {
+            await channel.updateCard(event.messageId, actionResultCard(result));
+          } catch (updateError) {
+            this.logger.warn(`Feishu card update failed; sending text fallback: ${errorMessage(updateError)}`);
+          }
         }
         // Long-connection card callbacks do not provide an in-place toast response.
         // A short confirmation message guarantees visible feedback even when the
@@ -160,6 +169,7 @@ class SdkFeishuChannel implements FeishuChannelClient {
     await this.channel.disconnect();
   }
   updateCard(messageId: string, card: object) { return this.channel.updateCard(messageId, card); }
+  recallMessage(messageId: string) { return this.channel.recallMessage(messageId); }
   async sendText(targetId: string, text: string) {
     await this.channel.send(targetId, { text });
   }

@@ -14,6 +14,7 @@ class FakeChannel implements FeishuChannelClient {
   disconnect = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
   forceDisconnect = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
   updateCard = vi.fn<(messageId: string, card: object) => Promise<void>>().mockResolvedValue(undefined);
+  recallMessage = vi.fn<(messageId: string) => Promise<void>>().mockResolvedValue(undefined);
   sendText = vi.fn<(targetId: string, text: string) => Promise<void>>().mockResolvedValue(undefined);
   cardHandler?: (event: { messageId: string; chatId: string; operatorOpenId: string; value: unknown }) => Promise<void>;
   onCardAction(handler: NonNullable<FakeChannel["cardHandler"]>) { this.cardHandler = handler; }
@@ -45,7 +46,8 @@ describe("Feishu long connection", () => {
     expect(channel.connect).toHaveBeenCalledOnce();
     await channel.cardHandler?.({ messageId: "om_1", chatId: "oc_1", operatorOpenId: "ou_owner", value: { action: "start" } });
     expect(actions.handle).toHaveBeenCalledWith("ou_owner", { action: "start" });
-    expect(channel.updateCard).toHaveBeenCalledWith("om_1", expect.objectContaining({ header: expect.any(Object) }));
+    expect(channel.recallMessage).toHaveBeenCalledWith("om_1");
+    expect(channel.updateCard).not.toHaveBeenCalled();
     expect(channel.sendText).toHaveBeenCalledWith("oc_1", "done");
 
     await service.stop();
@@ -54,13 +56,14 @@ describe("Feishu long connection", () => {
 
   it("sends a visible text fallback when Feishu rejects the card update", async () => {
     const channel = new FakeChannel();
-    channel.updateCard.mockRejectedValueOnce(new Error("permission denied"));
+    channel.recallMessage.mockRejectedValueOnce(new Error("permission denied"));
     const actions = { handle: vi.fn().mockResolvedValue({ type: "success", message: "已记录另有安排" }) };
     const service = new FeishuLongConnectionService(config, actions as unknown as FeishuCardActionService, () => channel, silentLogger);
 
     await service.start();
     await channel.cardHandler?.({ messageId: "om_2", chatId: "oc_2", operatorOpenId: "ou_owner", value: { action: "other_arrangement" } });
 
+    expect(channel.updateCard).toHaveBeenCalledWith("om_2", expect.objectContaining({ header: expect.any(Object) }));
     expect(channel.sendText).toHaveBeenCalledWith("oc_2", "已记录另有安排");
     await service.stop();
   });
