@@ -1,6 +1,8 @@
 import { asc, sql } from "drizzle-orm";
 import type { AppDatabase } from "@personal-ai/db/client";
 import {
+  appConversationMessages,
+  appConversations,
   cyberDiaries,
   dailyBriefs,
   focusSessionSegmentRuns,
@@ -25,7 +27,7 @@ import {
 } from "@personal-ai/db/schema";
 
 export const logicalBackupFormat = "personal-ai-assistant.backup" as const;
-export const logicalBackupFormatVersion = 1 as const;
+export const logicalBackupFormatVersion = 2 as const;
 
 export type LogicalBackup = {
   format: typeof logicalBackupFormat;
@@ -51,6 +53,8 @@ export type LogicalBackup = {
     focusTimerJobs: Array<typeof focusTimerJobs.$inferSelect>;
     reviewSessions: Array<typeof reviewSessions.$inferSelect>;
     reviewMessages: Array<typeof reviewMessages.$inferSelect>;
+    appConversations: Array<typeof appConversations.$inferSelect>;
+    appConversationMessages: Array<typeof appConversationMessages.$inferSelect>;
     dailyBriefs: Array<typeof dailyBriefs.$inferSelect>;
     cyberDiaries: Array<typeof cyberDiaries.$inferSelect>;
   };
@@ -91,6 +95,8 @@ export class BackupService implements BackupExporter {
       const timerJobRows = await transaction.select().from(focusTimerJobs).orderBy(asc(focusTimerJobs.createdAt), asc(focusTimerJobs.id));
       const reviewSessionRows = await transaction.select().from(reviewSessions).orderBy(asc(reviewSessions.localDate));
       const reviewMessageRows = await transaction.select().from(reviewMessages).orderBy(asc(reviewMessages.createdAt), asc(reviewMessages.id));
+      const conversationRows = await transaction.select().from(appConversations).orderBy(asc(appConversations.localDate));
+      const conversationMessageRows = await transaction.select().from(appConversationMessages).orderBy(asc(appConversationMessages.createdAt), asc(appConversationMessages.id));
       const briefRows = await transaction.select().from(dailyBriefs).orderBy(asc(dailyBriefs.createdAt), asc(dailyBriefs.id));
       const diaryRows = await transaction.select().from(cyberDiaries).orderBy(asc(cyberDiaries.localDate), asc(cyberDiaries.id));
 
@@ -118,6 +124,8 @@ export class BackupService implements BackupExporter {
           focusTimerJobs: timerJobRows,
           reviewSessions: reviewSessionRows,
           reviewMessages: reviewMessageRows,
+          appConversations: conversationRows,
+          appConversationMessages: conversationMessageRows,
           dailyBriefs: briefRows,
           cyberDiaries: diaryRows
         }

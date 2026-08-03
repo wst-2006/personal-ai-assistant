@@ -458,6 +458,32 @@ export const reviewMessages = pgTable(
   (table) => [index("review_messages_session_idx").on(table.reviewSessionId)]
 );
 
+export const appConversations = pgTable(
+  "app_conversations",
+  {
+    id: uuid("id").primaryKey(),
+    localDate: date("local_date", { mode: "string" }).notNull().unique(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [index("app_conversations_date_idx").on(table.localDate)]
+);
+
+export const appConversationMessages = pgTable(
+  "app_conversation_messages",
+  {
+    id: uuid("id").primaryKey(),
+    conversationId: uuid("conversation_id").notNull().references(() => appConversations.id),
+    role: varchar("role", { length: 16 }).notNull(),
+    content: text("content").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    index("app_conversation_messages_conversation_idx").on(table.conversationId, table.createdAt),
+    check("app_conversation_messages_role_check", sql`${table.role} in ('user', 'assistant')`)
+  ]
+);
+
 export const dailyBriefs = pgTable("daily_briefs", {
   id: uuid("id").primaryKey(),
   localDate: varchar("local_date", { length: 10 }).notNull(),

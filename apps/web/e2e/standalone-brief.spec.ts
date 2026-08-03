@@ -20,7 +20,7 @@ test("普通对话显式生成独立简报，刷新后保留且不创建复盘�
     await expect(input).toBeVisible();
     await input.fill(`E2E 独立简报内容 ${suffix}：整理今天读到的研究想法。`);
     const create = page.waitForResponse((response) => response.url().endsWith("/api/v1/briefs/standalone") && response.request().method() === "POST" && response.status() === 201);
-    await page.getByRole("button", { name: "用这段话生成独立简报", exact: true }).click();
+    await page.getByRole("button", { name: "生成独立简报", exact: true }).click();
     const created = (await (await create).json()) as { brief: { id: string; reviewSessionId: string | null; state: string; sources: Array<{ provider?: string }> } };
     briefId = created.brief.id;
     expect(created.brief.reviewSessionId).toBeNull();

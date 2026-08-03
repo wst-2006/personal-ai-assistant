@@ -31,7 +31,7 @@ async function openCandidate(page: Page, originalText: string) {
   await page.goto("/");
   await page.getByRole("button", { name: "与 AI 一起整理", exact: true }).click();
   await page.getByLabel("AI 输入内容").fill(originalText);
-  await page.getByRole("button", { name: "生成候选", exact: true }).click();
+  await page.getByRole("button", { name: "整理成候选", exact: true }).click();
   await expect(page.getByRole("heading", { name: "逐项确认后再保存", exact: true })).toBeVisible();
 }
 

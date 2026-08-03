@@ -48,7 +48,7 @@ test("下载完整逻辑备份，包含真实任务且不导出配置字段", as
       data: { tasks: Array<{ id: string; title: string }>; healthProfiles: Array<{ id: string; profile: unknown }> };
     };
 
-    expect(backup).toMatchObject({ format: "personal-ai-assistant.backup", formatVersion: 1 });
+    expect(backup).toMatchObject({ format: "personal-ai-assistant.backup", formatVersion: 2 });
     expect(new Date(backup.exportedAt).toString()).not.toBe("Invalid Date");
     expect(backup.data.tasks).toContainEqual(expect.objectContaining({ id: taskId, title }));
     expect(backup.data.healthProfiles.length).toBeGreaterThan(0);

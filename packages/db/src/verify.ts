@@ -165,6 +165,29 @@ try {
     WHERE EXISTS (SELECT 1 FROM public.user_profiles WHERE id = 1 AND version > 0)
     ORDER BY name
   `);
+  const conversationTablesResult = await client.query<{ table_name: string }>(`
+    SELECT table_name FROM information_schema.tables
+    WHERE table_schema = 'public'
+      AND table_name IN ('app_conversations', 'app_conversation_messages')
+    ORDER BY table_name
+  `);
+  const conversationColumnsResult = await client.query<{ table_name: string; column_name: string }>(`
+    SELECT table_name, column_name FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND ((table_name = 'app_conversations' AND column_name IN ('local_date', 'updated_at'))
+        OR (table_name = 'app_conversation_messages' AND column_name IN ('conversation_id', 'role', 'content')))
+    ORDER BY table_name, column_name
+  `);
+  const conversationContractResult = await client.query<{ name: string }>(`
+    SELECT conname AS name FROM pg_constraint
+    WHERE conrelid = to_regclass('public.app_conversation_messages')
+      AND conname = 'app_conversation_messages_role_check'
+    UNION ALL
+    SELECT indexname AS name FROM pg_indexes
+    WHERE schemaname = 'public' AND tablename = 'app_conversation_messages'
+      AND indexname = 'app_conversation_messages_conversation_idx'
+    ORDER BY name
+  `);
   const tableNames = tablesResult.rows.map((row) => row.table_name);
   const taskColumns = taskColumnsResult.rows.map((row) => row.column_name);
   const taskConstraints = taskConstraintsResult.rows.map((row) => row.conname);
@@ -180,6 +203,9 @@ try {
   const taskTreeContract = taskTreeContractResult.rows.map((row) => row.name);
   const userProfileColumns = userProfileColumnsResult.rows.map((row) => row.column_name);
   const userProfileContract = userProfileContractResult.rows.map((row) => row.name);
+  const conversationTables = conversationTablesResult.rows.map((row) => row.table_name);
+  const conversationColumns = conversationColumnsResult.rows.map((row) => `${row.table_name}.${row.column_name}`);
+  const conversationContract = conversationContractResult.rows.map((row) => row.name);
   const expectedTables = ["health_daily_references", "health_profiles", "health_sleep_analyses", "health_week_plans", "inbox_entries", "long_range_plan_milestones", "long_range_plan_task_tree_candidates", "long_range_plans", "tasks", "user_profiles"];
   const expectedColumns = ["source_inbox_entry_id", "source_long_range_plan_id"];
   const retiredTaskColumns = ["planned_effort_minutes", "difficulty", "task_type", "requires_continuous_focus"];
@@ -260,6 +286,15 @@ try {
   ];
   const expectedUserProfileColumns = ["personal_context", "ai_guidance", "share_with_ai", "response_style", "version"];
   const expectedUserProfileContract = ["user_profiles_singleton_check", "user_profiles_response_style_check", "user_profiles_version_check", "user_profiles_initialized"];
+  const expectedConversationTables = ["app_conversation_messages", "app_conversations"];
+  const expectedConversationColumns = [
+    "app_conversations.local_date",
+    "app_conversations.updated_at",
+    "app_conversation_messages.conversation_id",
+    "app_conversation_messages.role",
+    "app_conversation_messages.content"
+  ];
+  const expectedConversationContract = ["app_conversation_messages_conversation_idx", "app_conversation_messages_role_check"];
 
   if (expectedTables.some((name) => !tableNames.includes(name))
     || expectedColumns.some((name) => !taskColumns.includes(name))
@@ -277,8 +312,11 @@ try {
     || expectedTaskTreeColumns.some((name) => !taskTreeColumns.includes(name))
     || expectedTaskTreeContract.some((name) => !taskTreeContract.includes(name))
     || expectedUserProfileColumns.some((name) => !userProfileColumns.includes(name))
-    || expectedUserProfileContract.some((name) => !userProfileContract.includes(name))) {
-    throw new Error("Database schema does not match the live task, focus structure, inbox, reminder, health, long-range plan, task-tree, or user-profile migration contract.");
+    || expectedUserProfileContract.some((name) => !userProfileContract.includes(name))
+    || expectedConversationTables.some((name) => !conversationTables.includes(name))
+    || expectedConversationColumns.some((name) => !conversationColumns.includes(name))
+    || expectedConversationContract.some((name) => !conversationContract.includes(name))) {
+    throw new Error("Database schema does not match the live task, focus structure, inbox, reminder, health, long-range plan, task-tree, user-profile, or conversation migration contract.");
   }
 
   console.log(JSON.stringify({
@@ -298,7 +336,10 @@ try {
     taskTreeColumns,
     taskTreeContract,
     userProfileColumns,
-    userProfileContract
+    userProfileContract,
+    conversationTables,
+    conversationColumns,
+    conversationContract
   }, null, 2));
 } finally {
   await client.end();

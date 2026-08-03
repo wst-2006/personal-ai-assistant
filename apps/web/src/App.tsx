@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent } from "react";
-import { BarChart3, Bot, BrainCircuit, CalendarDays, Check, CircleHelp, Download, HardDriveDownload, HeartPulse, LoaderCircle, Map, NotebookPen, Settings2, Sparkles, Target, X } from "lucide-react";
+import { BarChart3, Bot, BrainCircuit, CalendarDays, Check, CircleHelp, Download, HardDriveDownload, HeartPulse, LoaderCircle, Map, NotebookPen, RefreshCw, Send, Settings2, Sparkles, Target, X } from "lucide-react";
 import { DiaryWorkspace } from "./DiaryWorkspace";
 import { FocusWorkspace } from "./FocusWorkspace";
 import { GrowthWorkspace } from "./GrowthWorkspace";
@@ -43,6 +43,23 @@ type StandaloneBrief = {
   content: { title: string; reflection: string; taskSummary: string; sections: Array<{ title: string; body: string }> };
   sources: Array<{ label: string; url?: string }>;
   createdAt: string;
+};
+type Conversation = {
+  id: string;
+  localDate: string;
+  createdAt: string;
+  updatedAt: string;
+};
+type ConversationMessage = {
+  id: string;
+  conversationId: string;
+  role: "user" | "assistant";
+  content: string;
+  createdAt: string;
+};
+type ConversationResponse = {
+  conversation: Conversation;
+  messages: ConversationMessage[];
 };
 type PlanChangeContext = { taskId: string; taskTitle: string };
 
@@ -197,6 +214,10 @@ export function App() {
   const [standaloneBriefs, setStandaloneBriefs] = useState<StandaloneBrief[]>([]);
   const [selectedStandaloneBriefId, setSelectedStandaloneBriefId] = useState<string | null>(null);
   const [standaloneLoading, setStandaloneLoading] = useState(false);
+  const [conversation, setConversation] = useState<Conversation | null>(null);
+  const [conversationMessages, setConversationMessages] = useState<ConversationMessage[]>([]);
+  const [conversationLoading, setConversationLoading] = useState(false);
+  const [conversationSending, setConversationSending] = useState(false);
   const activeNavLabel = navItems.find((item) => item.id === view)?.label ?? "今日";
   const selectedStandaloneBrief = standaloneBriefs.find((brief) => brief.id === selectedStandaloneBriefId) ?? standaloneBriefs[0] ?? null;
 
@@ -213,10 +234,23 @@ export function App() {
     }
   }
 
+  async function loadConversation() {
+    setConversationLoading(true);
+    try {
+      const result = await requestJson<ConversationResponse>(`/api/v1/conversations/${today}`, "GET");
+      setConversation(result.conversation);
+      setConversationMessages(result.messages);
+    } catch {
+      setError("无法读取今天的软件内对话，请确认 API 正在运行。");
+    } finally {
+      setConversationLoading(false);
+    }
+  }
+
   function openAiDrawer() {
     setPlanChange(null);
     setAiOpen(true);
-    void loadStandaloneBriefs();
+    void Promise.all([loadStandaloneBriefs(), loadConversation()]);
   }
 
   function closeAiDrawer() {
@@ -358,6 +392,44 @@ export function App() {
     }
   }
 
+  async function sendConversationMessage() {
+    const content = aiInput.trim();
+    if (!conversation || !content) return;
+    setConversationSending(true);
+    setError(null);
+    try {
+      const result = await requestJson<ConversationResponse>(`/api/v1/conversations/${conversation.id}/messages`, "POST", { content });
+      setConversation(result.conversation);
+      setConversationMessages(result.messages);
+      setAiInput("");
+    } catch (requestError) {
+      await loadConversation();
+      if (requestError instanceof ApiError && requestError.body.error === "ai_conversation_unavailable") {
+        setError("原话已保存在今天的软件内对话中，AI 暂时未回复；可以稍后重试。");
+      } else {
+        setError("发送失败，已重新读取今天的软件内对话。");
+      }
+    } finally {
+      setConversationSending(false);
+    }
+  }
+
+  async function retryConversationReply() {
+    if (!conversation) return;
+    setConversationSending(true);
+    setError(null);
+    try {
+      const result = await requestJson<ConversationResponse>(`/api/v1/conversations/${conversation.id}/reply-last`, "POST");
+      setConversation(result.conversation);
+      setConversationMessages(result.messages);
+    } catch {
+      await loadConversation();
+      setError("原话仍保留在今天的软件内对话中，AI 暂时未回复；请稍后重试。");
+    } finally {
+      setConversationSending(false);
+    }
+  }
+
   function exportStandaloneBrief(brief: StandaloneBrief) {
     const file = new Blob([standaloneBriefText(brief)], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(file);
@@ -388,11 +460,17 @@ export function App() {
     <aside className={`ai-drawer ${aiOpen ? "open" : ""}`} aria-label={planChange ? "计划变更协商" : "AI 助手"} aria-hidden={!aiOpen}>
       <div className="drawer-header"><div><span className="bot-orb"><Bot /></span><div><p>{planChange ? "计划变更协商" : "AI 整理助手"}</p><strong>{planChange ? "建议可见，决定仍在你手上" : "把一句话变得清楚"}</strong></div></div><button className="quiet-icon" type="button" aria-label="关闭 AI 助手" onClick={closeAiDrawer}><X /></button></div>
       {planChange ? <PlanChangeDrawer taskId={planChange.taskId} taskTitle={planChange.taskTitle} onBackToTimeline={returnToTimelineFromPlanChange} /> : !aiCandidate ? <div className="drawer-entry">
-        <div className="drawer-prompt"><p>说说你想记下什么。</p><small>可以整理成任务候选；或由你明确决定，用这段话生成独立简报。</small></div>
+        <div className="drawer-prompt"><p>说说你想记下什么。</p><small>对话会保存在本机；整理候选和生成独立简报均须由你明确选择。</small></div>
+        <section className="conversation-thread" aria-live="polite" aria-label="今天的软件内对话">
+          <div className="conversation-heading"><p className="section-kicker">软件内对话</p>{conversationLoading && <LoaderCircle className="spin" aria-label="正在读取软件内对话" />}</div>
+          {conversationMessages.length === 0 && !conversationLoading ? <p className="conversation-empty">从这里开始的一句话，会被保存在今天的本机对话里。</p> : conversationMessages.map((message) => <article key={message.id} className={`conversation-message ${message.role}`}><span>{message.role === "user" ? "我" : "AI"}</span><p>{message.content}</p></article>)}
+          {conversationMessages.at(-1)?.role === "user" && <button className="text-button conversation-retry" type="button" disabled={conversationSending} onClick={() => void retryConversationReply()}>{conversationSending ? <LoaderCircle className="spin" /> : <RefreshCw />}{conversationSending ? "正在重试" : "重试 AI 回复"}</button>}
+        </section>
         <textarea aria-label="AI 输入内容" value={aiInput} onChange={(event) => setAiInput(event.target.value)} placeholder="例如：明天上午九点用六十分钟学习线性代数" rows={7} maxLength={4000} />
         <div className="drawer-actions">
-          <button className="primary-button full-width" type="button" disabled={aiLoading || saving || !aiInput.trim()} onClick={() => void parseWithAi()}>{aiLoading ? <LoaderCircle className="spin" /> : <Sparkles />}{aiLoading ? "正在整理" : "生成候选"}</button>
-          <button className="quiet-button full-width" type="button" disabled={aiLoading || saving || !aiInput.trim()} onClick={() => void generateStandaloneBrief()}>{saving ? <LoaderCircle className="spin" /> : <NotebookPen />}{saving ? "正在生成" : "用这段话生成独立简报"}</button>
+          <button className="primary-button full-width" type="button" disabled={conversationLoading || conversationSending || !conversation || !aiInput.trim()} onClick={() => void sendConversationMessage()}>{conversationSending ? <LoaderCircle className="spin" /> : <Send />}{conversationSending ? "正在发送" : "发送"}</button>
+          <button className="quiet-button full-width" type="button" disabled={aiLoading || saving || conversationSending || !aiInput.trim()} onClick={() => void parseWithAi()}>{aiLoading ? <LoaderCircle className="spin" /> : <Sparkles />}{aiLoading ? "正在整理" : "整理成候选"}</button>
+          <button className="quiet-button full-width" type="button" disabled={aiLoading || saving || conversationSending || !aiInput.trim()} onClick={() => void generateStandaloneBrief()}>{saving ? <LoaderCircle className="spin" /> : <NotebookPen />}{saving ? "正在生成" : "生成独立简报"}</button>
         </div>
         <p className="standalone-note">独立简报不创建复盘，也不会生成赛博日记。</p>
         <section className="standalone-briefs" aria-labelledby="standalone-briefs-title">

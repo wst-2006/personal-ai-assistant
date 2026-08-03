@@ -23,6 +23,8 @@ import { LongRangePlanService } from "./long-range-plan-service.js";
 import { LongRangeTaskTreeService } from "./long-range-task-tree-service.js";
 import { DeepSeekLongRangeTaskTreePlanner } from "./ai/long-range-task-tree-planner.js";
 import { UserProfileService } from "./user-profile-service.js";
+import { ConversationService } from "./conversation-service.js";
+import { DeepSeekConversationResponder } from "./ai/conversation-responder.js";
 
 const config = loadServerConfig();
 const database = await connectVerifiedDatabase(loadDatabaseConfig());
@@ -50,6 +52,8 @@ const app = buildApp({
   longRangeTaskTreeService: new LongRangeTaskTreeService(database.db),
   longRangeTaskTreePlanner: new DeepSeekLongRangeTaskTreePlanner(deepSeekConfig, userProfileService),
   userProfileService,
+  conversationService: new ConversationService(database.db),
+  conversationResponder: new DeepSeekConversationResponder(deepSeekConfig, userProfileService),
   feishuWebhookService: feishuConfig ? new FeishuWebhookService(feishuConfig, taskService, focusService) : undefined,
   taskParser: new DeepSeekTaskParser(deepSeekConfig, userProfileService),
   planChangeAdvisor: new DeepSeekPlanChangeAdvisor(deepSeekConfig, userProfileService)

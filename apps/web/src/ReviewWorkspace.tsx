@@ -23,6 +23,14 @@ type Context = {
     state: string;
   }>;
   feedback: Array<{ satisfaction: string }>;
+  conversations: Array<{ id: string; localDate: string }>;
+  conversationMessages: Array<{
+    id: string;
+    conversationId: string;
+    role: "user" | "assistant";
+    content: string;
+    createdAt: string;
+  }>;
 };
 type BriefContent = {
   title:string;
@@ -269,6 +277,10 @@ export function ReviewWorkspace() {
           </div>
         </section>
       </div>
+      <section className="review-software-conversations" aria-labelledby="review-software-conversations-title">
+        <div><p className="section-kicker">软件内对话</p><h2 id="review-software-conversations-title">今天与 AI 商量过的内容</h2><small>它与复盘正文分开保存，不会替代你在复盘页留下的一句话。</small></div>
+        {context?.conversationMessages.length ? <div className="review-software-conversation-list">{context.conversationMessages.slice(-4).map((message) => <article key={message.id} className={message.role}><span>{message.role === "user" ? "我" : "AI"}</span><p>{message.content}</p></article>)}</div> : <p className="review-software-conversation-empty">今天还没有软件内对话。需要时可从右上角的 AI 侧层主动发起。</p>}
+      </section>
       {brief && <section className="review-brief-editor"><div><p className="section-kicker">每日简报{brief.state === "confirmed" ? " · 已确认" : "草稿"}</p><h2>{brief.content.title}</h2><div className="brief-toolbar"><button className="quiet-button" type="button" disabled={saving} onClick={()=>void generateBrief()}><RefreshCw />重新生成</button><button className="quiet-icon" type="button" aria-label="导出简报" onClick={exportBrief}><Download /></button></div></div><label>复盘摘要<textarea aria-label="简报复盘摘要" disabled={brief.state==="confirmed"&&!briefEditing} value={brief.content.reflection} onChange={event=>setBrief({...brief,content:{...brief.content,reflection:event.target.value}})} rows={5}/></label><label>任务摘要<textarea aria-label="简报任务摘要" disabled={brief.state==="confirmed"&&!briefEditing} value={brief.content.taskSummary} onChange={event=>setBrief({...brief,content:{...brief.content,taskSummary:event.target.value}})} rows={3}/></label><div className="brief-sections">{brief.content.sections.map((section,index)=><label key={`${section.title}-${index}`}>{section.title}<textarea aria-label={`${section.title}简报内容`} disabled={brief.state==="confirmed"&&!briefEditing} value={section.body} onChange={event=>setBrief({...brief,content:{...brief.content,sections:brief.content.sections.map((item,itemIndex)=>itemIndex===index?{...item,body:event.target.value}:item)}})} rows={3}/></label>)}</div><p className="brief-source-note">来源：{brief.sources.map(source=>source.label).join("；")}</p>{brief.state==="confirmed"&&!briefEditing?<button className="quiet-button" type="button" onClick={()=>setBriefEditing(true)}>编辑简报</button>:<button className="primary-button" disabled={saving} onClick={()=>void (brief.state==="draft"?confirmBrief():saveBriefEdits())}><Check />{brief.state==="draft"?"确认简报":"保存修改"}</button>}</section>}
       {error && (
         <div className="focus-error" role="alert">

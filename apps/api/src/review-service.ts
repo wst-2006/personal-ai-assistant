@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import type { AppDatabase } from "@personal-ai/db/client";
-import { dailyBriefs, focusSessions, reviewMessages, reviewSessions, taskFeedback, taskOutcomes, tasks } from "@personal-ai/db/schema";
+import { appConversationMessages, appConversations, dailyBriefs, focusSessions, reviewMessages, reviewSessions, taskFeedback, taskOutcomes, tasks } from "@personal-ai/db/schema";
 
 export class ReviewNotFoundError extends Error {}
 
@@ -19,7 +19,12 @@ export class ReviewService {
       const focus = taskIds.length ? await transaction.select().from(focusSessions).where(inArray(focusSessions.taskId, taskIds)) : [];
       const feedback = taskIds.length ? await transaction.select().from(taskFeedback).where(inArray(taskFeedback.taskId, taskIds)) : [];
       const briefs = await transaction.select().from(dailyBriefs).where(eq(dailyBriefs.reviewSessionId, session.id)).orderBy(asc(dailyBriefs.createdAt));
-      return { session, messages, briefs, context: { tasks: taskRows, outcomes, focusSessions: focus, feedback } };
+      const conversations = await transaction.select().from(appConversations).where(eq(appConversations.localDate, localDate));
+      const conversationIds = conversations.map((conversation) => conversation.id);
+      const conversationMessages = conversationIds.length
+        ? await transaction.select().from(appConversationMessages).where(inArray(appConversationMessages.conversationId, conversationIds)).orderBy(asc(appConversationMessages.createdAt), asc(appConversationMessages.id))
+        : [];
+      return { session, messages, briefs, context: { tasks: taskRows, outcomes, focusSessions: focus, feedback, conversations, conversationMessages } };
     });
   }
 
