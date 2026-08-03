@@ -9,13 +9,14 @@ export type FeishuLongConnectionConfig = {
   retryMaxMs: number;
 };
 
-type CardActionHandler = (event: { messageId: string; operatorOpenId: string; value: unknown }) => Promise<void>;
+type CardActionHandler = (event: { messageId: string; chatId: string; operatorOpenId: string; value: unknown }) => Promise<void>;
 
 export interface FeishuChannelClient {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   forceDisconnect(): Promise<void>;
   updateCard(messageId: string, card: object): Promise<void>;
+  sendText(targetId: string, text: string): Promise<void>;
   onCardAction(handler: CardActionHandler): void;
   onError(handler: (error: Error) => void): void;
   onReconnecting(handler: () => void): void;
@@ -66,11 +67,27 @@ export class FeishuLongConnectionService {
     const channel = this.channelFactory(this.config);
     this.channel = channel;
     channel.onCardAction(async (event) => {
+      this.logger.info(`Feishu card action received: ${event.value && typeof event.value === "object" && "action" in event.value ? String((event.value as { action?: unknown }).action) : "unknown"}.`);
       try {
         const result = await this.actions.handle(event.operatorOpenId, event.value);
-        await channel.updateCard(event.messageId, actionResultCard(result));
+        try {
+          await channel.updateCard(event.messageId, actionResultCard(result));
+        } catch (error) {
+          // Some Feishu tenants allow sending messages but reject message.patch.
+          // Keep the action observable instead of leaving the original card silent.
+          this.logger.warn(`Feishu card update failed; sending text fallback: ${errorMessage(error)}`);
+        }
+        // Long-connection card callbacks do not provide an in-place toast response.
+        // A short confirmation message guarantees visible feedback even when the
+        // Feishu client keeps rendering the original card.
+        await channel.sendText(event.chatId, result.message);
       } catch (error) {
         this.logger.warn(`Feishu card action rejected: ${errorMessage(error)}`);
+        try {
+          await channel.sendText(event.chatId, error instanceof Error ? error.message : "操作未完成，请打开软件查看任务当前状态。");
+        } catch (fallbackError) {
+          this.logger.warn(`Feishu card action fallback failed: ${errorMessage(fallbackError)}`);
+        }
       }
     });
     channel.onError((error) => this.logger.error(`Feishu long connection error: ${error.message}`));
@@ -143,9 +160,13 @@ class SdkFeishuChannel implements FeishuChannelClient {
     await this.channel.disconnect();
   }
   updateCard(messageId: string, card: object) { return this.channel.updateCard(messageId, card); }
+  async sendText(targetId: string, text: string) {
+    await this.channel.send(targetId, { text });
+  }
   onCardAction(handler: CardActionHandler) {
     this.channel.on("cardAction", (event: CardActionEvent) => handler({
       messageId: event.messageId,
+      chatId: event.chatId,
       operatorOpenId: event.operator.openId,
       value: event.action.value
     }));
