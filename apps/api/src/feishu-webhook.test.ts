@@ -1,11 +1,13 @@
-import { createCipheriv, createHash } from "node:crypto";
+import { createCipheriv, createHash, randomBytes } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import type { FocusService } from "./focus-service.js";
+import { FeishuCardActionService } from "./feishu-card-actions.js";
 import { FeishuWebhookAuthError, FeishuWebhookService } from "./feishu-webhook.js";
 import type { TaskService } from "./task-service.js";
 
 const taskId = "7f9a4ad8-4dc7-4d18-92df-1d8be780a1b1";
-const config = { verificationToken: "verify-token", encryptKey: "encrypt-key", targetOpenId: "ou_owner" };
+const config = { verificationToken: "verify-token", encryptKey: "encrypt-key" };
+const targetOpenId = "ou_owner";
 
 function services() {
   const taskService = { get: vi.fn().mockResolvedValue({ task: { id: taskId, version: 8, scheduleRevision: 3 } }) };
@@ -16,7 +18,11 @@ function services() {
   return {
     taskService,
     focusService,
-    webhook: new FeishuWebhookService(config, taskService as unknown as TaskService, focusService as unknown as FocusService)
+    webhook: new FeishuWebhookService(config, new FeishuCardActionService(
+      { targetOpenId },
+      taskService as unknown as TaskService,
+      focusService as unknown as FocusService
+    ))
   };
 }
 
@@ -31,7 +37,7 @@ describe("Feishu webhook", () => {
     const { webhook, focusService } = services();
     const body = {
       token: config.verificationToken,
-      event: { operator: { open_id: config.targetOpenId }, action: { value: { action: "start", taskId, scheduleRevision: 3 } } }
+      event: { operator: { open_id: targetOpenId }, action: { value: { action: "start", taskId, scheduleRevision: 3 } } }
     };
     const response = await webhook.handle(JSON.stringify(body), {}, body);
     expect(response).toEqual({ toast: { type: "success", content: expect.stringContaining("1 分钟准备") } });
@@ -45,7 +51,7 @@ describe("Feishu webhook", () => {
     const { webhook, focusService } = services();
     const decrypted = {
       token: config.verificationToken,
-      event: { operator: { open_id: config.targetOpenId }, action: { value: { action: "other_arrangement", taskId, scheduleRevision: 3 } } }
+      event: { operator: { open_id: targetOpenId }, action: { value: { action: "other_arrangement", taskId, scheduleRevision: 3 } } }
     };
     const encrypted = encrypt(JSON.stringify(decrypted), config.encryptKey);
     const envelope = { encrypt: encrypted };
@@ -63,10 +69,28 @@ describe("Feishu webhook", () => {
     expect(response).toEqual({ toast: { type: "success", content: expect.stringContaining("另有安排") } });
     expect(focusService.respondToReminder).toHaveBeenCalledWith("focus-1", 1, "other_arrangement");
   });
+
+  it("answers an encrypted URL challenge", async () => {
+    const { webhook } = services();
+    const decrypted = { type: "url_verification", token: config.verificationToken, challenge: "encrypted-challenge" };
+    const encrypted = encrypt(JSON.stringify(decrypted), config.encryptKey);
+    const envelope = { encrypt: encrypted };
+    const rawBody = JSON.stringify(envelope);
+    const timestamp = "1785330001";
+    const nonce = "challenge-nonce";
+    const signature = createHash("sha256").update(timestamp + nonce + config.encryptKey + rawBody).digest("hex");
+
+    await expect(webhook.handle(rawBody, {
+      "x-lark-request-timestamp": timestamp,
+      "x-lark-request-nonce": nonce,
+      "x-lark-signature": signature
+    }, envelope)).resolves.toEqual({ challenge: "encrypted-challenge" });
+  });
 });
 
 function encrypt(plain: string, encryptKey: string): string {
   const key = createHash("sha256").update(encryptKey).digest();
-  const cipher = createCipheriv("aes-256-cbc", key, key.subarray(0, 16));
-  return Buffer.concat([cipher.update(plain), cipher.final()]).toString("base64");
+  const iv = randomBytes(16);
+  const cipher = createCipheriv("aes-256-cbc", key, iv);
+  return Buffer.concat([iv, cipher.update(plain), cipher.final()]).toString("base64");
 }

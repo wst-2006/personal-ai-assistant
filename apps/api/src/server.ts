@@ -25,6 +25,8 @@ import { DeepSeekLongRangeTaskTreePlanner } from "./ai/long-range-task-tree-plan
 import { UserProfileService } from "./user-profile-service.js";
 import { ConversationService } from "./conversation-service.js";
 import { DeepSeekConversationResponder } from "./ai/conversation-responder.js";
+import { FeishuCardActionService, loadFeishuCardActionConfig } from "./feishu-card-actions.js";
+import { FeishuLongConnectionService, loadFeishuLongConnectionConfig } from "./feishu-long-connection.js";
 
 const config = loadServerConfig();
 const database = await connectVerifiedDatabase(loadDatabaseConfig());
@@ -33,7 +35,13 @@ const taskService = new TaskService(taskStore);
 const userProfileService = new UserProfileService(database.db);
 const focusService = new FocusService(database.db);
 const focusStructureService = new FocusStructureService(database.db);
-const feishuConfig = loadFeishuWebhookConfig(process.env);
+const feishuActionConfig = loadFeishuCardActionConfig(process.env);
+const feishuActions = feishuActionConfig ? new FeishuCardActionService(feishuActionConfig, taskService, focusService) : null;
+const feishuWebhookConfig = loadFeishuWebhookConfig(process.env);
+const feishuLongConnectionConfig = loadFeishuLongConnectionConfig(process.env);
+const feishuLongConnection = feishuActions && feishuLongConnectionConfig
+  ? new FeishuLongConnectionService(feishuLongConnectionConfig, feishuActions)
+  : null;
 const deepSeekConfig = loadDeepSeekConfig();
 const app = buildApp({
   taskService,
@@ -54,17 +62,22 @@ const app = buildApp({
   userProfileService,
   conversationService: new ConversationService(database.db),
   conversationResponder: new DeepSeekConversationResponder(deepSeekConfig, userProfileService),
-  feishuWebhookService: feishuConfig ? new FeishuWebhookService(feishuConfig, taskService, focusService) : undefined,
+  feishuWebhookService: feishuActions && feishuWebhookConfig
+    ? new FeishuWebhookService(feishuWebhookConfig, feishuActions)
+    : undefined,
   taskParser: new DeepSeekTaskParser(deepSeekConfig, userProfileService),
   planChangeAdvisor: new DeepSeekPlanChangeAdvisor(deepSeekConfig, userProfileService)
 });
 
 app.addHook("onClose", async () => {
+  await feishuLongConnection?.stop();
   await database.client.end();
 });
 
 try {
   await app.listen({ host: config.API_HOST, port: config.API_PORT });
+  if (feishuLongConnection) await feishuLongConnection.start();
+  else app.log.warn("Feishu long connection is disabled: App ID, App Secret, or target Open ID is not configured, or HTTP callback mode is selected.");
 } catch (error) {
   app.log.error(error);
   process.exit(1);

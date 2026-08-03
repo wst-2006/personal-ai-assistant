@@ -3,3 +3,6 @@ packages:
   - packages/*
 allowBuilds:
   esbuild: true
+  # Its postinstall only emits version-scheme warnings; runtime artifacts are
+  # already included in the published package.
+  protobufjs: false

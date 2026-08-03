@@ -1,6 +1,6 @@
 {
   "name": "@personal-ai/api",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "type": "module",
   "scripts": {
@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@fastify/cors": "^10.0.2",
+    "@larksuiteoapi/node-sdk": "1.72.0",
     "@personal-ai/db": "workspace:*",
     "@personal-ai/domain": "workspace:*",
     "drizzle-orm": "^0.38.4",

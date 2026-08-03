@@ -1,6 +1,6 @@
 {
   "name": "personal-ai-assistant",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "packageManager": "pnpm@11.9.0",
   "scripts": {
@@ -11,6 +11,7 @@
     "dev:desktop": "pnpm --filter @personal-ai/desktop dev",
     "prepare:desktop-runtime": "node scripts/prepare-desktop-runtime.mjs",
     "verify:desktop-runtime": "node scripts/verify-desktop-runtime.mjs",
+    "sync:desktop-config": "node scripts/sync-desktop-config.mjs",
     "build:desktop": "pnpm prepare:desktop-runtime && pnpm --filter @personal-ai/desktop build",
     "local:verify": "pnpm db:verify && pnpm check && pnpm test && pnpm build",
     "build": "pnpm --filter @personal-ai/domain --filter @personal-ai/db --filter @personal-ai/api --filter @personal-ai/web -r --if-present run build",

@@ -1,6 +1,6 @@
 {
   "name": "@personal-ai/worker",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "private": true,
   "type": "module",
   "scripts": { "dev": "tsx watch src/worker.ts", "check": "tsc --noEmit", "build": "tsc --outDir dist", "start": "node dist/worker.js", "test": "vitest run" },
