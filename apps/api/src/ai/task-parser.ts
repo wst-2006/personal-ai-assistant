@@ -21,8 +21,37 @@ type ChatCompletionResponse = {
   }>;
 };
 
+class DeepSeekProviderError extends Error {
+  constructor(readonly status: number, readonly detail: string | null) {
+    super(`DeepSeek returned HTTP ${status}${detail ? `: ${detail}` : "."}`);
+  }
+}
+
 function endpoint(baseUrl: string): string {
   return `${baseUrl.replace(/\/$/, "")}/chat/completions`;
+}
+
+function isRetryable(error: unknown): boolean {
+  if (error instanceof DeepSeekProviderError) {
+    return error.status === 408 || error.status === 429 || error.status >= 500;
+  }
+  return error instanceof TypeError || (error instanceof Error && error.name === "TimeoutError");
+}
+
+async function providerErrorDetail(response: Response): Promise<string | null> {
+  try {
+    const payload = await response.json() as unknown;
+    if (typeof payload !== "object" || payload === null) return null;
+    const record = payload as Record<string, unknown>;
+    const error = typeof record.error === "object" && record.error !== null
+      ? record.error as Record<string, unknown>
+      : record;
+    const message = error.message;
+    if (typeof message !== "string") return null;
+    return message.replace(/\s+/g, " ").trim().slice(0, 500) || null;
+  } catch {
+    return null;
+  }
 }
 
 export class DeepSeekTaskParser implements TaskParser {
@@ -36,7 +65,7 @@ export class DeepSeekTaskParser implements TaskParser {
         return await this.requestCandidate(request);
       } catch (error) {
         lastError = error;
-        if (attempt === this.config.DEEPSEEK_MAX_RETRIES) break;
+        if (attempt === this.config.DEEPSEEK_MAX_RETRIES || !isRetryable(error)) break;
         await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
       }
     }
@@ -95,7 +124,7 @@ export class DeepSeekTaskParser implements TaskParser {
     });
 
     if (!response.ok) {
-      throw new Error(`DeepSeek returned HTTP ${response.status}.`);
+      throw new DeepSeekProviderError(response.status, await providerErrorDetail(response));
     }
 
     const result = await response.json() as ChatCompletionResponse;

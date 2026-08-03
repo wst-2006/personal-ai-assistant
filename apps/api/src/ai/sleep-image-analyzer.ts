@@ -18,6 +18,9 @@ export class DeepSeekSleepImageAnalyzer implements SleepImageAnalyzer {
   constructor(private readonly config: DeepSeekConfig, private readonly userContext?: UserAiContextProvider) {}
 
   async analyze(input: { localDate: string; fileName: string; mimeType: string; dataUrl: string }): Promise<SleepImageAnalysis> {
+    if (!this.config.DEEPSEEK_VISION_MODEL) {
+      throw new Error("DEEPSEEK_VISION_MODEL is not configured. Configure a model verified to support image input before using sleep screenshot analysis.");
+    }
     let lastError: unknown;
     for (let attempt = 0; attempt <= this.config.DEEPSEEK_MAX_RETRIES; attempt += 1) {
       try {
@@ -32,6 +35,7 @@ export class DeepSeekSleepImageAnalyzer implements SleepImageAnalyzer {
   }
 
   private async requestAnalysis(input: { localDate: string; fileName: string; mimeType: string; dataUrl: string }): Promise<SleepImageAnalysis> {
+    const visionModel = this.config.DEEPSEEK_VISION_MODEL!;
     const context = await personalContextInstruction(this.userContext, this.config.DEEPSEEK_USER_CONTEXT_MAX_CHARS);
     const response = await fetch(endpoint(this.config.DEEPSEEK_BASE_URL), {
       method: "POST",
@@ -40,7 +44,7 @@ export class DeepSeekSleepImageAnalyzer implements SleepImageAnalyzer {
         "content-type": "application/json"
       },
       body: JSON.stringify({
-        model: this.config.DEEPSEEK_VISION_MODEL,
+        model: visionModel,
         temperature: 0,
         max_tokens: this.config.DEEPSEEK_MAX_OUTPUT_TOKENS,
         response_format: { type: "json_object" },
