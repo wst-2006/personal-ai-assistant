@@ -5,7 +5,13 @@ const halfHourPixels = 36;
 let dateSequence = 0;
 const isolatedDate = () => new Date(Date.UTC(2090,0,1+(Date.now()+dateSequence++)%300)).toISOString().slice(0,10);
 
-async function createExactTask(page:Page, title:string, start:string, end:string) {
+async function createExactTask(
+  page:Page,
+  title:string,
+  start:string,
+  end:string,
+  confirmConflict?: (dialog: ReturnType<Page["getByRole"]>) => Promise<void>
+) {
   await page.getByRole("button", { name: "完整添加" }).click();
   await page.getByLabel("任务标题").fill(title);
   await page.getByLabel("排期方式").selectOption("exact");
@@ -20,6 +26,11 @@ async function createExactTask(page:Page, title:string, start:string, end:string
   expect(body).not.toHaveProperty("difficulty");
   expect(body).not.toHaveProperty("taskType");
   expect(body).not.toHaveProperty("requiresContinuousFocus");
+  if (confirmConflict) {
+    const conflictDialog=page.getByRole("alertdialog",{name:"这项安排与现有任务重叠"});
+    await expect(conflictDialog).toBeVisible();
+    await confirmConflict(conflictDialog);
+  }
   const response=await responsePromise;
   return (await response.json()).task as {id:string;version:number;startAt:string;endAt:string};
 }
@@ -67,8 +78,11 @@ test.describe("真实今日时间轴",()=>{
       const resizedTask=(await (await resized).json()).task as {endAt:string};
       expect(resizedTask.endAt).toContain("06:30:00.000Z");
 
-      page.once("dialog",(dialog)=>dialog.accept());
-      const second=await createExactTask(page,secondTitle,"14:00","15:00");ids.push(second.id);
+      const second=await createExactTask(page,secondTitle,"14:00","15:00",async(conflictDialog)=>{
+        await expect(conflictDialog).toContainText(firstTitle);
+        await expect(conflictDialog).toContainText("13:30–14:30");
+        await conflictDialog.getByRole("button",{name:"明确保留全部冲突"}).click();
+      });ids.push(second.id);
       await expect(page.locator(`[data-task-id="${first.id}"]`)).toHaveClass(/conflict/);
       await expect(page.locator(`[data-task-id="${second.id}"]`)).toHaveClass(/conflict/);
 
@@ -79,6 +93,28 @@ test.describe("真实今日时间轴",()=>{
       const list=await request.get(`${apiBase}/api/v1/tasks?date=${await page.getByLabel("时间轴日期").inputValue()}`);
       const body=await list.json() as {blockingConflicts:Array<{accepted:boolean}>};
       expect(body.blockingConflicts.some((pair)=>pair.accepted)).toBe(true);
+    }finally{await cleanup(request,ids);}
+  });
+
+  test("冲突确认返回调整时保留表单内容且不显示保存失败",async({page,request})=>{
+    const ids:string[]=[];const suffix=Date.now().toString(36);const testDate=isolatedDate();
+    try{
+      await page.goto("/");
+      await page.getByLabel("时间轴日期").fill(testDate);
+      const first=await createExactTask(page,`E2E 返回调整基准 ${suffix}`,"13:00","14:00");ids.push(first.id);
+      await page.getByRole("button",{name:"完整添加"}).click();
+      await page.getByLabel("任务标题").fill(`E2E 返回调整候选 ${suffix}`);
+      await page.getByLabel("排期方式").selectOption("exact");
+      await page.getByLabel("开始时间").fill("13:00");
+      await page.getByLabel("结束时间").fill("14:00");
+      await page.getByRole("button",{name:"保存任务"}).click();
+      const conflictDialog=page.getByRole("alertdialog",{name:"这项安排与现有任务重叠"});
+      await expect(conflictDialog).toBeVisible();
+      await conflictDialog.getByRole("button",{name:"返回调整",exact:true}).click();
+      await expect(conflictDialog).toBeHidden();
+      await expect(page.getByRole("dialog",{name:"让这项安排足够清楚"})).toBeVisible();
+      await expect(page.getByLabel("任务标题")).toHaveValue(`E2E 返回调整候选 ${suffix}`);
+      await expect(page.locator(".timeline-alert")).toHaveCount(0);
     }finally{await cleanup(request,ids);}
   });
 
