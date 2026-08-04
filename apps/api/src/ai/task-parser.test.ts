@@ -54,6 +54,45 @@ describe("DeepSeekTaskParser", () => {
       model: "deepseek-v4-flash",
       response_format: { type: "json_object" }
     });
+    const payload = JSON.parse(String(options.body));
+    expect(payload.messages[0].content).toContain("title 和 entryType 是必填字段，绝对不能返回 null");
+    expect(JSON.parse(payload.messages[1].content)).not.toHaveProperty("requiredKeys");
+  });
+
+  it("recovers required fields when the provider returns the null-heavy V4 shape", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{
+        message: {
+          content: JSON.stringify({
+            title: null,
+            entryType: null,
+            date: null,
+            startAt: null,
+            endAt: null,
+            schedulePrecision: null,
+            notes: null,
+            missingFields: ["title", "entryType", "date", "startAt", "endAt", "schedulePrecision", "notes"]
+          })
+        }
+      }]
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const candidate = await new DeepSeekTaskParser(config).parse({
+      ...request,
+      text: "想法：飞书卡片终态验收（不要保存）"
+    });
+
+    expect(candidate).toEqual({
+      title: "飞书卡片终态验收（不要保存）",
+      entryType: "idea",
+      date: null,
+      startAt: null,
+      endAt: null,
+      schedulePrecision: null,
+      notes: null,
+      missingFields: ["date", "startAt", "endAt", "schedulePrecision", "notes"]
+    });
   });
 
   it("keeps the provider's safe error message and does not retry a permanent 400", async () => {

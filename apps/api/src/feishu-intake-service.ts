@@ -83,8 +83,8 @@ export class FeishuIntakeService {
         return { kind: "text", text: "这条内容已整理为待完善候选；请在桌面软件中补全日期或排期后再创建，当前没有自动写入任务。" };
       }
       return { kind: "card", card: candidateCard(stored, candidate) };
-    } catch {
-      await this.markFailed(received.id, "AI 暂时无法整理这条文本");
+    } catch (error) {
+      await this.markFailed(received.id, intakeFailureDetail(error));
       return { kind: "text", text: "AI 暂时无法整理这条内容，原始消息没有被写入任务；请稍后重发，或在桌面软件中手动录入。" };
     }
   }
@@ -304,6 +304,11 @@ export function loadFeishuIntakeConfig(env: NodeJS.ProcessEnv): FeishuIntakeConf
 function requiresDesktop(candidate: NaturalLanguageTaskCandidate): boolean {
   if (candidate.entryType !== "task") return false;
   return !candidateToTaskInput(candidate, "Asia/Shanghai");
+}
+
+function intakeFailureDetail(error: unknown): string {
+  const detail = error instanceof Error ? error.message : "Unknown AI parser failure";
+  return `AI 整理失败：${detail.replace(/\s+/g, " ").trim().slice(0, 900)}`;
 }
 
 function candidateToTaskInput(candidate: NaturalLanguageTaskCandidate, timeZone: "Asia/Shanghai"): TaskInput | null {

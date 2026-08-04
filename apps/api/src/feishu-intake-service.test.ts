@@ -46,6 +46,38 @@ async function storedCandidate(sourceMessageId: string) {
 }
 
 describe("Feishu text intake", () => {
+  it("persists the parser failure reason for diagnosis without creating data", async () => {
+    const suffix = randomUUID();
+    const parser: TaskParser = {
+      parse: async () => { throw new Error("candidate title was null"); }
+    };
+    const service = new FeishuIntakeService(
+      { targetOpenId: owner, timeZone: "Asia/Shanghai" },
+      connection.db,
+      taskService,
+      parser
+    );
+    const message = {
+      messageId: `om_failed_${suffix}`,
+      chatId: "oc_test",
+      operatorOpenId: owner,
+      messageType: "text",
+      text: "想法：诊断失败候选"
+    };
+
+    await expect(service.receive(message)).resolves.toMatchObject({
+      kind: "text",
+      text: expect.stringContaining("没有被写入任务")
+    });
+    const candidate = await storedCandidate(message.messageId);
+    expect(candidate).toMatchObject({
+      state: "failed",
+      lastError: "AI 整理失败：candidate title was null",
+      targetTaskId: null,
+      targetInboxEntryId: null
+    });
+  });
+
   it("persists a parsed candidate, then creates exactly one task only after confirmation", async () => {
     const suffix = randomUUID();
     const service = intake(exactCandidate(`飞书确认任务 ${suffix}`));
