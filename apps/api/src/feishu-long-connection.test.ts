@@ -16,8 +16,11 @@ class FakeChannel implements FeishuChannelClient {
   updateCard = vi.fn<(messageId: string, card: object) => Promise<void>>().mockResolvedValue(undefined);
   recallMessage = vi.fn<(messageId: string) => Promise<void>>().mockResolvedValue(undefined);
   sendText = vi.fn<(targetId: string, text: string) => Promise<void>>().mockResolvedValue(undefined);
+  sendCard = vi.fn<(targetId: string, card: object) => Promise<void>>().mockResolvedValue(undefined);
   cardHandler?: (event: { messageId: string; chatId: string; operatorOpenId: string; value: unknown }) => Promise<void>;
+  messageHandler?: (event: { messageId: string; chatId: string; operatorOpenId: string; text: string; messageType: string }) => Promise<void>;
   onCardAction(handler: NonNullable<FakeChannel["cardHandler"]>) { this.cardHandler = handler; }
+  onMessage(handler: NonNullable<FakeChannel["messageHandler"]>) { this.messageHandler = handler; }
   onError() {}
   onReconnecting() {}
   onReconnected() {}
@@ -65,6 +68,26 @@ describe("Feishu long connection", () => {
 
     expect(channel.updateCard).toHaveBeenCalledWith("om_2", expect.objectContaining({ header: expect.any(Object) }));
     expect(channel.sendText).toHaveBeenCalledWith("oc_2", "已记录另有安排");
+    await service.stop();
+  });
+
+  it("routes an owner text message to the intake service and sends its confirmation card", async () => {
+    const channel = new FakeChannel();
+    const actions = { handle: vi.fn() };
+    const intake = { receive: vi.fn().mockResolvedValue({ kind: "card", card: { header: { title: "确认" } } }) };
+    const service = new FeishuLongConnectionService(
+      config,
+      actions as unknown as FeishuCardActionService,
+      () => channel,
+      silentLogger,
+      intake as never
+    );
+
+    await service.start();
+    await channel.messageHandler?.({ messageId: "om_text", chatId: "oc_1", operatorOpenId: "ou_owner", text: "明天九点学习", messageType: "text" });
+
+    expect(intake.receive).toHaveBeenCalledWith(expect.objectContaining({ messageId: "om_text", text: "明天九点学习" }));
+    expect(channel.sendCard).toHaveBeenCalledWith("oc_1", expect.objectContaining({ header: expect.any(Object) }));
     await service.stop();
   });
 

@@ -36,6 +36,43 @@ export const inboxEntries = pgTable(
   ]
 );
 
+export const feishuIntakeCandidates = pgTable(
+  "feishu_intake_candidates",
+  {
+    id: uuid("id").primaryKey(),
+    chatId: varchar("chat_id", { length: 128 }).notNull(),
+    operatorOpenId: varchar("operator_open_id", { length: 128 }).notNull(),
+    sourceMessageId: varchar("source_message_id", { length: 128 }).notNull(),
+    rawText: text("raw_text").notNull(),
+    candidate: jsonb("candidate"),
+    state: varchar("state", { length: 32 }).notNull().default("parsing"),
+    version: integer("version").notNull().default(1),
+    targetTaskId: uuid("target_task_id"),
+    targetInboxEntryId: uuid("target_inbox_entry_id"),
+    lastError: text("last_error"),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    uniqueIndex("feishu_intake_candidates_source_message_unique").on(table.sourceMessageId),
+    index("feishu_intake_candidates_active_idx").on(table.state, table.createdAt),
+    check(
+      "feishu_intake_candidates_state_check",
+      sql`${table.state} in ('parsing', 'pending', 'confirming', 'confirmed', 'cancelled', 'needs_desktop', 'failed')`
+    ),
+    check("feishu_intake_candidates_version_check", sql`${table.version} > 0`),
+    check(
+      "feishu_intake_candidates_target_check",
+      sql`${table.targetTaskId} is null or ${table.targetInboxEntryId} is null`
+    ),
+    check(
+      "feishu_intake_candidates_confirmed_target_check",
+      sql`${table.state} <> 'confirmed' or (${table.targetTaskId} is not null or ${table.targetInboxEntryId} is not null)`
+    )
+  ]
+);
+
 export const tasks = pgTable(
   "tasks",
   {

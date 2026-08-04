@@ -38,6 +38,8 @@ copies are out of the current implementation scope.
 
 DeepSeek is called only by the API. Search results and weather responses are
 normalized and stored with source metadata before a brief is composed. Feishu
-will expose inbound commands and outbound reminders through a signed webhook
-adapter. Huawei Calendar remains an unimplemented adapter until its capability
-is verified.
+uses its official long connection for local inbound text/card events and
+outbound reminders; an encrypted HTTP callback remains an explicit fallback
+for card actions only. Inbound text is first stored as a deduplicated candidate
+and never creates a task until the owner confirms its card. Huawei Calendar
+remains an unimplemented adapter until its capability is verified.

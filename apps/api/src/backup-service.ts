@@ -10,6 +10,7 @@ import {
   focusStructureSegments,
   focusStructures,
   focusTimerJobs,
+  feishuIntakeCandidates,
   healthDailyReferences,
   healthProfiles,
   healthSleepAnalyses,
@@ -27,7 +28,7 @@ import {
 } from "@personal-ai/db/schema";
 
 export const logicalBackupFormat = "personal-ai-assistant.backup" as const;
-export const logicalBackupFormatVersion = 2 as const;
+export const logicalBackupFormatVersion = 3 as const;
 
 export type LogicalBackup = {
   format: typeof logicalBackupFormat;
@@ -35,6 +36,7 @@ export type LogicalBackup = {
   exportedAt: string;
   data: {
     inboxEntries: Array<typeof inboxEntries.$inferSelect>;
+    feishuIntakeCandidates: Array<typeof feishuIntakeCandidates.$inferSelect>;
     healthProfiles: Array<typeof healthProfiles.$inferSelect>;
     healthWeekPlans: Array<typeof healthWeekPlans.$inferSelect>;
     healthDailyReferences: Array<typeof healthDailyReferences.$inferSelect>;
@@ -77,6 +79,7 @@ export class BackupService implements BackupExporter {
 
       // A transaction uses one PostgreSQL connection, so its snapshot reads must stay sequential.
       const inboxEntryRows = await transaction.select().from(inboxEntries).orderBy(asc(inboxEntries.createdAt), asc(inboxEntries.id));
+      const feishuIntakeCandidateRows = await transaction.select().from(feishuIntakeCandidates).orderBy(asc(feishuIntakeCandidates.createdAt), asc(feishuIntakeCandidates.id));
       const healthProfileRows = await transaction.select().from(healthProfiles).orderBy(asc(healthProfiles.createdAt), asc(healthProfiles.id));
       const healthWeekPlanRows = await transaction.select().from(healthWeekPlans).orderBy(asc(healthWeekPlans.weekStart), asc(healthWeekPlans.createdAt), asc(healthWeekPlans.id));
       const healthDailyReferenceRows = await transaction.select().from(healthDailyReferences).orderBy(asc(healthDailyReferences.localDate), asc(healthDailyReferences.dayIndex), asc(healthDailyReferences.id));
@@ -106,6 +109,7 @@ export class BackupService implements BackupExporter {
         exportedAt,
         data: {
           inboxEntries: inboxEntryRows,
+          feishuIntakeCandidates: feishuIntakeCandidateRows,
           healthProfiles: healthProfileRows,
           healthWeekPlans: healthWeekPlanRows,
           healthDailyReferences: healthDailyReferenceRows,

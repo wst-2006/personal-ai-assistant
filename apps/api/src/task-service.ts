@@ -90,8 +90,20 @@ export class TaskService {
   constructor(private readonly store: TaskStore) {}
 
   async create(input: TaskInput): Promise<{ task: StoredTask; historicalOverlaps: TaskConflict[] }> {
+    return this.createWithId(input, randomUUID(), "app");
+  }
+
+  async createFromFeishu(input: TaskInput, taskId: string): Promise<{ task: StoredTask; historicalOverlaps: TaskConflict[] }> {
+    return this.createWithId(input, taskId, "feishu");
+  }
+
+  private async createWithId(
+    input: TaskInput,
+    taskId: string,
+    source: TaskEventSource
+  ): Promise<{ task: StoredTask; historicalOverlaps: TaskConflict[] }> {
     return this.store.runSerializable(async (transaction) => {
-      const record = toNewTaskRecord(input);
+      const record = toNewTaskRecord(input, taskId as NewTaskRecord["id"]);
       assertScheduleWindow(record);
       const blocking = await this.findConflicts(transaction, record);
       await this.assertConflictDecision(transaction, record, blocking, input.conflictDecision, input.expectedConflictFingerprint);
@@ -102,7 +114,7 @@ export class TaskService {
         taskId: task.id,
         fromStatus: null,
         toStatus: "open",
-        source: "app"
+        source
       });
       if (input.conflictDecision === "keep") {
         await transaction.insertConflictAcceptances(blocking.map((conflict) => canonicalAcceptance(task, conflict)));
@@ -117,8 +129,26 @@ export class TaskService {
   }
 
   async createInbox(entryKind: "idea" | "question", content: string, notes?: string | null): Promise<StoredInboxEntry> {
+    return this.createInboxWithId(entryKind, content, notes, randomUUID());
+  }
+
+  async createInboxFromFeishu(
+    entryKind: "idea" | "question",
+    content: string,
+    notes: string | null | undefined,
+    inboxEntryId: string
+  ): Promise<StoredInboxEntry> {
+    return this.createInboxWithId(entryKind, content, notes, inboxEntryId);
+  }
+
+  private async createInboxWithId(
+    entryKind: "idea" | "question",
+    content: string,
+    notes: string | null | undefined,
+    inboxEntryId: string
+  ): Promise<StoredInboxEntry> {
     return this.store.runSerializable((transaction) => transaction.insertInboxEntry({
-      id: randomUUID(), entryKind, content, notes: notes ?? null, version: 1
+      id: inboxEntryId, entryKind, content, notes: notes ?? null, version: 1
     }));
   }
 
@@ -482,11 +512,11 @@ export class TaskService {
   }
 }
 
-function toNewTaskRecord(input: TaskInput): NewTaskRecord {
+function toNewTaskRecord(input: TaskInput, id: NewTaskRecord["id"] = randomUUID()): NewTaskRecord {
   const startAt = input.scheduleKind === "exact" ? new Date(input.startAt!) : null;
   const endAt = input.scheduleKind === "exact" ? new Date(input.endAt!) : null;
   return {
-    id: randomUUID(),
+    id,
     title: input.title,
     sourceInboxEntryId: null,
     sourceLongRangePlanId: null,

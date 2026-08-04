@@ -188,6 +188,27 @@ try {
       AND indexname = 'app_conversation_messages_conversation_idx'
     ORDER BY name
   `);
+  const feishuIntakeColumnsResult = await client.query<{ column_name: string }>(`
+    SELECT column_name FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'feishu_intake_candidates'
+      AND column_name IN ('chat_id', 'operator_open_id', 'source_message_id', 'raw_text', 'candidate', 'state', 'version', 'target_task_id', 'target_inbox_entry_id', 'last_error', 'resolved_at')
+    ORDER BY column_name
+  `);
+  const feishuIntakeContractResult = await client.query<{ name: string }>(`
+    SELECT conname AS name FROM pg_constraint
+    WHERE conrelid = to_regclass('public.feishu_intake_candidates')
+      AND conname IN (
+        'feishu_intake_candidates_state_check',
+        'feishu_intake_candidates_version_check',
+        'feishu_intake_candidates_target_check',
+        'feishu_intake_candidates_confirmed_target_check'
+      )
+    UNION ALL
+    SELECT indexname AS name FROM pg_indexes
+    WHERE schemaname = 'public' AND tablename = 'feishu_intake_candidates'
+      AND indexname IN ('feishu_intake_candidates_source_message_unique', 'feishu_intake_candidates_active_idx')
+    ORDER BY name
+  `);
   const tableNames = tablesResult.rows.map((row) => row.table_name);
   const taskColumns = taskColumnsResult.rows.map((row) => row.column_name);
   const taskConstraints = taskConstraintsResult.rows.map((row) => row.conname);
@@ -206,7 +227,9 @@ try {
   const conversationTables = conversationTablesResult.rows.map((row) => row.table_name);
   const conversationColumns = conversationColumnsResult.rows.map((row) => `${row.table_name}.${row.column_name}`);
   const conversationContract = conversationContractResult.rows.map((row) => row.name);
-  const expectedTables = ["health_daily_references", "health_profiles", "health_sleep_analyses", "health_week_plans", "inbox_entries", "long_range_plan_milestones", "long_range_plan_task_tree_candidates", "long_range_plans", "tasks", "user_profiles"];
+  const feishuIntakeColumns = feishuIntakeColumnsResult.rows.map((row) => row.column_name);
+  const feishuIntakeContract = feishuIntakeContractResult.rows.map((row) => row.name);
+  const expectedTables = ["feishu_intake_candidates", "health_daily_references", "health_profiles", "health_sleep_analyses", "health_week_plans", "inbox_entries", "long_range_plan_milestones", "long_range_plan_task_tree_candidates", "long_range_plans", "tasks", "user_profiles"];
   const expectedColumns = ["source_inbox_entry_id", "source_long_range_plan_id"];
   const retiredTaskColumns = ["planned_effort_minutes", "difficulty", "task_type", "requires_continuous_focus"];
   const expectedConstraints = [
@@ -295,6 +318,15 @@ try {
     "app_conversation_messages.content"
   ];
   const expectedConversationContract = ["app_conversation_messages_conversation_idx", "app_conversation_messages_role_check"];
+  const expectedFeishuIntakeColumns = ["candidate", "chat_id", "last_error", "operator_open_id", "raw_text", "resolved_at", "source_message_id", "state", "target_inbox_entry_id", "target_task_id", "version"];
+  const expectedFeishuIntakeContract = [
+    "feishu_intake_candidates_active_idx",
+    "feishu_intake_candidates_confirmed_target_check",
+    "feishu_intake_candidates_source_message_unique",
+    "feishu_intake_candidates_state_check",
+    "feishu_intake_candidates_target_check",
+    "feishu_intake_candidates_version_check"
+  ];
 
   if (expectedTables.some((name) => !tableNames.includes(name))
     || expectedColumns.some((name) => !taskColumns.includes(name))
@@ -315,8 +347,10 @@ try {
     || expectedUserProfileContract.some((name) => !userProfileContract.includes(name))
     || expectedConversationTables.some((name) => !conversationTables.includes(name))
     || expectedConversationColumns.some((name) => !conversationColumns.includes(name))
-    || expectedConversationContract.some((name) => !conversationContract.includes(name))) {
-    throw new Error("Database schema does not match the live task, focus structure, inbox, reminder, health, long-range plan, task-tree, user-profile, or conversation migration contract.");
+    || expectedConversationContract.some((name) => !conversationContract.includes(name))
+    || expectedFeishuIntakeColumns.some((name) => !feishuIntakeColumns.includes(name))
+    || expectedFeishuIntakeContract.some((name) => !feishuIntakeContract.includes(name))) {
+    throw new Error("Database schema does not match the live task, focus structure, inbox, Feishu intake, reminder, health, long-range plan, task-tree, user-profile, or conversation migration contract.");
   }
 
   console.log(JSON.stringify({
@@ -339,7 +373,9 @@ try {
     userProfileContract,
     conversationTables,
     conversationColumns,
-    conversationContract
+    conversationContract,
+    feishuIntakeColumns,
+    feishuIntakeContract
   }, null, 2));
 } finally {
   await client.end();

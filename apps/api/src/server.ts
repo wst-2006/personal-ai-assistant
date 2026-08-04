@@ -27,6 +27,7 @@ import { ConversationService } from "./conversation-service.js";
 import { DeepSeekConversationResponder } from "./ai/conversation-responder.js";
 import { FeishuCardActionService, loadFeishuCardActionConfig } from "./feishu-card-actions.js";
 import { FeishuLongConnectionService, loadFeishuLongConnectionConfig } from "./feishu-long-connection.js";
+import { FeishuIntakeService, loadFeishuIntakeConfig } from "./feishu-intake-service.js";
 
 const config = loadServerConfig();
 const database = await connectVerifiedDatabase(loadDatabaseConfig());
@@ -36,13 +37,17 @@ const userProfileService = new UserProfileService(database.db);
 const focusService = new FocusService(database.db);
 const focusStructureService = new FocusStructureService(database.db);
 const feishuActionConfig = loadFeishuCardActionConfig(process.env);
-const feishuActions = feishuActionConfig ? new FeishuCardActionService(feishuActionConfig, taskService, focusService) : null;
+const feishuIntakeConfig = loadFeishuIntakeConfig(process.env);
 const feishuWebhookConfig = loadFeishuWebhookConfig(process.env);
 const feishuLongConnectionConfig = loadFeishuLongConnectionConfig(process.env);
-const feishuLongConnection = feishuActions && feishuLongConnectionConfig
-  ? new FeishuLongConnectionService(feishuLongConnectionConfig, feishuActions)
-  : null;
 const deepSeekConfig = loadDeepSeekConfig();
+const feishuIntake = feishuIntakeConfig
+  ? new FeishuIntakeService(feishuIntakeConfig, database.db, taskService, new DeepSeekTaskParser(deepSeekConfig, userProfileService))
+  : null;
+const feishuActions = feishuActionConfig ? new FeishuCardActionService(feishuActionConfig, taskService, focusService, feishuIntake ?? undefined) : null;
+const feishuLongConnection = feishuActions && feishuLongConnectionConfig
+  ? new FeishuLongConnectionService(feishuLongConnectionConfig, feishuActions, undefined, undefined, feishuIntake ?? undefined)
+  : null;
 const app = buildApp({
   taskService,
   focusService,
@@ -75,6 +80,7 @@ app.addHook("onClose", async () => {
 });
 
 try {
+  await feishuIntake?.recoverInterruptedConfirmations();
   await app.listen({ host: config.API_HOST, port: config.API_PORT });
   if (feishuLongConnection) await feishuLongConnection.start();
   else app.log.warn("Feishu long connection is disabled: App ID, App Secret, or target Open ID is not configured, or HTTP callback mode is selected.");

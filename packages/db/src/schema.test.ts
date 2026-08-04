@@ -4,6 +4,7 @@ import {
   focusStructureSegments,
   focusStructures,
   focusTimerJobs,
+  feishuIntakeCandidates,
   healthDailyReferences,
   healthProfiles,
   healthSleepAnalyses,
@@ -28,6 +29,13 @@ describe("formal task and inbox schema contract", () => {
     expect(inboxEntries.entryKind.name).toBe("entry_kind");
     expect(inboxEntries.convertedAt.name).toBe("converted_at");
     expect(inboxEntries.deletedAt.name).toBe("deleted_at");
+  });
+
+  it("persists Feishu intake candidates before an explicit confirmation creates data", () => {
+    expect(feishuIntakeCandidates.sourceMessageId.name).toBe("source_message_id");
+    expect(feishuIntakeCandidates.candidate.name).toBe("candidate");
+    expect(feishuIntakeCandidates.targetTaskId.name).toBe("target_task_id");
+    expect(feishuIntakeCandidates.targetInboxEntryId.name).toBe("target_inbox_entry_id");
   });
 
   it("binds reminder delivery to the current task schedule revision", () => {

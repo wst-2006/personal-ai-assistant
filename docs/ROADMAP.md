@@ -8,11 +8,12 @@
 - Focus timer states, outcome/satisfaction capture, and basic statistics
 - Review-page mode, brief generation flow, editable cyber diary, and export
 - One search adapter, one weather adapter, and an optional local Feishu
-  reminder queue
+  reminder queue with confirmed text intake
 
 ## Phase 2: Connected Workflow
 
-- Feishu bot intake and task controls
+- Broaden Feishu bot intake and task controls beyond the initial confirmed
+  text/idea/question flow
 - Feishu Calendar adapter and verified calendar synchronization
 - Framework-level goal decomposition and plan-change negotiation
 - PWA installation, richer long-range views, and basic points/tree feedback
