@@ -214,6 +214,14 @@ test.describe("真实今日时间轴",()=>{
       await closed;
       await expect(block).toHaveClass(/closed/);
       await expect(block).toContainText("已完成");
+      await block.getByLabel(`打开 ${title} 的任务操作`).click();
+      await page.getByRole("button",{name:"结果历史",exact:true}).click();
+      const historyDialog=page.getByRole("dialog",{name:"结果历史"});
+      await expect(historyDialog).toBeVisible();
+      await expect(historyDialog).toContainText("已完成");
+      await expect(historyDialog).toContainText("100%");
+      await expect(historyDialog).toContainText("软件记录");
+      await historyDialog.getByRole("button",{name:"关闭结果历史"}).click();
 
       await page.reload();
       await page.getByLabel("时间轴日期").fill(testDate);
