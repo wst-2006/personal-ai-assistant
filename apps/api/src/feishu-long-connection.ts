@@ -18,7 +18,6 @@ export interface FeishuChannelClient {
   disconnect(): Promise<void>;
   forceDisconnect(): Promise<void>;
   updateCard(messageId: string, card: object): Promise<void>;
-  recallMessage(messageId: string): Promise<void>;
   sendText(targetId: string, text: string): Promise<void>;
   sendCard(targetId: string, card: object): Promise<void>;
   onCardAction(handler: CardActionHandler): void;
@@ -77,30 +76,27 @@ export class FeishuLongConnectionService {
       try {
         const result = await this.actions.handle(event.operatorOpenId, event.value);
         try {
-          // A reminder card is a one-shot control. Once acted on, retract the
-          // original message so an obsolete Start/Other arrangement button
-          // cannot remain in the conversation.
-          await channel.recallMessage(event.messageId);
-        } catch (error) {
-          // Some tenants may reject message deletion. Fall back to replacing
-          // the card with a terminal result before sending the confirmation.
-          this.logger.warn(`Feishu card recall failed; trying card update: ${errorMessage(error)}`);
-          try {
-            await channel.updateCard(event.messageId, actionResultCard(result));
-          } catch (updateError) {
-            this.logger.warn(`Feishu card update failed; sending text fallback: ${errorMessage(updateError)}`);
-          }
+          // Preserve the original message and replace its controls with an
+          // immutable terminal state. Feishu recalls always leave a visible
+          // "message recalled" trace, which is undesirable for one-shot cards.
+          await channel.updateCard(event.messageId, actionResultCard(result));
+          return;
+        } catch (updateError) {
+          this.logger.warn(`Feishu card update failed; sending text fallback: ${errorMessage(updateError)}`);
         }
-        // Long-connection card callbacks do not provide an in-place toast response.
-        // A short confirmation message guarantees visible feedback even when the
-        // Feishu client keeps rendering the original card.
         await channel.sendText(event.chatId, result.message);
       } catch (error) {
         this.logger.warn(`Feishu card action rejected: ${errorMessage(error)}`);
+        const message = "操作未完成，请打开软件查看任务当前状态。";
         try {
-          await channel.sendText(event.chatId, error instanceof Error ? error.message : "操作未完成，请打开软件查看任务当前状态。");
-        } catch (fallbackError) {
-          this.logger.warn(`Feishu card action fallback failed: ${errorMessage(fallbackError)}`);
+          await channel.updateCard(event.messageId, actionResultCard({ type: "error", message }));
+        } catch (updateError) {
+          this.logger.warn(`Feishu card error update failed; sending text fallback: ${errorMessage(updateError)}`);
+          try {
+            await channel.sendText(event.chatId, message);
+          } catch (fallbackError) {
+            this.logger.warn(`Feishu card action fallback failed: ${errorMessage(fallbackError)}`);
+          }
         }
       }
     });
@@ -180,7 +176,7 @@ function createSdkChannel(config: FeishuLongConnectionConfig): FeishuChannelClie
   return new SdkFeishuChannel(channel);
 }
 
-class SdkFeishuChannel implements FeishuChannelClient {
+export class SdkFeishuChannel implements FeishuChannelClient {
   constructor(private readonly channel: LarkChannel) {}
   connect() { return this.channel.connect(); }
   disconnect() { return this.channel.disconnect(); }
@@ -189,7 +185,6 @@ class SdkFeishuChannel implements FeishuChannelClient {
     await this.channel.disconnect();
   }
   updateCard(messageId: string, card: object) { return this.channel.updateCard(messageId, card); }
-  recallMessage(messageId: string) { return this.channel.recallMessage(messageId); }
   async sendText(targetId: string, text: string) {
     await this.channel.send(targetId, { text });
   }
@@ -197,12 +192,17 @@ class SdkFeishuChannel implements FeishuChannelClient {
     await this.channel.send(targetId, { card });
   }
   onCardAction(handler: CardActionHandler) {
-    this.channel.on("cardAction", (event: CardActionEvent) => handler({
-      messageId: event.messageId,
-      chatId: event.chatId,
-      operatorOpenId: event.operator.openId,
-      value: event.action.value
-    }));
+    this.channel.on("cardAction", (event: CardActionEvent) => {
+      // The SDK waits for this listener before acknowledging the button click.
+      // Detach business processing so Feishu receives its acknowledgement
+      // immediately instead of showing error 300000 after a three-second wait.
+      void handler({
+        messageId: event.messageId,
+        chatId: event.chatId,
+        operatorOpenId: event.operator.openId,
+        value: event.action.value
+      }).catch(() => undefined);
+    });
   }
   onMessage(handler: TextMessageHandler) {
     this.channel.on("message", (event: NormalizedMessage) => handler({

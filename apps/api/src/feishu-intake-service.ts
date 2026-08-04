@@ -172,7 +172,7 @@ export class FeishuIntakeService {
         const existing = await this.getTask(current.targetTaskId);
         if (!existing) await this.taskService.createFromFeishu(input, current.targetTaskId);
         const confirmed = await this.transition(current.id, current.version, "confirming", "confirmed", { resolvedAt: new Date() });
-        return confirmed ? { type: "success", message: "已确认并创建任务；请在软件中查看今日时间轴。" } : this.confirmationStateAfterRace(current.id);
+        return confirmed ? confirmedMessage(confirmed) : this.confirmationStateAfterRace(current.id);
       }
 
       if (!current.targetInboxEntryId) return this.needsDesktop(current, "想法或问题缺少保存目标");
@@ -393,9 +393,39 @@ function stateMessage(state: string): string {
 }
 
 function confirmedMessage(candidate: StoredFeishuIntakeCandidate): FeishuIntakeActionResult {
-  return candidate.targetTaskId
-    ? { type: "success", message: "该任务已经创建；请在软件中查看。" }
-    : { type: "success", message: "该想法或问题已经保存；尚未创建任务。" };
+  if (!candidate.targetTaskId) return { type: "success", message: "该想法或问题已经保存；尚未创建任务。" };
+  const parsed = parseCandidate(candidate.candidate);
+  if (!parsed || parsed.entryType !== "task") return { type: "success", message: "该任务已经创建；请在软件中查看对应日期。" };
+  const schedule = confirmedSchedule(parsed);
+  return {
+    type: "success",
+    message: `已创建：${schedule} · ${parsed.title}\n请在软件中切换到 ${confirmedDateLabel(parsed)} 查看。`
+  };
+}
+
+function confirmedSchedule(candidate: NaturalLanguageTaskCandidate): string {
+  if (candidate.schedulePrecision === "exact" && candidate.startAt && candidate.endAt) {
+    const date = new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", month: "long", day: "numeric" }).format(new Date(candidate.startAt));
+    const time = new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hour12: false });
+    return `${date} ${time.format(new Date(candidate.startAt))}-${time.format(new Date(candidate.endAt))}`;
+  }
+  if (candidate.date && (candidate.schedulePrecision === "morning" || candidate.schedulePrecision === "afternoon" || candidate.schedulePrecision === "evening")) {
+    return `${dateLabel(candidate.date)} ${daypartLabel(candidate.schedulePrecision)}`;
+  }
+  return candidate.date ? dateLabel(candidate.date) : "未排期";
+}
+
+function confirmedDateLabel(candidate: NaturalLanguageTaskCandidate): string {
+  if (candidate.date) return dateLabel(candidate.date);
+  if (candidate.startAt) {
+    return new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", month: "long", day: "numeric" }).format(new Date(candidate.startAt));
+  }
+  return "任务列表";
+}
+
+function dateLabel(value: string): string {
+  const [, month, day] = value.split("-").map(Number);
+  return `${month}月${day}日`;
 }
 
 function isUniqueViolation(error: unknown): boolean {

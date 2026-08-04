@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { CardActionEvent, LarkChannel } from "@larksuiteoapi/node-sdk";
 import type { FeishuCardActionService } from "./feishu-card-actions.js";
 import {
   FeishuLongConnectionService,
+  SdkFeishuChannel,
   loadFeishuLongConnectionConfig,
   type FeishuChannelClient,
   type FeishuConnectionLogger
@@ -14,7 +16,6 @@ class FakeChannel implements FeishuChannelClient {
   disconnect = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
   forceDisconnect = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
   updateCard = vi.fn<(messageId: string, card: object) => Promise<void>>().mockResolvedValue(undefined);
-  recallMessage = vi.fn<(messageId: string) => Promise<void>>().mockResolvedValue(undefined);
   sendText = vi.fn<(targetId: string, text: string) => Promise<void>>().mockResolvedValue(undefined);
   sendCard = vi.fn<(targetId: string, card: object) => Promise<void>>().mockResolvedValue(undefined);
   cardHandler?: (event: { messageId: string; chatId: string; operatorOpenId: string; value: unknown }) => Promise<void>;
@@ -40,7 +41,7 @@ describe("Feishu long connection", () => {
     })).toBeNull();
   });
 
-  it("connects, handles card actions, updates the card, and disconnects on shutdown", async () => {
+  it("connects, handles card actions, replaces the acted card, and disconnects on shutdown", async () => {
     const channel = new FakeChannel();
     const actions = { handle: vi.fn().mockResolvedValue({ type: "success", message: "done" }) };
     const service = new FeishuLongConnectionService(config, actions as unknown as FeishuCardActionService, () => channel, silentLogger);
@@ -49,9 +50,10 @@ describe("Feishu long connection", () => {
     expect(channel.connect).toHaveBeenCalledOnce();
     await channel.cardHandler?.({ messageId: "om_1", chatId: "oc_1", operatorOpenId: "ou_owner", value: { action: "start" } });
     expect(actions.handle).toHaveBeenCalledWith("ou_owner", { action: "start" });
-    expect(channel.recallMessage).toHaveBeenCalledWith("om_1");
-    expect(channel.updateCard).not.toHaveBeenCalled();
-    expect(channel.sendText).toHaveBeenCalledWith("oc_1", "done");
+    expect(channel.updateCard).toHaveBeenCalledWith("om_1", expect.objectContaining({ header: expect.any(Object) }));
+    expect(JSON.stringify(channel.updateCard.mock.calls[0]?.[1])).toContain("done");
+    expect(JSON.stringify(channel.updateCard.mock.calls[0]?.[1])).not.toContain('"tag":"action"');
+    expect(channel.sendText).not.toHaveBeenCalled();
 
     await service.stop();
     expect(channel.forceDisconnect).toHaveBeenCalledOnce();
@@ -59,7 +61,7 @@ describe("Feishu long connection", () => {
 
   it("sends a visible text fallback when Feishu rejects the card update", async () => {
     const channel = new FakeChannel();
-    channel.recallMessage.mockRejectedValueOnce(new Error("permission denied"));
+    channel.updateCard.mockRejectedValueOnce(new Error("permission denied"));
     const actions = { handle: vi.fn().mockResolvedValue({ type: "success", message: "已记录另有安排" }) };
     const service = new FeishuLongConnectionService(config, actions as unknown as FeishuCardActionService, () => channel, silentLogger);
 
@@ -69,6 +71,36 @@ describe("Feishu long connection", () => {
     expect(channel.updateCard).toHaveBeenCalledWith("om_2", expect.objectContaining({ header: expect.any(Object) }));
     expect(channel.sendText).toHaveBeenCalledWith("oc_2", "已记录另有安排");
     await service.stop();
+  });
+
+  it("acknowledges the SDK card event before asynchronous business processing finishes", async () => {
+    let sdkHandler: ((event: CardActionEvent) => void | Promise<void>) | undefined;
+    const rawChannel = {
+      on: vi.fn((name: string, handler: (event: CardActionEvent) => void | Promise<void>) => {
+        if (name === "cardAction") sdkHandler = handler;
+      })
+    } as unknown as LarkChannel;
+    const channel = new SdkFeishuChannel(rawChannel);
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    let completed = false;
+    channel.onCardAction(async () => {
+      await pending;
+      completed = true;
+    });
+
+    expect(sdkHandler).toBeTypeOf("function");
+    const returned = sdkHandler!({
+      messageId: "om_ack",
+      chatId: "oc_ack",
+      operator: { openId: "ou_owner" },
+      action: { tag: "button", value: { action: "intake_confirm" } }
+    });
+
+    expect(returned).toBeUndefined();
+    expect(completed).toBe(false);
+    release();
+    await vi.waitFor(() => expect(completed).toBe(true));
   });
 
   it("routes an owner text message to the intake service and sends its confirmation card", async () => {

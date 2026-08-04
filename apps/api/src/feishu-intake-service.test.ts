@@ -70,6 +70,9 @@ describe("Feishu text intake", () => {
       action: "intake_confirm", candidateId: candidate.id, expectedVersion: candidate.version
     });
     expect(first).toMatchObject({ type: "success" });
+    expect(first.message).toContain("12月28日 09:00-10:00");
+    expect(first.message).toContain(`飞书确认任务 ${suffix}`);
+    expect(first.message).not.toContain("今日时间轴");
 
     const [confirmed] = await connection.db.select().from(feishuIntakeCandidates).where(eq(feishuIntakeCandidates.id, candidate.id));
     expect(confirmed?.state).toBe("confirmed");
@@ -81,7 +84,7 @@ describe("Feishu text intake", () => {
 
     await expect(service.handleCardAction(owner, {
       action: "intake_confirm", candidateId: candidate.id, expectedVersion: candidate.version
-    })).resolves.toMatchObject({ type: "success", message: expect.stringContaining("已经创建") });
+    })).resolves.toMatchObject({ type: "success", message: expect.stringContaining("已创建") });
     expect(await connection.db.select().from(tasks).where(eq(tasks.title, `飞书确认任务 ${suffix}`))).toHaveLength(1);
   });
 
