@@ -23,10 +23,7 @@ impl LocalRuntime {
         let worker = runtime.join("worker").join("dist").join("worker.js");
         let bundled_env_template = runtime.join(".env.example");
 
-        if !node.is_file()
-            || !api.is_file()
-            || !worker.is_file()
-            || !bundled_env_template.is_file()
+        if !node.is_file() || !api.is_file() || !worker.is_file() || !bundled_env_template.is_file()
         {
             return Err(format!(
                 "standalone runtime is incomplete under {}",
@@ -59,9 +56,54 @@ impl LocalRuntime {
             ));
         }
 
-        self.spawn_node(&runtime, &node, &api, &user_env, &app_data_dir, "api")?;
-        self.spawn_node(&runtime, &node, &worker, &user_env, &app_data_dir, "worker")?;
-        wait_for_local_api()?;
+        if local_api_port_is_in_use()? {
+            return Err(
+                "local API port 127.0.0.1:3000 is already in use; close the source API or another running desktop instance before starting the installed application"
+                    .to_string(),
+            );
+        }
+
+        let mut api_child =
+            self.spawn_node(&runtime, &node, &api, &user_env, &app_data_dir, "api")?;
+        if let Err(error) = wait_for_local_api(&mut api_child) {
+            stop_process_tree(api_child);
+            return Err(error);
+        }
+
+        let mut worker_child =
+            match self.spawn_node(&runtime, &node, &worker, &user_env, &app_data_dir, "worker") {
+                Ok(child) => child,
+                Err(error) => {
+                    stop_process_tree(api_child);
+                    return Err(error);
+                }
+            };
+        thread::sleep(Duration::from_millis(300));
+        match worker_child.try_wait() {
+            Ok(Some(status)) => {
+                stop_process_tree(api_child);
+                return Err(format!(
+                    "bundled worker exited during startup with status {status}; inspect worker.stderr.log"
+                ));
+            }
+            Ok(None) => {}
+            Err(error) => {
+                stop_process_tree(api_child);
+                stop_process_tree(worker_child);
+                return Err(format!("failed to inspect bundled worker process: {error}"));
+            }
+        }
+
+        let mut children = match self.children.lock() {
+            Ok(children) => children,
+            Err(_) => {
+                stop_process_tree(api_child);
+                stop_process_tree(worker_child);
+                return Err("local runtime lock poisoned".to_string());
+            }
+        };
+        children.push(api_child);
+        children.push(worker_child);
         Ok(())
     }
 
@@ -90,7 +132,7 @@ impl LocalRuntime {
         env_file: &Path,
         log_directory: &Path,
         service: &str,
-    ) -> Result<(), String> {
+    ) -> Result<Child, String> {
         let stdout = OpenOptions::new()
             .create(true)
             .append(true)
@@ -113,14 +155,9 @@ impl LocalRuntime {
             .stdout(Stdio::from(stdout))
             .stderr(Stdio::from(stderr));
         configure_command(&mut command);
-        let child = command
+        command
             .spawn()
-            .map_err(|error| format!("failed to start bundled {service}: {error}"))?;
-        self.children
-            .lock()
-            .map_err(|_| "local runtime lock poisoned")?
-            .push(child);
-        Ok(())
+            .map_err(|error| format!("failed to start bundled {service}: {error}"))
     }
 
     fn stop(&self) {
@@ -133,13 +170,30 @@ impl LocalRuntime {
     }
 }
 
-fn wait_for_local_api() -> Result<(), String> {
-    let address: SocketAddr = "127.0.0.1:3000"
+fn local_api_address() -> Result<SocketAddr, String> {
+    "127.0.0.1:3000"
         .parse()
-        .map_err(|error| format!("invalid bundled API address: {error}"))?;
+        .map_err(|error| format!("invalid bundled API address: {error}"))
+}
+
+fn local_api_port_is_in_use() -> Result<bool, String> {
+    let address = local_api_address()?;
+    Ok(TcpStream::connect_timeout(&address, Duration::from_millis(250)).is_ok())
+}
+
+fn wait_for_local_api(api_child: &mut Child) -> Result<(), String> {
+    let address = local_api_address()?;
     let mut last_error = "API did not accept a connection".to_string();
 
     for _ in 0..50 {
+        if let Some(status) = api_child
+            .try_wait()
+            .map_err(|error| format!("failed to inspect bundled API process: {error}"))?
+        {
+            return Err(format!(
+                "bundled API exited during startup with status {status}; inspect api.stderr.log"
+            ));
+        }
         match TcpStream::connect_timeout(&address, Duration::from_millis(250)) {
             Ok(mut stream) => {
                 let _ = stream.set_read_timeout(Some(Duration::from_millis(500)));
