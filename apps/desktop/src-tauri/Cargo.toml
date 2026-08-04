@@ -1,6 +1,6 @@
 [package]
 name = "personal-ai-desktop"
-version = "0.1.5"
+version = "0.1.6"
 description = "Personal AI Assistant desktop shell"
 edition = "2021"
 

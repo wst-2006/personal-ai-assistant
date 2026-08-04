@@ -122,11 +122,16 @@ test.describe("真实今日时间轴",()=>{
     const ids:string[]=[];const title=`E2E 空白创建 ${Date.now().toString(36)}`;const testDate=isolatedDate();
     try{
       await page.goto("/");
+      const dateLoaded=page.waitForResponse((response)=>response.url()===`${apiBase}/api/v1/tasks?date=${testDate}`&&response.request().method()==="GET"&&response.status()===200);
       await page.getByLabel("时间轴日期").fill(testDate);
+      await dateLoaded;
       const scroll=page.locator(".day-scroll");
       await scroll.evaluate((element)=>{element.scrollTop=9*72-120;});
-      const grid=page.locator(".day-grid");const box=await grid.boundingBox();expect(box).not.toBeNull();
-      await page.mouse.click(box!.x+Math.min(180,box!.width-20),box!.y+9*72);
+      const box=await scroll.boundingBox();expect(box).not.toBeNull();
+      const clickX=box!.x+Math.min(180,box!.width-20);const clickY=box!.y+120;
+      await page.mouse.move(clickX,clickY);await page.mouse.down();
+      await expect(page.locator(".range-preview")).toContainText("09:00–09:30");
+      await page.mouse.up();
       await expect(page.getByRole("dialog")).toBeVisible();
       await expect(page.getByLabel("开始时间")).toHaveValue("09:00");
       await expect(page.getByLabel("结束时间")).toHaveValue("09:30");
