@@ -5,7 +5,7 @@ import { loadDatabaseConfig } from "@personal-ai/db/config";
 import { taskLifecycleEvents, tasks } from "@personal-ai/db/schema";
 import { eq } from "drizzle-orm";
 
-const apiBase = "http://127.0.0.1:3000";
+const apiBase = process.env.PLAYWRIGHT_API_BASE_URL ?? "http://127.0.0.1:3100";
 
 function collectKeys(value: unknown, keys = new Set<string>()): Set<string> {
   if (Array.isArray(value)) {

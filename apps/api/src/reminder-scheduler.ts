@@ -7,7 +7,7 @@ type SchedulableTask = typeof tasks.$inferSelect;
 
 export async function syncTaskStartReminder(db: AppDatabase, task: SchedulableTask, now = new Date()): Promise<void> {
   const channel = "feishu";
-  const kind = "task_start";
+  const kinds: string[] = ["task_start", "task_follow_up"];
   const shouldSchedule = !task.deletedAt
     && task.lifecycleStatus === "open"
     && task.scheduleKind === "exact"
@@ -17,7 +17,7 @@ export async function syncTaskStartReminder(db: AppDatabase, task: SchedulableTa
       .where(and(
         eq(reminderJobs.taskId, task.id),
         eq(reminderJobs.channel, channel),
-        eq(reminderJobs.kind, kind),
+        inArray(reminderJobs.kind, kinds),
         inArray(reminderJobs.status, ["pending", "processing", "failed"])
       ));
     return;
@@ -32,14 +32,37 @@ export async function syncTaskStartReminder(db: AppDatabase, task: SchedulableTa
     timeZone: task.timeZone,
     scheduleRevision: task.scheduleRevision
   };
+  await upsertReminder(db, task, "task_start", startAt, availableAt, payload, now);
+  await upsertReminder(db, task, "task_follow_up", startAt, new Date(startAt.getTime() + 5 * 60_000), payload, now);
+}
+
+export async function cancelTaskFollowUp(db: AppDatabase, taskId: string, now = new Date()): Promise<void> {
+  await db.update(reminderJobs).set({ status: "cancelled", updatedAt: now })
+    .where(and(
+      eq(reminderJobs.taskId, taskId),
+      eq(reminderJobs.channel, "feishu"),
+      eq(reminderJobs.kind, "task_follow_up"),
+      inArray(reminderJobs.status, ["pending", "processing", "failed"])
+    ));
+}
+
+async function upsertReminder(
+  db: AppDatabase,
+  task: SchedulableTask,
+  kind: "task_start" | "task_follow_up",
+  scheduledAt: Date,
+  availableAt: Date,
+  payload: Record<string, unknown>,
+  now: Date
+): Promise<void> {
   await db.insert(reminderJobs).values({
-    id: randomUUID(), taskId: task.id, channel, kind,
-    scheduleRevision: task.scheduleRevision, status: "pending", scheduledAt: startAt, availableAt,
+    id: randomUUID(), taskId: task.id, channel: "feishu", kind,
+    scheduleRevision: task.scheduleRevision, status: "pending", scheduledAt, availableAt,
     attempts: 0, payload, lastError: null, sentAt: null, updatedAt: now
   }).onConflictDoUpdate({
     target: [reminderJobs.taskId, reminderJobs.channel, reminderJobs.kind],
     set: {
-      scheduleRevision: task.scheduleRevision, status: "pending", scheduledAt: startAt, availableAt,
+      scheduleRevision: task.scheduleRevision, status: "pending", scheduledAt, availableAt,
       attempts: 0, payload, lastError: null, sentAt: null, updatedAt: now
     }
   });

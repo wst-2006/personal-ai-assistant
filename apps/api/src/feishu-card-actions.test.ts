@@ -10,10 +10,10 @@ import type { DesktopCommandService } from "./desktop-command-service.js";
 
 const taskId = "7f9a4ad8-4dc7-4d18-92df-1d8be780a1b1";
 
-function service() {
+function service(sessionState: "scheduled" | "preparing" = "preparing") {
   const taskService = { get: vi.fn().mockResolvedValue({ task: { id: taskId, version: 8, scheduleRevision: 3 } }) };
   const focusService = {
-    create: vi.fn().mockResolvedValue({ id: "focus-1", version: 1 }),
+    create: vi.fn().mockResolvedValue({ id: "focus-1", version: 1, state: sessionState }),
     respondToReminder: vi.fn().mockResolvedValue({ id: "focus-1", version: 2 })
   };
   const desktopCommandService = {
@@ -49,6 +49,12 @@ describe("Feishu card actions", () => {
     await expect(actions.handle("ou_owner", { action: "start", taskId, scheduleRevision: 3 }))
       .resolves.toEqual({ type: "success", message: expect.stringContaining("1 分钟准备") });
     expect(focusService.create).toHaveBeenCalledWith(taskId, 8, "prepare");
+  });
+
+  it("tells a future task that preparation starts at the scheduled time", async () => {
+    const { actions } = service("scheduled");
+    await expect(actions.handle("ou_owner", { action: "start", taskId, scheduleRevision: 3 }))
+      .resolves.toEqual({ type: "success", message: expect.stringContaining("到任务开始时间") });
   });
 
   it("records other arrangement while retaining the scheduled task", async () => {

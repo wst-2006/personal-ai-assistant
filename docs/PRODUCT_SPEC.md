@@ -28,6 +28,28 @@ creates search-backed daily briefs when explicitly requested.
 - Task outcome and subjective satisfaction are independent records.
 - Task outcomes are append-only; reopening clears only the current result.
 - Only partial and complete outcomes contribute effective focus time.
+- A future exact task that the user confirms for focus waits in `scheduled`;
+  at `startAt` it enters a one-minute preparation countdown and then starts
+  automatically. The countdown may be skipped manually. The fixed task end is
+  never extended.
+- Current focus sessions do not support pause or manual restart. Historical
+  pause fields remain compatibility data only. Beginning preparation locks the
+  current task's confirmed focus structure, while unrelated tasks remain
+  editable.
+- A 30-minute task is one continuous 30-minute focus segment. A 60-minute
+  continuous task defaults to 55 minutes of focus plus a 5-minute final rest.
+  Longer continuous tasks also reserve a final 5-15 minute user-configurable
+  rest. Segmented plans give every focus segment its own independently
+  adjustable 5-15 minute rest and must exactly fill the fixed task interval.
+- Late starts resume at the current clock position inside the confirmed
+  structure. Earlier segments are recorded as skipped; elapsed time is not
+  fabricated, compressed, or rearranged. The final rest may be explicitly
+  skipped and recorded.
+- Exact tasks maintain a 15-minute reminder and a durable five-minute
+  non-response follow-up. An explicit start or other-arrangement response
+  cancels the follow-up. Without a response, the local Worker records one
+  system `not_completed` outcome and closes the task even when the main window
+  is hidden, provided the desktop runtime is still running.
 - A review session may be saved without a brief. A cyber diary requires a
   review message and references both its review session and a confirmed brief.
 - A normal conversation may generate a brief only when explicitly requested;

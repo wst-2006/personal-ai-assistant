@@ -4,7 +4,7 @@ import { loadDatabaseConfig } from "@personal-ai/db/config";
 import { inboxEntries } from "@personal-ai/db/schema";
 import { eq } from "drizzle-orm";
 
-const apiBase = "http://127.0.0.1:3000";
+const apiBase = process.env.PLAYWRIGHT_API_BASE_URL ?? "http://127.0.0.1:3100";
 
 type ParsedCandidate = {
   title: string;
@@ -44,12 +44,39 @@ async function softDeleteTask(request: APIRequestContext, id: string) {
   });
 }
 
+async function findAvailableExactDate(request: APIRequestContext): Promise<string> {
+  const cursor = new Date("2090-03-18T00:00:00.000Z");
+  for (let offset = 0; offset < 366; offset += 1) {
+    const date = cursor.toISOString().slice(0, 10);
+    const response = await request.get(`${apiBase}/api/v1/tasks?date=${date}`);
+    if (!response.ok()) throw new Error(`Unable to inspect candidate test date ${date}.`);
+    const body = await response.json() as { tasks: Array<{
+      lifecycleStatus: string;
+      scheduleKind: string;
+      startAt: string | null;
+      endAt: string | null;
+    }> };
+    const incomingStart = new Date(`${date}T06:00:00.000Z`).getTime();
+    const incomingEnd = new Date(`${date}T07:00:00.000Z`).getTime();
+    const blocked = body.tasks.some((task) => task.scheduleKind === "exact"
+      && ["open", "active", "awaiting_outcome"].includes(task.lifecycleStatus)
+      && task.startAt !== null
+      && task.endAt !== null
+      && new Date(task.startAt).getTime() < incomingEnd
+      && new Date(task.endAt).getTime() > incomingStart);
+    if (!blocked) return date;
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  throw new Error("No non-conflicting exact candidate date was available in the test range.");
+}
+
 test("AI 任务候选在确认前不写入，编辑后通过真实任务 API 持久化", async ({ page, request }) => {
   test.setTimeout(60_000);
   const suffix = Date.now().toString(36);
   const originalTitle = `E2E AI 原始任务 ${suffix}`;
   const editedTitle = `E2E AI 已确认任务 ${suffix}`;
   const editedNotes = `E2E AI 编辑备注 ${suffix}`;
+  const editedDate = await findAvailableExactDate(request);
   let taskId: string | null = null;
   let taskWrites = 0;
   let inboxWrites = 0;
@@ -78,15 +105,19 @@ test("AI 任务候选在确认前不写入，编辑后通过真实任务 API 持
     await expect(page.getByLabel("候选日期")).toHaveValue("2090-03-17");
 
     await page.getByLabel("候选标题").fill(editedTitle);
-    await page.getByLabel("候选日期").fill("2090-03-18");
+    await page.getByLabel("候选日期").fill(editedDate);
     await page.getByLabel("候选开始时间").fill("14:00");
     await page.getByLabel("候选结束时间").fill("15:00");
     await page.getByLabel("候选备注").fill(editedNotes);
 
-    const created = page.waitForResponse((response) => response.url() === `${apiBase}/api/v1/tasks`
-      && response.request().method() === "POST" && response.status() === 201);
-    await page.getByRole("button", { name: "确认并保存任务", exact: true }).click();
-    const response = await created;
+    const [response] = await Promise.all([
+      page.waitForResponse((candidateResponse) => candidateResponse.url() === `${apiBase}/api/v1/tasks`
+        && candidateResponse.request().method() === "POST"),
+      page.getByRole("button", { name: "确认并保存任务", exact: true }).click()
+    ]);
+    if (response.status() !== 201) {
+      throw new Error(`Task candidate save returned ${response.status()}: ${await response.text()}`);
+    }
     const task = (await response.json()).task as {
       id: string;
       title: string;
@@ -103,9 +134,9 @@ test("AI 任务候选在确认前不写入，编辑后通过真实任务 API 持
     expect(task).toMatchObject({
       title: editedTitle,
       scheduleKind: "exact",
-      localDate: "2090-03-18",
-      startAt: "2090-03-18T06:00:00.000Z",
-      endAt: "2090-03-18T07:00:00.000Z",
+      localDate: editedDate,
+      startAt: `${editedDate}T06:00:00.000Z`,
+      endAt: `${editedDate}T07:00:00.000Z`,
       notes: editedNotes
     });
 
@@ -115,14 +146,14 @@ test("AI 任务候选在确认前不写入，编辑后通过真实任务 API 持
       id: task.id,
       title: editedTitle,
       scheduleKind: "exact",
-      localDate: "2090-03-18",
+      localDate: editedDate,
       notes: editedNotes
     });
 
-    await page.getByLabel("时间轴日期").fill("2090-03-18");
+    await page.getByLabel("时间轴日期").fill(editedDate);
     await expect(page.locator(`[data-task-id="${task.id}"]`)).toContainText(editedTitle);
     await page.reload();
-    await page.getByLabel("时间轴日期").fill("2090-03-18");
+    await page.getByLabel("时间轴日期").fill(editedDate);
     await expect(page.locator(`[data-task-id="${task.id}"]`)).toContainText("14:00–15:00");
   } finally {
     if (taskId) await softDeleteTask(request, taskId);

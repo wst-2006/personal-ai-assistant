@@ -38,18 +38,25 @@ try {
   }
 
   const reminder = await connection.client.query<{
+    kind: "task_start" | "task_follow_up";
     schedule_revision: number;
     scheduled_at: Date;
     available_at: Date;
     payload: { title?: string; scheduleRevision?: number };
-  }>(`SELECT schedule_revision, scheduled_at, available_at, payload FROM reminder_jobs WHERE task_id = $1`, [createdTaskId]);
-  const job = reminder.rows[0];
-  if (!job || job.schedule_revision !== 1 || job.scheduled_at.getTime() - job.available_at.getTime() !== 15 * 60 * 1000
-    || job.payload.title !== "database-persistence-verification" || job.payload.scheduleRevision !== 1) {
-    throw new Error("Task reminder was not persisted with the exact schedule contract.");
+  }>(`SELECT kind, schedule_revision, scheduled_at, available_at, payload FROM reminder_jobs WHERE task_id = $1 ORDER BY kind`, [createdTaskId]);
+  const startReminder = reminder.rows.find((job) => job.kind === "task_start");
+  const followUp = reminder.rows.find((job) => job.kind === "task_follow_up");
+  const validContract = (job: typeof reminder.rows[number] | undefined) => Boolean(job
+    && job.schedule_revision === 1
+    && job.payload.title === "database-persistence-verification"
+    && job.payload.scheduleRevision === 1);
+  if (!validContract(startReminder) || !validContract(followUp)
+    || startReminder!.scheduled_at.getTime() - startReminder!.available_at.getTime() !== 15 * 60 * 1000
+    || followUp!.available_at.getTime() - followUp!.scheduled_at.getTime() !== 5 * 60 * 1000) {
+    throw new Error("Task reminder and no-response follow-up were not persisted with the exact schedule contract.");
   }
 
-  console.log("Task and 15-minute reminder persistence verified with exact test-record cleanup.");
+  console.log("Task, 15-minute reminder, and 5-minute no-response follow-up persistence verified with exact test-record cleanup.");
 } finally {
   await app.close();
   if (createdTaskId) {

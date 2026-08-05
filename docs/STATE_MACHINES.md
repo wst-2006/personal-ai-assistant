@@ -26,23 +26,46 @@ subjective satisfaction.
 
 ## Focus Session
 
-`scheduled -> reminded -> preparing -> awaiting_start -> running -> ended ->
-evaluated`
+The normal confirmed execution path is:
 
-"Other arrangement" ends the session and opens a plan-change conversation. A
-five-minute non-response ends the session, appends a system-sourced
-`not_completed` outcome, closes the task, and leaves reopening as an explicit
-user decision. There is no pause, soft start, or manual restart. Once preparation
-begins, the focus structure is immutable. A late start is clipped to the
-task's fixed `endAt`; it never extends the task or creates a new session after
-the fixed end. Only `partial` and `complete` evaluations count accumulated
-active minutes as effective focus time.
+`scheduled -> preparing -> running -> ended -> evaluated`
+
+`reminded` is a separate waiting-for-response entry state, not a mandatory
+step in every session. A positive response moves to `scheduled` when the exact
+task has not started yet, or directly to `preparing` when the task interval is
+already in progress. "Other arrangement" ends that reminder interaction and
+opens a plan-change conversation without changing the stored task.
+
+Preparation lasts one minute and then starts timing automatically. The user
+may explicitly skip the remaining preparation countdown and start immediately.
+There is no pause or manual restart in the current API, UI, or state machine.
+Legacy `awaiting_start`, `paused`, and pause timestamp columns remain readable
+only for historical compatibility; new operations do not create those states.
+
+Once preparation begins, the current task's focus structure is immutable;
+other tasks remain editable. A late start locates the user's current position
+inside the already confirmed structure, marks earlier segments as skipped,
+records only the actually executed seconds, and keeps the original fixed
+`endAt`. It never compresses, extends, or automatically rearranges the
+structure. The user may explicitly skip only the final rest segment; doing so
+ends the session and records that decision. Only `partial` and `complete`
+evaluations count executed focus-segment seconds as effective focus time.
+
+Every eligible exact task has two revision-bound durable reminder jobs: a
+start reminder available 15 minutes before `startAt`, and a non-response
+follow-up due five minutes after `startAt`. An explicit start or "other
+arrangement" response cancels the follow-up. If neither the app nor Feishu
+receives a response, the local Worker creates or stops a `stopped_no_response`
+session, appends one system `not_completed` outcome, and closes the task. This
+works while the main window is closed as long as the local desktop runtime and
+Worker are running.
 
 Focus structures are durable candidates tied to the task version and
 `scheduleRevision`. A continuous block of 30 minutes is one uninterrupted
 focus segment. A block of 60 minutes or longer reserves a final rest segment,
 defaulting to 5 minutes and allowing 5-15 minutes. Segmented structures must
-alternate focus and rest and exactly fill the fixed task interval.
+alternate focus and rest, every focus segment must have its own 5-15 minute
+rest segment, and all segments must exactly fill the fixed task interval.
 
 ## Review, Brief, and Diary
 

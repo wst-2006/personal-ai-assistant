@@ -17,6 +17,7 @@ import type {
 type MemoryReminderJob = {
   id: string;
   taskId: string;
+  kind: "task_start" | "task_follow_up";
   scheduleRevision: number;
   status: "pending" | "sent" | "cancelled";
   scheduledAt: Date;
@@ -185,36 +186,45 @@ export class MemoryTaskStore implements TaskStore, TaskStoreTransaction {
   }
 
   async syncReminderForTask(task: StoredTask): Promise<void> {
-    const index = this.reminderJobs.findIndex((job) => job.taskId === task.id);
+    const taskJobs = this.reminderJobs.filter((job) => job.taskId === task.id);
     const shouldSchedule = !task.deletedAt
       && task.lifecycleStatus === "open"
       && task.scheduleKind === "exact"
       && Boolean(task.startAt && task.endAt);
     if (!shouldSchedule) {
-      if (index >= 0 && this.reminderJobs[index]!.status !== "sent") {
-        this.reminderJobs[index] = { ...this.reminderJobs[index]!, status: "cancelled" };
+      for (const job of taskJobs) {
+        const index = this.reminderJobs.findIndex((candidate) => candidate.id === job.id);
+        if (index >= 0 && this.reminderJobs[index]!.status !== "sent") {
+          this.reminderJobs[index] = { ...this.reminderJobs[index]!, status: "cancelled" };
+        }
       }
       return;
     }
     const scheduledAt = task.startAt!;
-    const next: MemoryReminderJob = {
-      id: index >= 0 ? this.reminderJobs[index]!.id : `reminder-${task.id}`,
-      taskId: task.id,
-      scheduleRevision: task.scheduleRevision,
-      status: "pending",
-      scheduledAt,
-      availableAt: new Date(scheduledAt.getTime() - 15 * 60 * 1000),
-      payload: {
+    for (const kind of ["task_start", "task_follow_up"] as const) {
+      const index = this.reminderJobs.findIndex((job) => job.taskId === task.id && job.kind === kind);
+      const next: MemoryReminderJob = {
+        id: index >= 0 ? this.reminderJobs[index]!.id : `reminder-${kind}-${task.id}`,
         taskId: task.id,
-        title: task.title,
-        startAt: scheduledAt.toISOString(),
-        endAt: task.endAt!.toISOString(),
-        timeZone: task.timeZone,
-        scheduleRevision: task.scheduleRevision
-      }
-    };
-    if (index >= 0) this.reminderJobs[index] = next;
-    else this.reminderJobs.push(next);
+        kind,
+        scheduleRevision: task.scheduleRevision,
+        status: "pending",
+        scheduledAt,
+        availableAt: kind === "task_start"
+          ? new Date(scheduledAt.getTime() - 15 * 60 * 1000)
+          : new Date(scheduledAt.getTime() + 5 * 60 * 1000),
+        payload: {
+          taskId: task.id,
+          title: task.title,
+          startAt: scheduledAt.toISOString(),
+          endAt: task.endAt!.toISOString(),
+          timeZone: task.timeZone,
+          scheduleRevision: task.scheduleRevision
+        }
+      };
+      if (index >= 0) this.reminderJobs[index] = next;
+      else this.reminderJobs.push(next);
+    }
   }
 }
 

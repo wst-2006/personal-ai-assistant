@@ -54,8 +54,10 @@ export class FeishuCardActionService {
         return { type: "success", message: "已通知电脑端打开对应任务。", terminal: false };
       }
       if (action.data.action === "start") {
-        await this.focusService.create(detail.task.id, detail.task.version, "prepare");
-        return { type: "success", message: "已进入 1 分钟准备，随后自动开始计时。" };
+        const session = await this.focusService.create(detail.task.id, detail.task.version, "prepare");
+        return session.state === "scheduled"
+          ? { type: "success", message: "已确认；到任务开始时间会进入 1 分钟准备，可在软件中手动跳过倒计时。" }
+          : { type: "success", message: "已进入 1 分钟准备，可在软件中手动跳过倒计时，未跳过时倒计时结束后自动开始。" };
       }
       const reminded = await this.focusService.create(detail.task.id, detail.task.version, "remind");
       await this.focusService.respondToReminder(reminded.id, reminded.version, "other_arrangement");

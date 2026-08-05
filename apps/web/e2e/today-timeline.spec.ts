@@ -4,10 +4,25 @@ import { loadDatabaseConfig } from "@personal-ai/db/config";
 import { taskFeedback, taskOutcomes } from "@personal-ai/db/schema";
 import { eq } from "drizzle-orm";
 
-const apiBase = "http://127.0.0.1:3000";
+const apiBase = process.env.PLAYWRIGHT_API_BASE_URL ?? "http://127.0.0.1:3100";
 const halfHourPixels = 36;
-let dateSequence = 0;
-const isolatedDate = () => new Date(Date.UTC(2090,0,1+(Date.now()+dateSequence++)%300)).toISOString().slice(0,10);
+const reservedDates = new Set<string>();
+
+async function isolatedDate(request: APIRequestContext): Promise<string> {
+  const startOffset = Date.now() % 3_000;
+  for (let attempt = 0; attempt < 3_650; attempt += 1) {
+    const date = new Date(Date.UTC(2090, 0, 1 + ((startOffset + attempt) % 3_650))).toISOString().slice(0, 10);
+    if (reservedDates.has(date)) continue;
+    const response = await request.get(`${apiBase}/api/v1/tasks?date=${date}`);
+    if (!response.ok()) throw new Error(`Unable to inspect isolated timeline date ${date}.`);
+    const body = await response.json() as { tasks: unknown[] };
+    if (body.tasks.length === 0) {
+      reservedDates.add(date);
+      return date;
+    }
+  }
+  throw new Error("No empty timeline date was available in the E2E isolation range.");
+}
 
 async function createExactTask(
   page:Page,
@@ -22,20 +37,28 @@ async function createExactTask(
   await page.getByLabel("开始时间").fill(start);
   await page.getByLabel("结束时间").fill(end);
   const requestPromise=page.waitForRequest((request)=>request.url()===`${apiBase}/api/v1/tasks`&&request.method()==="POST");
-  const responsePromise=page.waitForResponse((response)=>response.url()===`${apiBase}/api/v1/tasks`&&response.request().method()==="POST"&&response.status()===201);
+  const responsePromise=page.waitForResponse((response)=>response.url()===`${apiBase}/api/v1/tasks`&&response.request().method()==="POST");
   await page.getByRole("button", { name: "保存任务" }).click();
   const request=await requestPromise;
+  let response=await responsePromise;
   const body=request.postDataJSON() as Record<string, unknown>;
   expect(body).not.toHaveProperty("plannedEffortMinutes");
   expect(body).not.toHaveProperty("difficulty");
   expect(body).not.toHaveProperty("taskType");
   expect(body).not.toHaveProperty("requiresContinuousFocus");
   if (confirmConflict) {
+    if (response.status() !== 409) {
+      throw new Error(`Expected a schedule conflict, but task creation returned ${response.status()}.`);
+    }
     const conflictDialog=page.getByRole("alertdialog",{name:"这项安排与现有任务重叠"});
     await expect(conflictDialog).toBeVisible();
+    const kept=page.waitForResponse((candidateResponse)=>candidateResponse.url()===`${apiBase}/api/v1/tasks`
+      &&candidateResponse.request().method()==="POST"&&candidateResponse.status()===201);
     await confirmConflict(conflictDialog);
+    response=await kept;
+  } else if (response.status() !== 201) {
+    throw new Error(`Unexpected task creation response ${response.status()}: ${await response.text()}`);
   }
-  const response=await responsePromise;
   return (await response.json()).task as {id:string;version:number;startAt:string;endAt:string};
 }
 
@@ -51,7 +74,7 @@ async function cleanup(request:APIRequestContext, ids:string[]) {
 test.describe("真实今日时间轴",()=>{
   test("创建、刷新、拖动、拉伸、保留冲突并再次刷新",async({page,request})=>{
     const suffix=Date.now().toString(36);const ids:string[]=[];
-    const testDate=isolatedDate();
+    const testDate=await isolatedDate(request);
     const firstTitle=`E2E 深度任务 ${suffix}`;const secondTitle=`E2E 冲突任务 ${suffix}`;
     try{
       await page.goto("/");
@@ -101,7 +124,7 @@ test.describe("真实今日时间轴",()=>{
   });
 
   test("冲突确认返回调整时保留表单内容且不显示保存失败",async({page,request})=>{
-    const ids:string[]=[];const suffix=Date.now().toString(36);const testDate=isolatedDate();
+    const ids:string[]=[];const suffix=Date.now().toString(36);const testDate=await isolatedDate(request);
     try{
       await page.goto("/");
       await page.getByLabel("时间轴日期").fill(testDate);
@@ -123,7 +146,7 @@ test.describe("真实今日时间轴",()=>{
   });
 
   test("点击空白时间以 30 分钟默认块创建并持久化",async({page,request})=>{
-    const ids:string[]=[];const title=`E2E 空白创建 ${Date.now().toString(36)}`;const testDate=isolatedDate();
+    const ids:string[]=[];const title=`E2E 空白创建 ${Date.now().toString(36)}`;const testDate=await isolatedDate(request);
     try{
       await page.goto("/");
       const dateLoaded=page.waitForResponse((response)=>response.url()===`${apiBase}/api/v1/tasks?date=${testDate}`&&response.request().method()==="GET"&&response.status()===200);
@@ -212,7 +235,7 @@ test.describe("真实今日时间轴",()=>{
   });
 
   test("开放任务块支持键盘按30分钟移动和拉伸，并刷新恢复",async({page,request})=>{
-    const ids:string[]=[];const title=`E2E 键盘排期 ${Date.now().toString(36)}`;const testDate=isolatedDate();
+    const ids:string[]=[];const title=`E2E 键盘排期 ${Date.now().toString(36)}`;const testDate=await isolatedDate(request);
     try{
       await page.goto("/");
       await page.getByLabel("时间轴日期").fill(testDate);
@@ -268,7 +291,7 @@ test.describe("真实今日时间轴",()=>{
 
   test("记录结果、刷新并重新打开任务",async({page,request})=>{
     const suffix=Date.now().toString(36); const ids:string[]=[];
-    const title=`E2E 生命周期任务 ${suffix}`;const testDate=isolatedDate();
+    const title=`E2E 生命周期任务 ${suffix}`;const testDate=await isolatedDate(request);
     try {
       await page.goto("/");
       await page.getByLabel("时间轴日期").fill(testDate);

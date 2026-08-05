@@ -293,7 +293,7 @@ export const focusTimerJobs = pgTable(
   (table) => [
     index("focus_timer_jobs_due_idx").on(table.status, table.dueAt),
     uniqueIndex("focus_timer_jobs_open_unique").on(table.focusSessionId, table.kind).where(sql`${table.status} in ('pending', 'processing')`),
-    check("focus_timer_jobs_kind_check", sql`${table.kind} in ('preparation_complete', 'confirmation_timeout', 'segment_transition')`),
+    check("focus_timer_jobs_kind_check", sql`${table.kind} in ('preparation_start', 'preparation_complete', 'confirmation_timeout', 'segment_transition')`),
     check("focus_timer_jobs_status_check", sql`${table.status} in ('pending', 'processing', 'completed', 'failed', 'cancelled')`),
     check("focus_timer_jobs_version_check", sql`${table.expectedSessionVersion} > 0`),
     check("focus_timer_jobs_attempts_check", sql`${table.attempts} >= 0`)

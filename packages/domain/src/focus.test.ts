@@ -4,8 +4,11 @@ import {
   allocateTemplateFocusStructure,
   adjustAdjacentFocusSegments,
   calculateEffectiveFocusSeconds,
+  calculateSegmentElapsedSeconds,
   createFocusSessionSchema,
   evaluateFocusSessionSchema,
+  focusStructureInputSchema,
+  locateFocusSegment,
   validateSegmentedFocusStructure
 } from "./focus.js";
 
@@ -183,6 +186,48 @@ describe("focus structure allocation", () => {
         { segmentType: "focus", durationMinutes: 85 }
       ]
     })).toThrow("followed by a break");
+  });
+
+  it("rejects a one-block segmented payload that tries to bypass the final rest", () => {
+    expect(() => validateSegmentedFocusStructure({
+      totalStartAt: start,
+      totalEndAt: "2026-07-27T10:00:00+08:00",
+      segments: [{ segmentType: "focus", durationMinutes: 60 }]
+    })).toThrow("followed by a break");
+    expect(focusStructureInputSchema.safeParse({
+      taskId: "00000000-0000-4000-8000-000000000001",
+      taskVersion: 1,
+      taskScheduleRevision: 1,
+      source: "manual",
+      mode: "segmented",
+      totalStartAt: start,
+      totalEndAt: "2026-07-27T10:00:00+08:00",
+      breakMinutes: 0,
+      segments: [{ segmentType: "focus", durationMinutes: 60 }]
+    }).success).toBe(false);
+  });
+
+  it("locates a late start inside the original segment without counting skipped time", () => {
+    const position = locateFocusSegment({
+      structureStartAt: start,
+      now: "2026-07-27T10:20:00+08:00",
+      segments: [
+        { durationMinutes: 55 },
+        { durationMinutes: 5 },
+        { durationMinutes: 55 },
+        { durationMinutes: 5 }
+      ]
+    });
+    expect(position).toEqual({
+      position: 2,
+      plannedStartedAt: new Date("2026-07-27T10:00:00+08:00"),
+      elapsedSeconds: 20 * 60
+    });
+    expect(calculateSegmentElapsedSeconds({
+      actualStartedAt: "2026-07-27T10:20:00+08:00",
+      endedAt: "2026-07-27T10:55:00+08:00",
+      plannedDurationSeconds: 55 * 60
+    })).toBe(35 * 60);
   });
 
   it("moves an adjacent boundary without changing total duration", () => {

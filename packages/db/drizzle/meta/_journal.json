@@ -162,6 +162,13 @@
       "when": 1785854651005,
       "tag": "0022_closed_vapor",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1785925393687,
+      "tag": "0023_pale_gateway",
+      "breakpoints": true
     }
   ]
 }

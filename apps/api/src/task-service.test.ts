@@ -124,20 +124,28 @@ describe("TaskService reminder scheduling", () => {
     const service = new TaskService(store);
     const created = (await service.create(exact("Read paper", "14:00", "15:30"))).task;
 
-    expect(store.reminderJobs).toHaveLength(1);
-    expect(store.reminderJobs[0]).toMatchObject({
+    expect(store.reminderJobs).toHaveLength(2);
+    const startReminder = store.reminderJobs.find((job) => job.kind === "task_start");
+    const followUp = store.reminderJobs.find((job) => job.kind === "task_follow_up");
+    expect(startReminder).toMatchObject({
       taskId: created.id,
       scheduleRevision: created.scheduleRevision,
       status: "pending"
     });
-    expect(store.reminderJobs[0]!.availableAt.toISOString()).toBe("2026-07-27T05:45:00.000Z");
+    expect(startReminder!.availableAt.toISOString()).toBe("2026-07-27T05:45:00.000Z");
+    expect(followUp).toMatchObject({
+      taskId: created.id,
+      scheduleRevision: created.scheduleRevision,
+      status: "pending"
+    });
+    expect(followUp!.availableAt.toISOString()).toBe("2026-07-27T06:05:00.000Z");
 
     const renamed = (await service.update(created.id, taskPatchSchema.parse({
       expectedVersion: created.version,
       title: "Read systems paper"
     }))).task;
     expect(renamed.scheduleRevision).toBe(created.scheduleRevision);
-    expect(store.reminderJobs[0]!.payload.title).toBe("Read systems paper");
+    expect(store.reminderJobs.every((job) => job.payload.title === "Read systems paper")).toBe(true);
 
     const moved = (await service.update(created.id, taskPatchSchema.parse({
       expectedVersion: renamed.version,
@@ -145,8 +153,9 @@ describe("TaskService reminder scheduling", () => {
       startAt: "2026-07-27T16:00:00+08:00",
       endAt: "2026-07-27T17:30:00+08:00"
     }))).task;
-    expect(store.reminderJobs[0]).toMatchObject({ scheduleRevision: moved.scheduleRevision, status: "pending" });
-    expect(store.reminderJobs[0]!.availableAt.toISOString()).toBe("2026-07-27T07:45:00.000Z");
+    expect(store.reminderJobs.every((job) => job.scheduleRevision === moved.scheduleRevision && job.status === "pending")).toBe(true);
+    expect(store.reminderJobs.find((job) => job.kind === "task_start")!.availableAt.toISOString()).toBe("2026-07-27T07:45:00.000Z");
+    expect(store.reminderJobs.find((job) => job.kind === "task_follow_up")!.availableAt.toISOString()).toBe("2026-07-27T08:05:00.000Z");
   });
 
   it("cancels pending delivery when a task leaves reminder eligibility and restores it on reopen", async () => {
@@ -155,13 +164,13 @@ describe("TaskService reminder scheduling", () => {
     let task = (await service.create(exact("Prepare slides", "18:00", "19:00"))).task;
 
     task = await service.cancel(task.id, task.version);
-    expect(store.reminderJobs[0]!.status).toBe("cancelled");
+    expect(store.reminderJobs.every((job) => job.status === "cancelled")).toBe(true);
 
     task = (await service.reopen(task.id, task.version, "reject")).task;
-    expect(store.reminderJobs[0]).toMatchObject({ status: "pending", scheduleRevision: task.scheduleRevision });
+    expect(store.reminderJobs.every((job) => job.status === "pending" && job.scheduleRevision === task.scheduleRevision)).toBe(true);
 
     task = await service.start(task.id, task.version);
-    expect(store.reminderJobs[0]!.status).toBe("cancelled");
+    expect(store.reminderJobs.every((job) => job.status === "cancelled")).toBe(true);
   });
 
   it("does not schedule reminders for unscheduled or daypart tasks", async () => {

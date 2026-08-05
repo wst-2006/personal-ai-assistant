@@ -5,7 +5,7 @@ import { connectVerifiedDatabase } from "@personal-ai/db/client";
 import { loadDatabaseConfig } from "@personal-ai/db/config";
 import { longRangePlanMilestones, longRangePlanTaskTreeCandidates, longRangePlans, taskLifecycleEvents, tasks } from "@personal-ai/db/schema";
 
-const apiBase = "http://127.0.0.1:3000";
+const apiBase = process.env.PLAYWRIGHT_API_BASE_URL ?? "http://127.0.0.1:3100";
 
 type Fixture = { planId: string; candidateId: string };
 

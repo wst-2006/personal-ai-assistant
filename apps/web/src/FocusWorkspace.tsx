@@ -28,6 +28,7 @@ type Task = {
   version: number;
 };
 type FocusState =
+  | "scheduled"
   | "reminded"
   | "preparing"
   | "running"
@@ -39,6 +40,8 @@ type Session = {
   id: string;
   taskId: string;
   state: FocusState;
+  plannedStartAt: string | null;
+  plannedEndAt: string | null;
   preparingEndsAt: string | null;
   activeSinceAt: string | null;
   rawActiveSeconds: number;
@@ -100,6 +103,7 @@ export function FocusWorkspace({
   const [tasks, setTasks] = useState<Task[]>([]);
   const [session, setSession] = useState<Session | null>(null);
   const [activeStructure, setActiveStructure] = useState<FocusStructureRecord | null>(null);
+  const [sessionStructure, setSessionStructure] = useState<FocusStructureRecord | null>(null);
   const [candidateStructure, setCandidateStructure] = useState<FocusStructureRecord | null>(null);
   const [loadedStructureKey, setLoadedStructureKey] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(preferredTaskId);
@@ -134,7 +138,7 @@ export function FocusWorkspace({
     }
     setTasks(visible);
     setSession(current.session);
-    if (current.session) setSelectedId(current.session.taskId);
+    setSelectedId((currentId) => currentId ?? current.session?.taskId ?? visible[0]?.id ?? null);
   }, [preferredTaskId]);
   useEffect(() => {
     void load().catch(() =>
@@ -145,9 +149,12 @@ export function FocusWorkspace({
     if (preferredTaskId) setSelectedId(preferredTaskId);
   }, [preferredTaskId]);
   const selected = useMemo(
-    () =>
-      tasks.find((task) => task.id === (session?.taskId ?? selectedId)) ?? null,
-    [tasks, session, selectedId],
+    () => tasks.find((task) => task.id === selectedId) ?? null,
+    [tasks, selectedId],
+  );
+  const sessionTask = useMemo(
+    () => tasks.find((task) => task.id === session?.taskId) ?? null,
+    [tasks, session?.taskId]
   );
   useEffect(() => {
     if (preferredTaskId && selected?.id === preferredTaskId) onPreferredTaskReady?.(selected.id);
@@ -185,6 +192,19 @@ export function FocusWorkspace({
     return () => { cancelled = true; };
   }, [structureKey]);
   useEffect(() => {
+    if (!session?.focusStructureId) {
+      setSessionStructure(null);
+      return;
+    }
+    let cancelled = false;
+    void request<{ focusStructures: FocusStructureRecord[] }>(`/api/v1/tasks/${session.taskId}/focus-structures`)
+      .then((result) => {
+        if (!cancelled) setSessionStructure(result.focusStructures.find((item) => item.id === session.focusStructureId) ?? null);
+      })
+      .catch(() => { if (!cancelled) setSessionStructure(null); });
+    return () => { cancelled = true; };
+  }, [session?.focusStructureId, session?.taskId]);
+  useEffect(() => {
     if (!session) return;
     const update = () => {
       if (session.state === "running" && session.activeSinceAt)
@@ -215,10 +235,16 @@ export function FocusWorkspace({
     return () => window.clearTimeout(timer);
   }, [session]);
   useEffect(() => {
-    if (session?.state !== "reminded") return;
+    if (session?.state !== "reminded" && session?.state !== "scheduled" && session?.state !== "running") return;
     const timer = window.setInterval(() => void load().catch(() => undefined), 15_000);
     return () => window.clearInterval(timer);
   }, [load, session?.state]);
+  useEffect(() => {
+    if (session?.state !== "scheduled" || !session.plannedStartAt) return;
+    const left = Math.max(0, new Date(session.plannedStartAt).getTime() - Date.now());
+    const timer = window.setTimeout(() => void load().catch(() => undefined), left + 50);
+    return () => window.clearTimeout(timer);
+  }, [load, session?.plannedStartAt, session?.state]);
   useEffect(() => {
     if (session) return;
     const now = Date.now();
@@ -361,6 +387,8 @@ export function FocusWorkspace({
     action:
       | "begin"
       | "end"
+      | "skip-preparation"
+      | "skip-final-break"
       | "other-arrangement"
       | "respond-start",
   ) {
@@ -390,7 +418,7 @@ export function FocusWorkspace({
       setSession(result.session);
       await load();
       if (action === "other-arrangement") {
-        onPlanChange({ id: result.session.taskId, title: selected?.title ?? "这项任务" });
+        onPlanChange({ id: result.session.taskId, title: sessionTask?.title ?? "这项任务" });
       }
     } catch (error: any) {
       setError(
@@ -440,17 +468,22 @@ export function FocusWorkspace({
     }
   }
   const stage = session?.state ?? "idle";
+  const displayTask = session ? sessionTask : selected;
+  const displayStructure = session ? sessionStructure : activeStructure;
   const prepLeft = session?.preparingEndsAt
     ? Math.ceil(
         Math.max(0, new Date(session.preparingEndsAt).getTime() - Date.now()) /
           1000,
       )
     : 0;
-  const selectedMinutes = selected?.startAt && selected.endAt
-    ? Math.round((new Date(selected.endAt).getTime() - new Date(selected.startAt).getTime()) / 60_000)
+  const scheduledLeft = session?.state === "scheduled" && session.plannedStartAt
+    ? Math.ceil(Math.max(0, new Date(session.plannedStartAt).getTime() - Date.now()) / 1000)
+    : 0;
+  const selectedMinutes = displayTask?.startAt && displayTask.endAt
+    ? Math.round((new Date(displayTask.endAt).getTime() - new Date(displayTask.startAt).getTime()) / 60_000)
     : null;
-  const currentSegment = activeStructure && session && session.currentSegmentPosition !== null
-    ? activeStructure.segments[session.currentSegmentPosition] ?? null
+  const currentSegment = displayStructure && session && session.currentSegmentPosition !== null
+    ? displayStructure.segments[session.currentSegmentPosition] ?? null
     : null;
   const currentSegmentElapsed = stage === "running" && session?.currentSegmentStartedAt
     ? Math.max(0, Math.floor((Date.now() - new Date(session.currentSegmentStartedAt).getTime()) / 1000))
@@ -458,8 +491,28 @@ export function FocusWorkspace({
   const currentSegmentRemaining = currentSegment
     ? Math.max(0, currentSegment.durationMinutes * 60 - currentSegmentElapsed)
     : 0;
-  const timerTotal = stage === "preparing" ? 60 : currentSegment ? currentSegment.durationMinutes * 60 : Math.max(1, (selectedMinutes ?? 0) * 60);
-  const timerElapsed = stage === "preparing" ? 60 - prepLeft : currentSegment ? timerTotal - currentSegmentRemaining : elapsed;
+  const timerTotal = stage === "preparing"
+    ? 60
+    : stage === "scheduled"
+      ? Math.max(1, scheduledLeft)
+      : currentSegment
+        ? currentSegment.durationMinutes * 60
+        : Math.max(1, (selectedMinutes ?? 0) * 60);
+  const timerElapsed = stage === "preparing"
+    ? 60 - prepLeft
+    : stage === "scheduled"
+      ? 0
+      : currentSegment
+        ? timerTotal - currentSegmentRemaining
+        : elapsed;
+  const isFinalBreak = stage === "running"
+    && currentSegment?.segmentType === "break"
+    && session?.currentSegmentPosition === (displayStructure?.segments.length ?? 0) - 1;
+  const locksSelectedStructure = Boolean(
+    session
+    && selected?.id === session.taskId
+    && ["preparing", "running", "ended"].includes(session.state)
+  );
   return (
     <section className="focus-workspace page" aria-labelledby="focus-title">
       <div className="focus-stage">
@@ -473,6 +526,8 @@ export function FocusWorkspace({
           <span>
             {stage === "running"
               ? "正在专注"
+              : stage === "scheduled"
+                ? "等待任务时间"
               : stage === "preparing"
                   ? "准备开始"
                   : stage === "ended"
@@ -483,19 +538,19 @@ export function FocusWorkspace({
         <div className="focus-center">
           <p className="section-kicker">当前意图</p>
           <h1 id="focus-title">
-            {selected?.title ?? "选择一件任务，留在此刻"}
+            {displayTask?.title ?? "选择一件任务，留在此刻"}
           </h1>
           <p className="focus-meta">
-            {selected
-              ? selected.startAt && selected.endAt
-                ? `${clock(selected.startAt, selected.timeZone)}–${clock(selected.endAt, selected.timeZone)} · ${selectedMinutes} 分钟固定时间块`
+            {displayTask
+              ? displayTask.startAt && displayTask.endAt
+                ? `${clock(displayTask.startAt, displayTask.timeZone)}–${clock(displayTask.endAt, displayTask.timeZone)} · ${selectedMinutes} 分钟固定时间块`
                 : "这项任务尚未设置精确起止时间"
               : "从今日时间轴或右侧列表选择任务"}
           </p>
-          {session && activeStructure && session.currentSegmentPosition !== null && (
+          {session && displayStructure && session.currentSegmentPosition !== null && (
             <p className="focus-segment-status">
               第 {session.currentSegmentPosition + 1} 段 · {currentSegment?.segmentType === "break" ? "休息" : "专注"}
-              {currentSegment?.segmentType === "break" && session.currentSegmentPosition === activeStructure.segments.length - 1 ? " · 最后一次休息" : ""}
+              {isFinalBreak ? " · 最后一次休息" : ""}
             </p>
           )}
           <div
@@ -517,16 +572,27 @@ export function FocusWorkspace({
             <strong>
               {stage === "preparing"
                 ? `00:${String(prepLeft).padStart(2, "0")}`
+                : stage === "scheduled"
+                  ? time(scheduledLeft)
                 : currentSegment
                   ? time(currentSegmentRemaining)
-                  : selected
+                  : displayTask
                     ? time(elapsed)
                   : "--:--"}
             </strong>
           </div>
           {stage === "preparing" && (
+            <div className="focus-reminder">
+              <strong>整理桌面，深呼吸一次。倒计时结束后自动开始。</strong>
+              <button className="focus-secondary" disabled={busy} onClick={() => void transition("skip-preparation")}>
+                <Play />
+                跳过准备，立即开始
+              </button>
+            </div>
+          )}
+          {stage === "scheduled" && (
             <p className="focus-prep-copy">
-              整理桌面，深呼吸一次。倒计时结束后自动开始。
+              已确认开始。到任务时间后进入 1 分钟准备；准备时可以手动跳过倒计时。
             </p>
           )}
           {stage === "reminded" && (
@@ -551,7 +617,7 @@ export function FocusWorkspace({
               </div>
             </div>
           )}
-          {!session && selected?.scheduleKind === "exact" && selected.startAt && selected.endAt && (
+          {selected?.scheduleKind === "exact" && selected.startAt && selected.endAt && !locksSelectedStructure && (
             loadedStructureKey !== structureKey
               ? <p className="focus-structure-loading">正在恢复已保存的专注结构…</p>
               : <FocusStructureEditor
@@ -571,10 +637,10 @@ export function FocusWorkspace({
                 <button
                   className="focus-main-action"
                   disabled={busy}
-                  onClick={() => void transition("end")}
+                  onClick={() => void transition(isFinalBreak ? "skip-final-break" : "end")}
                 >
                   <CheckCircle2 />
-                  结束并记录
+                  {isFinalBreak ? "跳过休息并记录" : "结束并记录"}
                 </button>
               </>
             )}
@@ -680,7 +746,6 @@ export function FocusWorkspace({
             tasks.map((task) => (
               <button
                 className={task.id === selected?.id ? "selected" : ""}
-                disabled={Boolean(session) && task.id !== session?.taskId}
                 onClick={() => setSelectedId(task.id)}
                 key={task.id}
               >

@@ -108,6 +108,12 @@ export type FocusStructure = {
   effectiveFocusMinutes: number;
 };
 
+export type FocusSegmentPosition = {
+  position: number;
+  plannedStartedAt: Date;
+  elapsedSeconds: number;
+};
+
 export function calculateEffectiveFocusSeconds(input: {
   structureStartAt: Date | string;
   actualStartAt: Date | string;
@@ -136,6 +142,61 @@ export function calculateEffectiveFocusSeconds(input: {
     cursor = segmentEnd;
   }
   return effectiveSeconds;
+}
+
+/**
+ * Locates the segment containing the current clock time. The planned segment
+ * start is intentionally preserved separately from the actual run start so a
+ * late start can display the correct remaining time without pretending the
+ * skipped part was executed.
+ */
+export function locateFocusSegment(input: {
+  structureStartAt: Date | string;
+  segments: Array<{ durationMinutes: number }>;
+  now: Date | string;
+}): FocusSegmentPosition | null {
+  const structureStart = toValidDate(input.structureStartAt, "structureStartAt");
+  const now = toValidDate(input.now, "now");
+  let cursor = structureStart.getTime();
+  for (let position = 0; position < input.segments.length; position += 1) {
+    const segment = input.segments[position]!;
+    const end = cursor + segment.durationMinutes * 60_000;
+    if (now.getTime() < end) {
+      return {
+        position,
+        plannedStartedAt: new Date(cursor),
+        elapsedSeconds: Math.max(0, Math.floor((now.getTime() - cursor) / 1000))
+      };
+    }
+    cursor = end;
+  }
+  return null;
+}
+
+export function focusSegmentEndAt(input: {
+  structureStartAt: Date | string;
+  segments: Array<{ durationMinutes: number }>;
+  position: number;
+}): Date | null {
+  if (input.position < 0 || input.position >= input.segments.length) return null;
+  const start = toValidDate(input.structureStartAt, "structureStartAt");
+  const minutes = input.segments.slice(0, input.position + 1)
+    .reduce((sum, segment) => sum + segment.durationMinutes, 0);
+  return new Date(start.getTime() + minutes * 60_000);
+}
+
+export function calculateSegmentElapsedSeconds(input: {
+  actualStartedAt: Date | string | null;
+  endedAt: Date | string;
+  plannedDurationSeconds: number;
+}): number {
+  if (!input.actualStartedAt) return 0;
+  const actualStart = toValidDate(input.actualStartedAt, "actualStartedAt");
+  const endedAt = toValidDate(input.endedAt, "endedAt");
+  return Math.min(
+    Math.max(0, Math.trunc(input.plannedDurationSeconds)),
+    Math.max(0, Math.floor((endedAt.getTime() - actualStart.getTime()) / 1000))
+  );
 }
 
 /**
@@ -272,14 +333,12 @@ export function validateSegmentedFocusStructure(input: {
       throw new Error("Focus and break segments must alternate");
     }
   }
-  if (segments.length > 1 && segments.at(-1)?.segmentType !== "break") {
+  if (segments.at(-1)?.segmentType !== "break") {
     throw new Error("Every focus segment must be followed by a break segment");
   }
-  if (segments.length > 1) {
-    const focusCount = segments.filter((segment) => segment.segmentType === "focus").length;
-    const breakCount = segments.filter((segment) => segment.segmentType === "break").length;
-    if (focusCount !== breakCount) throw new Error("Every focus segment must have one corresponding break segment");
-  }
+  const focusCount = segments.filter((segment) => segment.segmentType === "focus").length;
+  const breakCount = segments.filter((segment) => segment.segmentType === "break").length;
+  if (focusCount !== breakCount) throw new Error("Every focus segment must have one corresponding break segment");
   const breakMinutes = segments.filter((segment) => segment.segmentType === "break")
     .reduce((sum, segment) => sum + segment.durationMinutes, 0);
   return {
@@ -313,6 +372,20 @@ function validateFocusStructureInput(input: FocusStructureInputShape, context: z
     }
   } else if (!input.segments) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ["segments"], message: "Segmented structures require segments" });
+  } else {
+    try {
+      validateSegmentedFocusStructure({
+        totalStartAt: input.totalStartAt,
+        totalEndAt: input.totalEndAt,
+        segments: input.segments
+      });
+    } catch (error) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["segments"],
+        message: error instanceof Error ? error.message : "Invalid segmented focus structure"
+      });
+    }
   }
 }
 

@@ -40,6 +40,13 @@ export async function focusRoutes(app: FastifyInstance, options: { focusService:
     catch (error) { return focusError(reply, error); }
   });
 
+  app.post("/focus-sessions/:id/skip-preparation", async (request, reply) => {
+    const params = paramsSchema.safeParse(request.params); const input = focusSessionVersionSchema.safeParse(request.body);
+    if (!params.success || !input.success) return reply.status(400).send({ error: "invalid_focus_session" });
+    try { return { session: serialize(await focusService.skipPreparation(params.data.id, input.data.expectedVersion)) }; }
+    catch (error) { return focusError(reply, error); }
+  });
+
   app.post("/focus-sessions/:id/respond", async (request, reply) => {
     const params = paramsSchema.safeParse(request.params); const input = respondToFocusReminderSchema.safeParse(request.body);
     if (!params.success || !input.success) return reply.status(400).send({ error: "invalid_focus_session" });
@@ -51,6 +58,13 @@ export async function focusRoutes(app: FastifyInstance, options: { focusService:
     const params = paramsSchema.safeParse(request.params); const input = stopFocusSessionSchema.safeParse(request.body);
     if (!params.success || !input.success) return reply.status(400).send({ error: "invalid_focus_session" });
     try { return { session: serialize(await focusService.end(params.data.id, input.data.expectedVersion, input.data.reason)) }; }
+    catch (error) { return focusError(reply, error); }
+  });
+
+  app.post("/focus-sessions/:id/skip-final-break", async (request, reply) => {
+    const params = paramsSchema.safeParse(request.params); const input = focusSessionVersionSchema.safeParse(request.body);
+    if (!params.success || !input.success) return reply.status(400).send({ error: "invalid_focus_session" });
+    try { return { session: serialize(await focusService.skipFinalBreak(params.data.id, input.data.expectedVersion)) }; }
     catch (error) { return focusError(reply, error); }
   });
 

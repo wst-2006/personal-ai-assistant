@@ -1,13 +1,20 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lt } from "drizzle-orm";
 import type { AppDatabase } from "@personal-ai/db/client";
 import { recordFocusNoResponseOutcome } from "@personal-ai/db/focus-no-response";
 import { focusSessionSegmentRuns, focusSessions, focusStructureSegments, focusStructures, focusTimerJobs, taskFeedback, taskLifecycleEvents, taskOutcomes, tasks } from "@personal-ai/db/schema";
-import { calculateEffectiveFocusSeconds, type FocusSatisfaction, type FocusSessionState } from "@personal-ai/domain/focus";
+import {
+  calculateEffectiveFocusSeconds,
+  calculateSegmentElapsedSeconds,
+  focusSegmentEndAt,
+  locateFocusSegment,
+  type FocusSatisfaction,
+  type FocusSessionState
+} from "@personal-ai/domain/focus";
 import type { TaskOutcome } from "@personal-ai/domain/task";
-import { syncTaskStartReminder } from "./reminder-scheduler.js";
+import { cancelTaskFollowUp, syncTaskStartReminder } from "./reminder-scheduler.js";
 
-const recoverableStates: FocusSessionState[] = ["reminded", "preparing", "running"];
+const recoverableStates: FocusSessionState[] = ["scheduled", "reminded", "preparing", "running"];
 const currentStates: FocusSessionState[] = [...recoverableStates, "ended"];
 const activeTimerStates: FocusSessionState[] = ["running"];
 
@@ -31,7 +38,8 @@ export class FocusService {
         .where(inArray(focusSessions.state, currentStates)).orderBy(desc(focusSessions.updatedAt)).limit(1);
       if (!session) return null;
       const now = new Date();
-      const prepared = await this.materializePreparation(transaction as AppDatabase, session, now);
+      const scheduled = await this.materializeScheduled(transaction as AppDatabase, session, now);
+      const prepared = await this.materializePreparation(transaction as AppDatabase, scheduled, now);
       return this.materializeFixedEnd(transaction as AppDatabase, prepared, now);
     });
   }
@@ -50,13 +58,25 @@ export class FocusService {
         .where(inArray(focusSessions.state, recoverableStates)).limit(1);
       if (existing) throw new FocusBusyError();
 
-      const execution = await this.activeStructure(transaction as AppDatabase, task.id, task.scheduleRevision);
+      const futureExactStart = task.scheduleKind === "exact" && task.startAt && task.startAt > now;
+      const state: FocusSessionState = mode === "remind"
+        ? "reminded"
+        : futureExactStart
+          ? "scheduled"
+          : "preparing";
+      const execution = state === "preparing"
+        ? await this.activeStructure(transaction as AppDatabase, task.id, task.scheduleRevision)
+        : null;
+      const confirmationDeadlineAt = state === "reminded"
+        ? new Date(Math.max(now.getTime(), task.startAt?.getTime() ?? now.getTime()) + 5 * 60_000)
+        : null;
+      const preparingEndsAt = state === "preparing" ? new Date(now.getTime() + 60_000) : null;
 
       const [created] = await transaction.insert(focusSessions).values({
-        id: randomUUID(), taskId, state: mode === "remind" ? "reminded" : "preparing",
+        id: randomUUID(), taskId, state,
         plannedStartAt: task.startAt, plannedEndAt: task.endAt, remindedAt: mode === "remind" ? now : null,
-        preparingEndsAt: mode === "remind" ? null : new Date(now.getTime() + 60_000),
-        confirmationDeadlineAt: mode === "remind" ? new Date(now.getTime() + 300_000) : null,
+        preparingEndsAt,
+        confirmationDeadlineAt,
         startedAt: null, activeSinceAt: null,
         focusStructureId: execution?.structure.id ?? null,
         focusStructureVersion: execution?.structure.version ?? null,
@@ -78,14 +98,23 @@ export class FocusService {
       await transaction.insert(focusTimerJobs).values({
         id: randomUUID(),
         focusSessionId: created.id,
-        kind: mode === "remind" ? "confirmation_timeout" : "preparation_complete",
+        kind: state === "reminded"
+          ? "confirmation_timeout"
+          : state === "scheduled"
+            ? "preparation_start"
+            : "preparation_complete",
         expectedSessionVersion: created.version,
-        dueAt: mode === "remind" ? created.confirmationDeadlineAt! : created.preparingEndsAt!,
+        dueAt: state === "reminded"
+          ? created.confirmationDeadlineAt!
+          : state === "scheduled"
+            ? created.plannedStartAt!
+            : created.preparingEndsAt!,
         status: "pending",
         attempts: 0,
         createdAt: now,
         updatedAt: now
       });
+      if (mode === "prepare") await cancelTaskFollowUp(transaction as AppDatabase, task.id, now);
       return created;
     });
   }
@@ -99,37 +128,23 @@ export class FocusService {
       const [task] = await transaction.select().from(tasks).where(and(eq(tasks.id, current.taskId), isNull(tasks.deletedAt))).limit(1);
       if (!task) throw new FocusNotFoundError();
       if (task.lifecycleStatus !== "open") throw new FocusTransitionError(task.lifecycleStatus, "begin focus for");
-      if (task.endAt && task.endAt <= now) {
-        const [stopped] = await transaction.update(focusSessions).set({
-          state: "stopped_no_response", endedAt: now, stoppedReason: "固定结束时间已过",
-          version: current.version + 1, updatedAt: now
-        }).where(and(eq(focusSessions.id, id), eq(focusSessions.version, expectedVersion))).returning();
-        if (!stopped) throw new FocusVersionConflictError(await this.requireCurrent(transaction as AppDatabase, id));
-        return stopped;
-      }
-      const execution = current.focusStructureId
-        ? await this.structureById(transaction as AppDatabase, current.focusStructureId)
-        : null;
-      const position = execution ? locateSegment(execution.structure.totalStartAt, execution.segments, now) : null;
-      const [updated] = await transaction.update(focusSessions).set({ state: "running", startedAt: now, activeSinceAt: now, version: current.version + 1, updatedAt: now })
-        .where(and(eq(focusSessions.id, id), eq(focusSessions.version, expectedVersion))).returning();
-      if (!updated) throw new FocusVersionConflictError(await this.requireCurrent(transaction as AppDatabase, id));
-      await this.activateTask(transaction as AppDatabase, task, now);
-      if (position) {
-        const [positioned] = await transaction.update(focusSessions).set({
-          currentSegmentPosition: position.position,
-          currentSegmentStartedAt: position.startedAt,
-          currentSegmentElapsedSeconds: position.elapsedSeconds,
-          updatedAt: now
-        }).where(and(eq(focusSessions.id, id), eq(focusSessions.version, expectedVersion + 1))).returning();
-        if (positioned) {
-          await transaction.update(focusSessionSegmentRuns).set({ startedAt: now, updatedAt: now })
-            .where(and(eq(focusSessionSegmentRuns.focusSessionId, id), eq(focusSessionSegmentRuns.position, position.position)));
-          await this.scheduleSegmentTransition(transaction as AppDatabase, positioned, execution!, position.position, now);
-          return positioned;
-        }
-      }
-      return updated;
+      if (task.endAt && task.endAt <= now) return this.stopExpiredSession(transaction as AppDatabase, current, now);
+      await this.cancelSessionTimerJobs(transaction as AppDatabase, current.id, now);
+      return this.startRunning(transaction as AppDatabase, current, task, now);
+    });
+  }
+
+  async skipPreparation(id: string, expectedVersion: number): Promise<StoredFocusSession> {
+    return this.db.transaction(async (transaction) => {
+      const now = new Date();
+      const current = await this.requireCurrent(transaction as AppDatabase, id, expectedVersion);
+      if (current.state !== "preparing") throw new FocusTransitionError(current.state, "skip preparation for");
+      const [task] = await transaction.select().from(tasks).where(and(eq(tasks.id, current.taskId), isNull(tasks.deletedAt))).limit(1);
+      if (!task) throw new FocusNotFoundError();
+      if (task.lifecycleStatus !== "open") throw new FocusTransitionError(task.lifecycleStatus, "begin focus for");
+      if (task.endAt && task.endAt <= now) return this.stopExpiredSession(transaction as AppDatabase, current, now);
+      await this.cancelSessionTimerJobs(transaction as AppDatabase, current.id, now);
+      return this.startRunning(transaction as AppDatabase, current, task, now);
     });
   }
 
@@ -138,19 +153,49 @@ export class FocusService {
       const now = new Date();
       const current = await this.requireCurrent(transaction as AppDatabase, id, expectedVersion);
       if (current.state !== "reminded") throw new FocusTransitionError(current.state, "respond to reminder for");
+      const [task] = await transaction.select().from(tasks).where(and(eq(tasks.id, current.taskId), isNull(tasks.deletedAt))).limit(1);
+      if (!task) throw new FocusNotFoundError();
+      if (task.lifecycleStatus !== "open") throw new FocusTransitionError(task.lifecycleStatus, "respond to reminder for");
+      if (task.endAt && task.endAt <= now) return this.stopExpiredSession(transaction as AppDatabase, current, now);
+      await this.cancelSessionTimerJobs(transaction as AppDatabase, current.id, now);
+      await cancelTaskFollowUp(transaction as AppDatabase, task.id, now);
+      const futureExactStart = task.scheduleKind === "exact" && task.startAt && task.startAt > now;
+      const execution = decision === "start" && !futureExactStart
+        ? await this.activeStructure(transaction as AppDatabase, task.id, task.scheduleRevision)
+        : null;
       const changes = decision === "start"
-        ? { state: "preparing", preparingEndsAt: new Date(now.getTime() + 60_000), confirmationDeadlineAt: null, version: current.version + 1, updatedAt: now }
-        : { state: "stopped_for_change", endedAt: now, stoppedReason: "另有安排", version: current.version + 1, updatedAt: now };
+        ? {
+            state: futureExactStart ? "scheduled" : "preparing",
+            preparingEndsAt: futureExactStart ? null : new Date(now.getTime() + 60_000),
+            confirmationDeadlineAt: null,
+            focusStructureId: execution?.structure.id ?? null,
+            focusStructureVersion: execution?.structure.version ?? null,
+            focusStructureScheduleRevision: execution?.structure.taskScheduleRevision ?? null,
+            currentSegmentPosition: execution ? 0 : null,
+            currentSegmentStartedAt: execution?.structure.totalStartAt ?? null,
+            currentSegmentElapsedSeconds: 0,
+            version: current.version + 1,
+            updatedAt: now
+          }
+        : {
+            state: "stopped_for_change",
+            endedAt: now,
+            stoppedReason: "另有安排",
+            confirmationDeadlineAt: null,
+            version: current.version + 1,
+            updatedAt: now
+          };
       const [updated] = await transaction.update(focusSessions).set(changes)
         .where(and(eq(focusSessions.id, id), eq(focusSessions.version, expectedVersion))).returning();
       if (!updated) throw new FocusVersionConflictError(await this.requireCurrent(transaction as AppDatabase, id));
       if (decision === "start") {
+        await this.replaceSegmentRuns(transaction as AppDatabase, updated.id, execution, now);
         await transaction.insert(focusTimerJobs).values({
           id: randomUUID(),
           focusSessionId: updated.id,
-          kind: "preparation_complete",
+          kind: updated.state === "scheduled" ? "preparation_start" : "preparation_complete",
           expectedSessionVersion: updated.version,
-          dueAt: updated.preparingEndsAt!,
+          dueAt: updated.state === "scheduled" ? updated.plannedStartAt! : updated.preparingEndsAt!,
           status: "pending",
           attempts: 0,
           createdAt: now,
@@ -167,6 +212,8 @@ export class FocusService {
       const current = await this.requireCurrent(transaction as AppDatabase, id, expectedVersion);
       if (!activeTimerStates.includes(current.state as FocusSessionState)) throw new FocusTransitionError(current.state, "end");
       const raw = elapsedSeconds(current, now);
+      await this.finalizeCurrentSegmentRun(transaction as AppDatabase, current, now, false);
+      await this.cancelSessionTimerJobs(transaction as AppDatabase, current.id, now);
       const [updated] = await transaction.update(focusSessions).set({
         state: "ended", rawActiveSeconds: raw, activeSinceAt: null, endedAt: now, stoppedReason: reason ?? null,
         version: current.version + 1, updatedAt: now
@@ -182,12 +229,43 @@ export class FocusService {
       const now = new Date();
       const current = await this.requireCurrent(transaction as AppDatabase, id, expectedVersion);
       if (!recoverableStates.includes(current.state as FocusSessionState)) throw new FocusTransitionError(current.state, "change arrangement for");
+      await this.cancelSessionTimerJobs(transaction as AppDatabase, current.id, now);
+      await cancelTaskFollowUp(transaction as AppDatabase, current.taskId, now);
       const [updated] = await transaction.update(focusSessions).set({
         state: "stopped_for_change", rawActiveSeconds: elapsedSeconds(current, now), activeSinceAt: null, endedAt: now,
         stoppedReason: reason ?? "另有安排", version: current.version + 1, updatedAt: now
       }).where(and(eq(focusSessions.id, id), eq(focusSessions.version, expectedVersion))).returning();
       if (!updated) throw new FocusVersionConflictError(await this.requireCurrent(transaction as AppDatabase, id));
       await this.awaitTaskOutcome(transaction as AppDatabase, current.taskId, now, reason);
+      return updated;
+    });
+  }
+
+  async skipFinalBreak(id: string, expectedVersion: number): Promise<StoredFocusSession> {
+    return this.db.transaction(async (transaction) => {
+      const now = new Date();
+      const current = await this.requireCurrent(transaction as AppDatabase, id, expectedVersion);
+      if (current.state !== "running" || !current.focusStructureId || current.currentSegmentPosition === null) {
+        throw new FocusTransitionError(current.state, "skip final break for");
+      }
+      const execution = await this.structureById(transaction as AppDatabase, current.focusStructureId);
+      const currentSegment = execution?.segments[current.currentSegmentPosition];
+      if (!execution || current.currentSegmentPosition !== execution.segments.length - 1 || currentSegment?.segmentType !== "break") {
+        throw new FocusTransitionError(current.state, "skip a non-final break for");
+      }
+      await this.finalizeCurrentSegmentRun(transaction as AppDatabase, current, now, true);
+      await this.cancelSessionTimerJobs(transaction as AppDatabase, current.id, now);
+      const [updated] = await transaction.update(focusSessions).set({
+        state: "ended",
+        rawActiveSeconds: elapsedSeconds(current, now),
+        activeSinceAt: null,
+        endedAt: now,
+        stoppedReason: "用户跳过最后休息",
+        version: current.version + 1,
+        updatedAt: now
+      }).where(and(eq(focusSessions.id, id), eq(focusSessions.version, expectedVersion))).returning();
+      if (!updated) throw new FocusVersionConflictError(await this.requireCurrent(transaction as AppDatabase, id));
+      await this.awaitTaskOutcome(transaction as AppDatabase, current.taskId, now, "用户跳过最后休息");
       return updated;
     });
   }
@@ -274,7 +352,11 @@ export class FocusService {
     position: number,
     now: Date
   ): Promise<void> {
-    const dueAt = segmentEndAt(execution.structure.totalStartAt, execution.segments, position);
+    const dueAt = focusSegmentEndAt({
+      structureStartAt: execution.structure.totalStartAt,
+      segments: execution.segments,
+      position
+    });
     if (!dueAt || dueAt <= now) return;
     await db.insert(focusTimerJobs).values({
       id: randomUUID(),
@@ -289,8 +371,185 @@ export class FocusService {
     }).onConflictDoNothing();
   }
 
+  private async replaceSegmentRuns(
+    db: AppDatabase,
+    sessionId: string,
+    execution: Awaited<ReturnType<FocusService["activeStructure"]>>,
+    now: Date
+  ): Promise<void> {
+    await db.delete(focusSessionSegmentRuns).where(eq(focusSessionSegmentRuns.focusSessionId, sessionId));
+    if (!execution) return;
+    await db.insert(focusSessionSegmentRuns).values(execution.segments.map((segment, position) => ({
+      id: randomUUID(),
+      focusSessionId: sessionId,
+      position,
+      segmentType: segment.segmentType,
+      plannedDurationSeconds: segment.durationMinutes * 60,
+      elapsedSeconds: 0,
+      startedAt: null,
+      completedAt: null,
+      skippedAt: null,
+      createdAt: now,
+      updatedAt: now
+    })));
+  }
+
+  private async markSegmentStart(
+    db: AppDatabase,
+    sessionId: string,
+    position: number,
+    now: Date
+  ): Promise<void> {
+    if (position > 0) {
+      await db.update(focusSessionSegmentRuns).set({
+        elapsedSeconds: 0,
+        startedAt: null,
+        completedAt: null,
+        skippedAt: now,
+        updatedAt: now
+      }).where(and(
+        eq(focusSessionSegmentRuns.focusSessionId, sessionId),
+        lt(focusSessionSegmentRuns.position, position)
+      ));
+    }
+    await db.update(focusSessionSegmentRuns).set({
+      elapsedSeconds: 0,
+      startedAt: now,
+      completedAt: null,
+      skippedAt: null,
+      updatedAt: now
+    }).where(and(
+      eq(focusSessionSegmentRuns.focusSessionId, sessionId),
+      eq(focusSessionSegmentRuns.position, position)
+    ));
+  }
+
+  private async startRunning(
+    db: AppDatabase,
+    current: StoredFocusSession,
+    task: typeof tasks.$inferSelect,
+    now: Date
+  ): Promise<StoredFocusSession> {
+    const execution = current.focusStructureId ? await this.structureById(db, current.focusStructureId) : null;
+    const position = execution ? locateFocusSegment({
+      structureStartAt: execution.structure.totalStartAt,
+      segments: execution.segments,
+      now
+    }) : null;
+    const [updated] = await db.update(focusSessions).set({
+      state: "running",
+      startedAt: now,
+      activeSinceAt: now,
+      preparingEndsAt: null,
+      version: current.version + 1,
+      updatedAt: now
+    }).where(and(eq(focusSessions.id, current.id), eq(focusSessions.version, current.version))).returning();
+    if (!updated) throw new FocusVersionConflictError(await this.requireCurrent(db, current.id));
+    await this.activateTask(db, task, now);
+    await cancelTaskFollowUp(db, task.id, now);
+    if (!position || !execution) return updated;
+    const [positioned] = await db.update(focusSessions).set({
+      currentSegmentPosition: position.position,
+      currentSegmentStartedAt: position.plannedStartedAt,
+      currentSegmentElapsedSeconds: position.elapsedSeconds,
+      updatedAt: now
+    }).where(and(eq(focusSessions.id, current.id), eq(focusSessions.version, updated.version))).returning();
+    if (!positioned) throw new FocusVersionConflictError(await this.requireCurrent(db, current.id));
+    await this.markSegmentStart(db, current.id, position.position, now);
+    await this.scheduleSegmentTransition(db, positioned, execution, position.position, now);
+    return positioned;
+  }
+
+  private async finalizeCurrentSegmentRun(
+    db: AppDatabase,
+    current: StoredFocusSession,
+    endedAt: Date,
+    skipped: boolean
+  ): Promise<void> {
+    if (current.currentSegmentPosition === null) return;
+    const [run] = await db.select().from(focusSessionSegmentRuns).where(and(
+      eq(focusSessionSegmentRuns.focusSessionId, current.id),
+      eq(focusSessionSegmentRuns.position, current.currentSegmentPosition)
+    )).limit(1);
+    if (!run) return;
+    const elapsed = calculateSegmentElapsedSeconds({
+      actualStartedAt: run.startedAt,
+      endedAt,
+      plannedDurationSeconds: run.plannedDurationSeconds
+    });
+    await db.update(focusSessionSegmentRuns).set({
+      elapsedSeconds: elapsed,
+      completedAt: skipped ? null : endedAt,
+      skippedAt: skipped ? endedAt : run.skippedAt,
+      updatedAt: endedAt
+    }).where(eq(focusSessionSegmentRuns.id, run.id));
+  }
+
+  private async cancelSessionTimerJobs(db: AppDatabase, sessionId: string, now: Date): Promise<void> {
+    await db.update(focusTimerJobs).set({ status: "cancelled", updatedAt: now })
+      .where(and(
+        eq(focusTimerJobs.focusSessionId, sessionId),
+        inArray(focusTimerJobs.status, ["pending", "processing", "failed"])
+      ));
+  }
+
+  private async stopExpiredSession(db: AppDatabase, current: StoredFocusSession, now: Date): Promise<StoredFocusSession> {
+    await this.cancelSessionTimerJobs(db, current.id, now);
+    const [stopped] = await db.update(focusSessions).set({
+      state: "stopped_no_response",
+      activeSinceAt: null,
+      endedAt: now,
+      stoppedReason: "固定结束时间已过，未进入专注",
+      version: current.version + 1,
+      updatedAt: now
+    }).where(and(eq(focusSessions.id, current.id), eq(focusSessions.version, current.version))).returning();
+    if (!stopped) throw new FocusVersionConflictError(await this.requireCurrent(db, current.id));
+    await recordFocusNoResponseOutcome(db, {
+      taskId: current.taskId,
+      focusSessionId: current.id,
+      now,
+      reason: "固定结束时间已过，未进入专注"
+    });
+    return stopped;
+  }
+
+  private async materializeScheduled(db: AppDatabase, current: StoredFocusSession, now: Date): Promise<StoredFocusSession> {
+    if (current.state !== "scheduled" || !current.plannedStartAt || current.plannedStartAt > now) return current;
+    const [task] = await db.select().from(tasks).where(and(eq(tasks.id, current.taskId), isNull(tasks.deletedAt))).limit(1);
+    if (!task || task.lifecycleStatus !== "open") return current;
+    if (task.endAt && task.endAt <= now) return this.stopExpiredSession(db, current, now);
+    const execution = await this.activeStructure(db, task.id, task.scheduleRevision);
+    await this.cancelSessionTimerJobs(db, current.id, now);
+    const [preparing] = await db.update(focusSessions).set({
+      state: "preparing",
+      preparingEndsAt: new Date(now.getTime() + 60_000),
+      focusStructureId: execution?.structure.id ?? null,
+      focusStructureVersion: execution?.structure.version ?? null,
+      focusStructureScheduleRevision: execution?.structure.taskScheduleRevision ?? null,
+      currentSegmentPosition: execution ? 0 : null,
+      currentSegmentStartedAt: execution?.structure.totalStartAt ?? null,
+      currentSegmentElapsedSeconds: 0,
+      version: current.version + 1,
+      updatedAt: now
+    }).where(and(eq(focusSessions.id, current.id), eq(focusSessions.version, current.version))).returning();
+    if (!preparing) return this.requireCurrent(db, current.id);
+    await this.replaceSegmentRuns(db, current.id, execution, now);
+    await db.insert(focusTimerJobs).values({
+      id: randomUUID(),
+      focusSessionId: current.id,
+      kind: "preparation_complete",
+      expectedSessionVersion: preparing.version,
+      dueAt: preparing.preparingEndsAt!,
+      status: "pending",
+      attempts: 0,
+      createdAt: now,
+      updatedAt: now
+    }).onConflictDoNothing();
+    return preparing;
+  }
+
   private async materializePreparation(db: AppDatabase, current: StoredFocusSession, now: Date): Promise<StoredFocusSession> {
-    if (current.state === "reminded" && current.remindedAt && now.getTime() - current.remindedAt.getTime() >= 300_000) {
+    if (current.state === "reminded" && current.confirmationDeadlineAt && current.confirmationDeadlineAt <= now) {
       const [stopped] = await db.update(focusSessions).set({ state: "stopped_no_response", endedAt: now, stoppedReason: "5 分钟未响应", version: current.version + 1, updatedAt: now })
         .where(and(eq(focusSessions.id, current.id), eq(focusSessions.version, current.version))).returning();
       if (stopped) await recordFocusNoResponseOutcome(db, { taskId: current.taskId, focusSessionId: current.id, now, reason: "5 分钟未响应" });
@@ -299,40 +558,15 @@ export class FocusService {
     if (current.state !== "preparing" || !current.preparingEndsAt || current.preparingEndsAt > now) return current;
     const [task] = await db.select().from(tasks).where(and(eq(tasks.id, current.taskId), isNull(tasks.deletedAt))).limit(1);
     if (!task || task.lifecycleStatus !== "open") return current;
-    if (task.endAt && task.endAt <= now) {
-      const [stopped] = await db.update(focusSessions).set({
-        state: "stopped_no_response", endedAt: now, stoppedReason: "固定结束时间已过",
-        version: current.version + 1, updatedAt: now
-      }).where(and(eq(focusSessions.id, current.id), eq(focusSessions.version, current.version))).returning();
-      return stopped ?? current;
-    }
-    const [updated] = await db.update(focusSessions).set({ state: "running", startedAt: now, activeSinceAt: now, version: current.version + 1, updatedAt: now })
-      .where(and(eq(focusSessions.id, current.id), eq(focusSessions.version, current.version))).returning();
-    if (!updated) return current;
-    await this.activateTask(db, task, now);
-    if (updated.focusStructureId) {
-      const execution = await this.structureById(db, updated.focusStructureId);
-      const position = execution ? locateSegment(execution.structure.totalStartAt, execution.segments, now) : null;
-      if (position) {
-        const [positioned] = await db.update(focusSessions).set({
-          currentSegmentPosition: position.position,
-          currentSegmentStartedAt: position.startedAt,
-          currentSegmentElapsedSeconds: position.elapsedSeconds,
-          updatedAt: now
-        }).where(and(eq(focusSessions.id, updated.id), eq(focusSessions.version, updated.version))).returning();
-        if (positioned) {
-          await db.update(focusSessionSegmentRuns).set({ startedAt: now, updatedAt: now })
-            .where(and(eq(focusSessionSegmentRuns.focusSessionId, updated.id), eq(focusSessionSegmentRuns.position, position.position)));
-          await this.scheduleSegmentTransition(db, positioned, execution!, position.position, now);
-          return positioned;
-        }
-      }
-    }
-    return updated;
+    if (task.endAt && task.endAt <= now) return this.stopExpiredSession(db, current, now);
+    await this.cancelSessionTimerJobs(db, current.id, now);
+    return this.startRunning(db, current, task, now);
   }
 
   private async materializeFixedEnd(db: AppDatabase, current: StoredFocusSession, now: Date): Promise<StoredFocusSession> {
     if (current.state !== "running" || !current.plannedEndAt || current.plannedEndAt > now) return current;
+    await this.finalizeCurrentSegmentRun(db, current, current.plannedEndAt, false);
+    await this.cancelSessionTimerJobs(db, current.id, now);
     const [ended] = await db.update(focusSessions).set({
       state: "ended", rawActiveSeconds: elapsedSeconds(current, now), activeSinceAt: null,
       endedAt: current.plannedEndAt, version: current.version + 1, updatedAt: now
@@ -365,34 +599,4 @@ export function elapsedSeconds(session: StoredFocusSession, now = new Date()): n
   if (session.state !== "running" || !session.activeSinceAt) return session.rawActiveSeconds;
   const cappedNow = session.plannedEndAt && session.plannedEndAt < now ? session.plannedEndAt : now;
   return session.rawActiveSeconds + Math.max(0, Math.floor((cappedNow.getTime() - session.activeSinceAt.getTime()) / 1000));
-}
-
-function locateSegment(
-  structureStartAt: Date,
-  segments: Array<{ segmentType: string; durationMinutes: number }>,
-  now: Date
-): { position: number; startedAt: Date; elapsedSeconds: number } | null {
-  let cursor = structureStartAt.getTime();
-  for (let position = 0; position < segments.length; position += 1) {
-    const end = cursor + segments[position]!.durationMinutes * 60_000;
-    if (now.getTime() < end) {
-      return {
-        position,
-        startedAt: new Date(cursor),
-        elapsedSeconds: Math.max(0, Math.floor((now.getTime() - cursor) / 1000))
-      };
-    }
-    cursor = end;
-  }
-  return null;
-}
-
-function segmentEndAt(
-  structureStartAt: Date,
-  segments: Array<{ durationMinutes: number }>,
-  position: number
-): Date | null {
-  if (position < 0 || position >= segments.length) return null;
-  const minutes = segments.slice(0, position + 1).reduce((sum, segment) => sum + segment.durationMinutes, 0);
-  return new Date(structureStartAt.getTime() + minutes * 60_000);
 }

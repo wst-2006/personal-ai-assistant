@@ -97,6 +97,9 @@ importers:
       '@personal-ai/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@personal-ai/domain':
+        specifier: workspace:*
+        version: link:../../packages/domain
       drizzle-orm:
         specifier: ^0.38.4
         version: 0.38.4(@types/pg@8.20.0)(@types/react@18.3.31)(pg@8.22.0)(react@18.3.1)
