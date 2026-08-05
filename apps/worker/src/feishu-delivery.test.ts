@@ -19,6 +19,7 @@ const job: ReminderJob = {
     scheduleRevision: 4
   }
 };
+const upcomingContext = { now: new Date("2026-07-29T01:45:00.000Z"), timing: "upcoming" as const };
 
 describe("Feishu reminder delivery", () => {
   it("stays disabled until every server-only delivery value exists", () => {
@@ -35,8 +36,8 @@ describe("Feishu reminder delivery", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ code: 0, msg: "success" }), { status: 200 }));
     const provider = new FeishuDeliveryProvider({ appId: "id", appSecret: "secret", targetOpenId: "ou_x", taskUrlBase: "https://assistant.example" }, fetcher);
 
-    await provider.deliver(job);
-    await provider.deliver(job);
+    await provider.deliver(job, upcomingContext);
+    await provider.deliver(job, upcomingContext);
 
     expect(fetcher).toHaveBeenCalledTimes(3);
     const messageRequest = fetcher.mock.calls[1]!;
@@ -46,6 +47,7 @@ describe("Feishu reminder delivery", () => {
     expect(body.content).toContain("另有安排");
     expect(body.content).toContain('"action":"open_task"');
     expect(body.content).toContain("https://assistant.example/?task=task-1");
+    expect(body.content).toContain("即将开始");
   });
 
   it("always includes a local desktop open action without a public URL", async () => {
@@ -54,7 +56,7 @@ describe("Feishu reminder delivery", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({ code: 0, msg: "success" }), { status: 200 }));
     const provider = new FeishuDeliveryProvider({ appId: "id", appSecret: "secret", targetOpenId: "ou_x" }, fetcher);
 
-    await provider.deliver(job);
+    await provider.deliver(job, upcomingContext);
 
     const body = JSON.parse(String(fetcher.mock.calls[1]?.[1]?.body)) as { content: string };
     expect(body.content).toContain("打开任务");
@@ -62,11 +64,25 @@ describe("Feishu reminder delivery", () => {
     expect(body.content).not.toContain("打开网页版");
   });
 
+  it("uses an in-progress card instead of claiming a delayed task is upcoming", async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ code: 0, tenant_access_token: "token", expire: 7200 }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ code: 0, msg: "success" }), { status: 200 }));
+    const provider = new FeishuDeliveryProvider({ appId: "id", appSecret: "secret", targetOpenId: "ou_x" }, fetcher);
+
+    await provider.deliver(job, { now: new Date("2026-07-29T02:44:00.000Z"), timing: "in_progress" });
+
+    const body = JSON.parse(String(fetcher.mock.calls[1]?.[1]?.body)) as { content: string };
+    expect(body.content).toContain("任务已开始");
+    expect(body.content).toContain("还剩约 16 分钟");
+    expect(body.content).not.toContain("即将开始");
+  });
+
   it("throws when Feishu does not confirm delivery", async () => {
     const fetcher = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response(JSON.stringify({ code: 0, tenant_access_token: "token", expire: 7200 }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ code: 230001, msg: "permission denied" }), { status: 200 }));
     const provider = new FeishuDeliveryProvider({ appId: "id", appSecret: "secret", targetOpenId: "ou_x" }, fetcher);
-    await expect(provider.deliver(job)).rejects.toThrow("feishu_message_failed:230001");
+    await expect(provider.deliver(job, upcomingContext)).rejects.toThrow("feishu_message_failed:230001");
   });
 });

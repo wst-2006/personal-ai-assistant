@@ -2,7 +2,8 @@ import { sql } from "drizzle-orm";
 import type { AppDatabase } from "@personal-ai/db/client";
 
 export type ReminderJob = { id: string; taskId: string | null; channel: string; kind: string; attempts: number; scheduleRevision: number; scheduledAt: Date; payload: unknown };
-export type ReminderDeliveryProvider = { deliver(job: ReminderJob): Promise<void> };
+export type ReminderDeliveryContext = { now: Date; timing: "upcoming" | "in_progress" };
+export type ReminderDeliveryProvider = { deliver(job: ReminderJob, context: ReminderDeliveryContext): Promise<void> };
 
 export class ReminderWorker {
   constructor(private readonly db: AppDatabase, private readonly maxAttempts = 3) {}
@@ -68,7 +69,10 @@ export class ReminderWorker {
       return "cancelled";
     }
     try {
-      await provider.deliver(job);
+      await provider.deliver(job, {
+        now,
+        timing: now.getTime() < job.scheduledAt.getTime() ? "upcoming" : "in_progress"
+      });
       await this.markSent(job.id, now);
       return "sent";
     } catch (error) {

@@ -21,8 +21,24 @@ describe("ReminderWorker", () => {
     const worker = new ReminderWorker({ execute } as unknown as AppDatabase);
 
     await expect(worker.processNext(provider, now)).resolves.toBe("sent");
-    expect(provider.deliver).toHaveBeenCalledWith(job);
+    expect(provider.deliver).toHaveBeenCalledWith(job, { now, timing: "upcoming" });
     expect(execute).toHaveBeenCalledTimes(3);
+  });
+
+  it("marks a delayed but still active reminder as in progress", async () => {
+    const delayedNow = new Date("2026-07-29T02:44:00.000Z");
+    const execute = vi.fn()
+      .mockResolvedValueOnce({ rows: [job] })
+      .mockResolvedValueOnce({ rows: [{
+        scheduleRevision: 4, lifecycleStatus: "open", scheduleKind: "exact",
+        startAt: job.scheduledAt, endAt: new Date("2026-07-29T03:00:00.000Z"), deletedAt: null
+      }] })
+      .mockResolvedValueOnce({ rows: [] });
+    const provider: ReminderDeliveryProvider = { deliver: vi.fn().mockResolvedValue(undefined) };
+    const worker = new ReminderWorker({ execute } as unknown as AppDatabase);
+
+    await expect(worker.processNext(provider, delayedNow)).resolves.toBe("sent");
+    expect(provider.deliver).toHaveBeenCalledWith(job, { now: delayedNow, timing: "in_progress" });
   });
 
   it("cancels a stale schedule revision without contacting Feishu", async () => {
@@ -37,6 +53,22 @@ describe("ReminderWorker", () => {
     const worker = new ReminderWorker({ execute } as unknown as AppDatabase);
 
     await expect(worker.processNext(provider, now)).resolves.toBe("cancelled");
+    expect(provider.deliver).not.toHaveBeenCalled();
+  });
+
+  it("cancels an overdue reminder after the task has already ended", async () => {
+    const endedNow = new Date("2026-07-29T03:01:00.000Z");
+    const execute = vi.fn()
+      .mockResolvedValueOnce({ rows: [job] })
+      .mockResolvedValueOnce({ rows: [{
+        scheduleRevision: 4, lifecycleStatus: "open", scheduleKind: "exact",
+        startAt: job.scheduledAt, endAt: new Date("2026-07-29T03:00:00.000Z"), deletedAt: null
+      }] })
+      .mockResolvedValueOnce({ rows: [] });
+    const provider: ReminderDeliveryProvider = { deliver: vi.fn() };
+    const worker = new ReminderWorker({ execute } as unknown as AppDatabase);
+
+    await expect(worker.processNext(provider, endedNow)).resolves.toBe("cancelled");
     expect(provider.deliver).not.toHaveBeenCalled();
   });
 });

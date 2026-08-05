@@ -1,4 +1,4 @@
-import type { ReminderDeliveryProvider, ReminderJob } from "./worker-core.js";
+import type { ReminderDeliveryContext, ReminderDeliveryProvider, ReminderJob } from "./worker-core.js";
 
 export type FeishuConfig = {
   appId: string;
@@ -14,7 +14,7 @@ export class FeishuDeliveryProvider implements ReminderDeliveryProvider {
 
   constructor(private readonly config: FeishuConfig, private readonly fetcher: typeof fetch = fetch) {}
 
-  async deliver(job: ReminderJob): Promise<void> {
+  async deliver(job: ReminderJob, context: ReminderDeliveryContext): Promise<void> {
     const payload = parsePayload(job.payload);
     const token = await this.tenantAccessToken();
     const response = await this.fetcher("https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id", {
@@ -23,7 +23,7 @@ export class FeishuDeliveryProvider implements ReminderDeliveryProvider {
       body: JSON.stringify({
         receive_id: this.config.targetOpenId,
         msg_type: "interactive",
-        content: JSON.stringify(buildReminderCard(payload, this.config.taskUrlBase))
+        content: JSON.stringify(buildReminderCard(payload, context, this.config.taskUrlBase))
       }),
       signal: AbortSignal.timeout(10_000)
     });
@@ -66,8 +66,10 @@ function parsePayload(value: unknown): { taskId: string; title: string; startAt:
   return payload as ReturnType<typeof parsePayload>;
 }
 
-function buildReminderCard(payload: ReturnType<typeof parsePayload>, taskUrlBase?: string) {
+function buildReminderCard(payload: ReturnType<typeof parsePayload>, context: ReminderDeliveryContext, taskUrlBase?: string) {
   const time = new Intl.DateTimeFormat("zh-CN", { timeZone: payload.timeZone, hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(payload.startAt));
+  const isInProgress = context.timing === "in_progress";
+  const remainingMinutes = Math.max(0, Math.ceil((new Date(payload.endAt).getTime() - context.now.getTime()) / 60_000));
   const actions: Array<Record<string, unknown>> = [
     { tag: "button", text: { tag: "plain_text", content: "开始" }, type: "primary", value: { action: "start", taskId: payload.taskId, scheduleRevision: payload.scheduleRevision } },
     { tag: "button", text: { tag: "plain_text", content: "另有安排" }, value: { action: "other_arrangement", taskId: payload.taskId, scheduleRevision: payload.scheduleRevision } },
@@ -76,9 +78,11 @@ function buildReminderCard(payload: ReturnType<typeof parsePayload>, taskUrlBase
   if (taskUrlBase) actions.push({ tag: "button", text: { tag: "plain_text", content: "打开网页版" }, url: `${taskUrlBase.replace(/\/$/, "")}/?task=${encodeURIComponent(payload.taskId)}` });
   return {
     config: { wide_screen_mode: true },
-    header: { template: "green", title: { tag: "plain_text", content: `${time} · 即将开始` } },
+    header: { template: isInProgress ? "orange" : "green", title: { tag: "plain_text", content: `${time} · ${isInProgress ? "任务已开始" : "即将开始"}` } },
     elements: [
-      { tag: "div", text: { tag: "lark_md", content: `**${payload.title}**\n可以现在进入 1 分钟准备，也可以说明另有安排。` } },
+      { tag: "div", text: { tag: "lark_md", content: isInProgress
+        ? `**${payload.title}**\n原定任务已经开始，目前还剩约 ${remainingMinutes} 分钟。可以按剩余时间开始，也可以说明另有安排。`
+        : `**${payload.title}**\n可以现在进入 1 分钟准备，也可以说明另有安排。` } },
       { tag: "action", actions }
     ]
   };

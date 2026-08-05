@@ -3,11 +3,27 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Mutex,
+};
 use std::thread;
 use std::time::Duration;
 
-use tauri::{AppHandle, Manager, RunEvent};
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    AppHandle, Manager, RunEvent, WindowEvent,
+};
+use tauri_plugin_autostart::ManagerExt;
+
+const MAIN_WINDOW_LABEL: &str = "main";
+const START_HIDDEN_ARGUMENT: &str = "--minimized";
+
+#[derive(Default)]
+struct AppLifecycle {
+    quit_requested: AtomicBool,
+}
 
 #[derive(Default)]
 struct LocalRuntime {
@@ -290,11 +306,77 @@ fn stop_process_tree(mut child: Child) {
     let _ = child.wait();
 }
 
+fn show_main_window(app: &AppHandle) {
+    let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) else {
+        return;
+    };
+    let _ = window.show();
+    let _ = window.unminimize();
+    let _ = window.set_focus();
+}
+
+fn install_tray(app: &AppHandle) -> tauri::Result<()> {
+    let open = MenuItem::with_id(app, "open", "打开主界面", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "退出个人 AI 助理", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&open, &quit])?;
+    let icon = app
+        .default_window_icon()
+        .cloned()
+        .ok_or_else(|| tauri::Error::AssetNotFound("default window icon".into()))?;
+
+    TrayIconBuilder::with_id("personal-ai-tray")
+        .icon(icon)
+        .tooltip("个人 AI 助理")
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "open" => show_main_window(app),
+            "quit" => {
+                app.state::<AppLifecycle>()
+                    .quit_requested
+                    .store(true, Ordering::SeqCst);
+                app.exit(0);
+            }
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            if matches!(
+                event,
+                TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                }
+            ) {
+                show_main_window(tray.app_handle());
+            }
+        })
+        .build(app)?;
+    Ok(())
+}
+
+fn should_start_hidden() -> bool {
+    std::env::args_os().any(|argument| argument == START_HIDDEN_ARGUMENT)
+}
+
 fn main() {
     let app = tauri::Builder::default()
         .manage(LocalRuntime::default())
+        .manage(AppLifecycle::default())
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            show_main_window(app);
+        }))
+        .plugin(
+            tauri_plugin_autostart::Builder::new()
+                .args([START_HIDDEN_ARGUMENT])
+                .build(),
+        )
         .setup(|app| {
+            install_tray(app.handle())?;
             if !cfg!(debug_assertions) {
+                if let Err(error) = app.autolaunch().enable() {
+                    eprintln!("failed to enable Windows login startup: {error}");
+                }
                 let app_handle = app.handle();
                 let bundled_runtime_available = bundled_runtime_dir(app_handle)
                     .map_err(std::io::Error::other)?
@@ -315,13 +397,33 @@ fn main() {
                     )));
                 }
             }
+            if should_start_hidden() {
+                if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+                    window.hide()?;
+                }
+            }
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("failed to run Personal AI Assistant desktop shell");
-    app.run(|app, event| {
-        if matches!(event, RunEvent::Exit) {
-            app.state::<LocalRuntime>().stop();
+    app.run(|app, event| match event {
+        RunEvent::WindowEvent {
+            label,
+            event: WindowEvent::CloseRequested { api, .. },
+            ..
+        } if label == MAIN_WINDOW_LABEL => {
+            let quit_requested = app
+                .state::<AppLifecycle>()
+                .quit_requested
+                .load(Ordering::SeqCst);
+            if !quit_requested {
+                api.prevent_close();
+                if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+                    let _ = window.hide();
+                }
+            }
         }
+        RunEvent::Exit => app.state::<LocalRuntime>().stop(),
+        _ => {}
     });
 }
