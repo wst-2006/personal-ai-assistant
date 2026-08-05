@@ -102,6 +102,48 @@ describe("task endpoints", () => {
     expect(response.statusCode).toBe(400);
     expect(response.json().error).toBe("task_schedule_window_unavailable");
   });
+
+  it("allows the same elapsed interval through the explicit same-day backfill route", async () => {
+    const date = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit"
+    }).format(new Date());
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v1/tasks/backfill",
+      payload: {
+        title: "补录今天已经完成的事项",
+        scheduleKind: "exact",
+        startAt: `${date}T00:00:00+08:00`,
+        endAt: `${date}T00:30:00+08:00`,
+        timeZone: "Asia/Shanghai"
+      }
+    });
+    expect(response.statusCode).toBe(201);
+    const created = response.json().task as { id: string; version: number };
+    expect(created).toMatchObject({ lifecycleStatus: "awaiting_outcome", scheduleKind: "exact" });
+    expect(store.reminderJobs.some((job) => job.taskId === created.id)).toBe(false);
+
+    const outcome = await app.inject({
+      method: "POST",
+      url: `/api/v1/tasks/${created.id}/outcomes`,
+      payload: {
+        expectedVersion: created.version,
+        outcome: "partial",
+        progressPercent: 60,
+        source: "app",
+        satisfaction: "neutral",
+        note: "当天补录结果"
+      }
+    });
+    expect(outcome.statusCode).toBe(201);
+    expect(outcome.json()).toMatchObject({
+      task: { lifecycleStatus: "closed", currentOutcome: "partial" },
+      outcome: { outcome: "partial", progressPercent: 60 },
+      feedback: { satisfaction: "neutral", note: "当天补录结果" }
+    });
+    expect(store.outcomes.filter((item) => item.taskId === created.id)).toHaveLength(1);
+    expect(store.feedback.filter((item) => item.taskId === created.id)).toHaveLength(1);
+  });
 });
 
 describe("inbox endpoints", () => {

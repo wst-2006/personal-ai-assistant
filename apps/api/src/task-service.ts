@@ -1,10 +1,12 @@
 import {
   localDateAtTimeZone,
   taskInputSchema,
+  type TaskBackfillInput,
   type TaskEventSource,
   type TaskInput,
   type TaskLifecycle,
   type TaskOutcome,
+  type TaskSatisfaction,
   type TaskPatch
 } from "@personal-ai/domain/task";
 import { createHash, randomUUID } from "node:crypto";
@@ -13,6 +15,7 @@ import type {
   NewTaskRecord,
   StoredInboxEntry,
   StoredTask,
+  StoredTaskFeedback,
   StoredTaskOutcome,
   TaskStore,
   TaskStoreTransaction
@@ -80,6 +83,12 @@ export class TaskScheduleWindowError extends Error {
   }
 }
 
+export class TaskBackfillWindowError extends Error {
+  constructor(readonly latestEndAt: Date) {
+    super("A same-day backfill must stay within the elapsed/current half-hour window.");
+  }
+}
+
 export class ConflictSetChangedError extends Error {
   constructor(readonly conflicts: TaskConflict[], readonly conflictSetFingerprint: string) {
     super("The blocking conflict set changed before confirmation.");
@@ -91,6 +100,29 @@ export class TaskService {
 
   async create(input: TaskInput): Promise<{ task: StoredTask; historicalOverlaps: TaskConflict[] }> {
     return this.createWithId(input, randomUUID(), "app");
+  }
+
+  async createBackfill(input: TaskBackfillInput): Promise<{ task: StoredTask; historicalOverlaps: TaskConflict[] }> {
+    return this.store.runSerializable(async (transaction) => {
+      const record: NewTaskRecord = { ...toNewTaskRecord(input), lifecycleStatus: "awaiting_outcome" };
+      assertBackfillWindow(record);
+      const blocking = await this.findConflicts(transaction, record);
+      await this.assertConflictDecision(transaction, record, blocking, input.conflictDecision, input.expectedConflictFingerprint);
+      const task = await transaction.insertTask(record);
+      await transaction.syncReminderForTask(task);
+      await transaction.insertLifecycleEvent({
+        id: randomUUID(),
+        taskId: task.id,
+        fromStatus: null,
+        toStatus: "awaiting_outcome",
+        source: "app",
+        reason: "same-day task backfill"
+      });
+      if (input.conflictDecision === "keep") {
+        await transaction.insertConflictAcceptances(blocking.map((conflict) => canonicalAcceptance(task, conflict)));
+      }
+      return { task, historicalOverlaps: await this.findHistoricalOverlaps(transaction, task) };
+    });
   }
 
   async createFromFeishu(input: TaskInput, taskId: string): Promise<{ task: StoredTask; historicalOverlaps: TaskConflict[] }> {
@@ -345,15 +377,31 @@ export class TaskService {
       progressPercent: number;
       source: TaskEventSource;
       focusSessionId?: string | null;
+      satisfaction?: TaskSatisfaction;
       note?: string | null;
     }
-  ): Promise<{ task: StoredTask; outcome: StoredTaskOutcome }> {
+  ): Promise<{ task: StoredTask; outcome: StoredTaskOutcome; feedback: StoredTaskFeedback | null }> {
     return this.store.runSerializable(async (transaction) => {
       const current = await this.requireCurrentVersion(transaction, id, input.expectedVersion);
       if (current.lifecycleStatus !== "open" && current.lifecycleStatus !== "awaiting_outcome") {
         throw new InvalidTaskTransitionError(current.lifecycleStatus, "record an outcome for");
       }
-      const outcome = await transaction.insertOutcome({ id: randomUUID(), taskId: id, ...input });
+      const outcome = await transaction.insertOutcome({
+        id: randomUUID(),
+        taskId: id,
+        focusSessionId: input.focusSessionId,
+        outcome: input.outcome,
+        progressPercent: input.progressPercent,
+        source: input.source,
+        note: input.note
+      });
+      const feedback = input.satisfaction ? await transaction.insertFeedback({
+        id: randomUUID(),
+        taskId: id,
+        focusSessionId: input.focusSessionId,
+        satisfaction: input.satisfaction,
+        note: input.note
+      }) : null;
       const updated = await transaction.updateTask(id, input.expectedVersion, {
         lifecycleStatus: "closed",
         currentOutcome: input.outcome,
@@ -368,7 +416,7 @@ export class TaskService {
         id: randomUUID(), taskId: id, fromStatus: current.lifecycleStatus as TaskLifecycle,
         toStatus: "closed", source: input.source, reason: input.note
       });
-      return { task: updated, outcome };
+      return { task: updated, outcome, feedback };
     });
   }
 
@@ -596,6 +644,32 @@ function assertScheduleWindow(task: Pick<NewTaskRecord, "scheduleKind" | "startA
   if (startMinute < earliestMinute) {
     throw new TaskScheduleWindowError(new Date(task.startAt.getTime() + (earliestMinute - startMinute) * 60_000));
   }
+}
+
+function assertBackfillWindow(task: Pick<NewTaskRecord, "scheduleKind" | "startAt" | "endAt" | "timeZone">): void {
+  if (task.scheduleKind !== "exact" || !task.startAt || !task.endAt) throw new TaskBackfillWindowError(new Date());
+  const now = new Date();
+  const localDate = localDateAtTimeZone(now, task.timeZone);
+  if (localDateAtTimeZone(task.startAt, task.timeZone) !== localDate || localDateAtTimeZone(task.endAt, task.timeZone) !== localDate) {
+    throw new TaskBackfillWindowError(now);
+  }
+  const formatter = new Intl.DateTimeFormat("en-GB", {
+    timeZone: task.timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  });
+  const minute = (value: Date) => {
+    const parts = formatter.formatToParts(value);
+    return Number(parts.find((part) => part.type === "hour")?.value ?? 0) * 60
+      + Number(parts.find((part) => part.type === "minute")?.value ?? 0);
+  };
+  const startMinute = minute(task.startAt);
+  const endMinute = minute(task.endAt);
+  const nowMinute = minute(now);
+  const latestMinute = Math.min(24 * 60, (Math.floor(nowMinute / 30) + 1) * 30);
+  const latestEndAt = new Date(task.startAt.getTime() + (latestMinute - startMinute) * 60_000);
+  if (startMinute >= latestMinute || endMinute > latestMinute) throw new TaskBackfillWindowError(latestEndAt);
 }
 
 function isBlocking(status: string): boolean {

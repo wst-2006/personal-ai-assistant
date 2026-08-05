@@ -4,9 +4,11 @@ import type {
   LifecycleEventRecord,
   NewTaskRecord,
   StoredTask,
+  StoredTaskFeedback,
   StoredInboxEntry,
   StoredTaskOutcome,
   TaskOutcomeRecord,
+  TaskFeedbackRecord,
   TaskStore,
   TaskStoreTransaction,
   TaskUpdateRecord
@@ -25,6 +27,7 @@ type MemoryReminderJob = {
 export class MemoryTaskStore implements TaskStore, TaskStoreTransaction {
   tasks: StoredTask[] = [];
   outcomes: StoredTaskOutcome[] = [];
+  feedback: StoredTaskFeedback[] = [];
   lifecycleEvents: LifecycleEventRecord[] = [];
   acceptances: ConflictAcceptanceRecord[] = [];
   inboxEntries: StoredInboxEntry[] = [];
@@ -39,6 +42,7 @@ export class MemoryTaskStore implements TaskStore, TaskStoreTransaction {
       const snapshot = structuredClone({
         tasks: this.tasks,
         outcomes: this.outcomes,
+        feedback: this.feedback,
         lifecycleEvents: this.lifecycleEvents,
         acceptances: this.acceptances,
         inboxEntries: this.inboxEntries,
@@ -56,6 +60,7 @@ export class MemoryTaskStore implements TaskStore, TaskStoreTransaction {
       } catch (error) {
         this.tasks = snapshot.tasks;
         this.outcomes = snapshot.outcomes;
+        this.feedback = snapshot.feedback;
         this.lifecycleEvents = snapshot.lifecycleEvents;
         this.acceptances = snapshot.acceptances;
         this.inboxEntries = snapshot.inboxEntries;
@@ -160,6 +165,19 @@ export class MemoryTaskStore implements TaskStore, TaskStoreTransaction {
     };
     this.outcomes.push(outcome);
     return outcome;
+  }
+
+  async insertFeedback(record: TaskFeedbackRecord): Promise<StoredTaskFeedback> {
+    const feedback: StoredTaskFeedback = {
+      id: record.id,
+      taskId: record.taskId,
+      focusSessionId: record.focusSessionId ?? null,
+      satisfaction: record.satisfaction,
+      note: record.note ?? null,
+      createdAt: new Date()
+    };
+    this.feedback.push(feedback);
+    return feedback;
   }
 
   async invalidateFocusStructures(_taskId: string, _currentScheduleRevision: number, _reason: string): Promise<void> {

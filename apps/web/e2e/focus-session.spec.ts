@@ -346,24 +346,34 @@ test("5 分钟未响应由本地 Worker 关闭任务并追加系统未完成结�
 test("真实结构执行会持久化段运行并自动切换到休息段", async ({ page, request }) => {
   test.setTimeout(120_000);
   const now = new Date();
-  const localHour = Number(new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Shanghai", hour: "2-digit", hour12: false }).format(now));
   const halfHour = 30 * 60 * 1_000;
-  const startAt = new Date((Math.floor(now.getTime() / halfHour) + 1) * halfHour);
-  const endAt = new Date(startAt.getTime() + 60 * 60_000);
   const localDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" });
-  test.skip(localDate.format(startAt) !== localDate.format(endAt), "当天没有可用的、不会跨午夜的 60 分钟精确任务窗口");
   const title = `E2E 分段结构 ${Date.now().toString(36)}`;
   let taskId = "";
   try {
-    const created = await request.post(`${apiBase}/api/v1/tasks`, { data: {
-      title,
-      scheduleKind: "exact",
-      timeZone: "Asia/Shanghai",
-      startAt: startAt.toISOString(),
-      endAt: endAt.toISOString(),
-      notes: "结构执行验收"
-    } });
-    expect(created.status()).toBe(201);
+    let startAt = new Date((Math.floor(now.getTime() / halfHour) + 1) * halfHour);
+    let created = null as Awaited<ReturnType<typeof request.post>> | null;
+    while (localDate.format(startAt) === localDate.format(now)) {
+      const endAt = new Date(startAt.getTime() + 60 * 60_000);
+      if (localDate.format(endAt) !== localDate.format(startAt)) break;
+      const attempt = await request.post(`${apiBase}/api/v1/tasks`, { data: {
+        title,
+        scheduleKind: "exact",
+        timeZone: "Asia/Shanghai",
+        startAt: startAt.toISOString(),
+        endAt: endAt.toISOString(),
+        notes: "结构执行验收"
+      } });
+      if (attempt.status() === 201) {
+        created = attempt;
+        break;
+      }
+      const error = await attempt.json() as { error?: string };
+      expect(error.error).toBe("task_time_conflict");
+      startAt = new Date(startAt.getTime() + halfHour);
+    }
+    test.skip(!created, "当天没有可用的、不会跨午夜且不影响现有计划的 60 分钟精确任务窗口");
+    expect(created).not.toBeNull();
     const task = (await created.json()).task as { id: string; version: number; scheduleRevision: number; startAt: string; endAt: string };
     taskId = task.id;
 

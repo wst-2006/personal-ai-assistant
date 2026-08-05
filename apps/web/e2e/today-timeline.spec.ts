@@ -1,4 +1,8 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
+import { connectVerifiedDatabase } from "@personal-ai/db/client";
+import { loadDatabaseConfig } from "@personal-ai/db/config";
+import { taskFeedback, taskOutcomes } from "@personal-ai/db/schema";
+import { eq } from "drizzle-orm";
 
 const apiBase = "http://127.0.0.1:3000";
 const halfHourPixels = 36;
@@ -144,6 +148,67 @@ test.describe("真实今日时间轴",()=>{
       await page.getByLabel("时间轴日期").fill(testDate);
       await expect(page.locator(`[data-task-id="${task.id}"]`)).toContainText("09:00–09:30");
     }finally{await cleanup(request,ids);}
+  });
+
+  test("点击今天已过去时段可补录、记录结果并刷新恢复",async({page,request})=>{
+    const ids:string[]=[];const title=`E2E 当天补录 ${Date.now().toString(36)}`;
+    const currentDate=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Shanghai",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());
+    const {client,db}=await connectVerifiedDatabase(loadDatabaseConfig());
+    try{
+      await page.goto("/");
+      await expect(page.getByLabel("时间轴日期")).toHaveValue(currentDate);
+      const scroll=page.locator(".day-scroll");
+      await scroll.evaluate((element)=>{element.scrollTop=0;});
+      const box=await scroll.boundingBox();expect(box).not.toBeNull();
+      const clickX=box!.x+Math.min(180,box!.width-20);const clickY=box!.y+8;
+      await page.mouse.move(clickX,clickY);await page.mouse.down();
+      await expect(page.locator(".range-preview.backfill")).toContainText("00:00–00:30");
+      await page.mouse.up();
+
+      const backfillDialog=page.getByRole("dialog",{name:"补上今天已经发生的事项"});
+      await expect(backfillDialog).toBeVisible();
+      await expect(backfillDialog).toContainText("不会发送提醒或启动专注");
+      await expect(page.getByLabel("开始时间")).toHaveValue("00:00");
+      await expect(page.getByLabel("结束时间")).toHaveValue("00:30");
+      await page.getByLabel("任务标题").fill(title);
+      const firstAttempt=page.waitForResponse((response)=>response.url()===`${apiBase}/api/v1/tasks/backfill`&&response.request().method()==="POST");
+      await page.getByRole("button",{name:"保存并记录结果"}).click();
+      let createdResponse=await firstAttempt;
+      if(createdResponse.status()===409){
+        const conflictDialog=page.getByRole("alertdialog",{name:"这项安排与现有任务重叠"});
+        await expect(conflictDialog).toBeVisible();
+        const kept=page.waitForResponse((response)=>response.url()===`${apiBase}/api/v1/tasks/backfill`&&response.request().method()==="POST"&&response.status()===201);
+        await conflictDialog.getByRole("button",{name:"明确保留全部冲突"}).click();
+        createdResponse=await kept;
+      }
+      expect(createdResponse.status()).toBe(201);
+      const task=(await createdResponse.json()).task as {id:string;lifecycleStatus:string};ids.push(task.id);
+      expect(task.lifecycleStatus).toBe("awaiting_outcome");
+
+      const outcomeDialog=page.getByRole("dialog",{name:"记录这次完成情况"});
+      await expect(outcomeDialog).toBeVisible();
+      await outcomeDialog.getByRole("button",{name:"部分完成"}).click();
+      await outcomeDialog.getByLabel("客观进度").fill("60");
+      await outcomeDialog.getByRole("button",{name:"一般",exact:true}).click();
+      await outcomeDialog.getByLabel("文字反馈（可选）").fill("补录时分别保存客观进度和主观感受");
+      const outcomeSaved=page.waitForResponse((response)=>response.url().endsWith(`/api/v1/tasks/${task.id}/outcomes`)&&response.request().method()==="POST"&&response.status()===201);
+      await outcomeDialog.getByRole("button",{name:"保存结果"}).click();
+      const outcomeBody=await (await outcomeSaved).json() as {task:{currentOutcome:string};outcome:{progressPercent:number};feedback:{satisfaction:string}|null};
+      expect(outcomeBody.task.currentOutcome).toBe("partial");
+      expect(outcomeBody.outcome.progressPercent).toBe(60);
+      expect(outcomeBody.feedback?.satisfaction).toBe("neutral");
+      await expect(page.locator(`[data-task-id="${task.id}"]`)).toContainText(title);
+      await expect(page.locator(`[data-task-id="${task.id}"]`)).toContainText("部分完成");
+
+      const [persistedOutcome]=await db.select().from(taskOutcomes).where(eq(taskOutcomes.taskId,task.id));
+      const [persistedFeedback]=await db.select().from(taskFeedback).where(eq(taskFeedback.taskId,task.id));
+      expect(persistedOutcome).toMatchObject({outcome:"partial",progressPercent:60});
+      expect(persistedFeedback).toMatchObject({satisfaction:"neutral",note:"补录时分别保存客观进度和主观感受"});
+
+      await page.reload();
+      await expect(page.locator(`[data-task-id="${task.id}"]`)).toContainText("00:00–00:30");
+      await expect(page.locator(`[data-task-id="${task.id}"]`)).toContainText("部分完成");
+    }finally{await cleanup(request,ids);await client.end();}
   });
 
   test("开放任务块支持键盘按30分钟移动和拉伸，并刷新恢复",async({page,request})=>{

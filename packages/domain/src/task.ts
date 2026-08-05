@@ -33,6 +33,16 @@ export const taskInputSchema = z.object({
   validateTaskSchedule(input, context);
 });
 
+export const taskBackfillInputSchema = taskInputSchema.superRefine((input, context) => {
+  if (input.scheduleKind !== "exact") {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["scheduleKind"],
+      message: "Backfill records require an exact timeline interval"
+    });
+  }
+});
+
 export const taskPatchSchema = z.object({
   expectedVersion: z.number().int().positive(),
   expectedScheduleRevision: z.number().int().positive().optional(),
@@ -73,6 +83,7 @@ export const taskOutcomeInputSchema = z.object({
   progressPercent: z.number().int().min(0).max(100),
   source: taskEventSourceSchema.default("app"),
   focusSessionId: z.string().uuid().nullable().optional(),
+  satisfaction: taskSatisfactionSchema.optional(),
   note: z.string().trim().max(4000).nullable().optional()
 }).strict().superRefine((input, context) => {
   const valid = input.outcome === "not_completed"
@@ -85,6 +96,13 @@ export const taskOutcomeInputSchema = z.object({
       code: z.ZodIssueCode.custom,
       path: ["progressPercent"],
       message: "progressPercent does not match outcome"
+    });
+  }
+  if (input.source === "app" && !input.satisfaction) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["satisfaction"],
+      message: "Manual task outcomes require an independent satisfaction value"
     });
   }
 });
@@ -244,9 +262,11 @@ function validateConflictDecision(input: ConflictShape, context: z.RefinementCtx
 }
 
 export type TaskInput = z.infer<typeof taskInputSchema>;
+export type TaskBackfillInput = z.infer<typeof taskBackfillInputSchema>;
 export type TaskPatch = z.infer<typeof taskPatchSchema>;
 export type TaskLifecycle = z.infer<typeof taskLifecycleSchema>;
 export type TaskScheduleKind = z.infer<typeof taskScheduleKindSchema>;
 export type TaskOutcome = z.infer<typeof taskOutcomeSchema>;
+export type TaskSatisfaction = z.infer<typeof taskSatisfactionSchema>;
 export type TaskEventSource = z.infer<typeof taskEventSourceSchema>;
 export type NaturalLanguageTaskCandidate = z.infer<typeof naturalLanguageTaskCandidateSchema>;

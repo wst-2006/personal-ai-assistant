@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { naturalLanguageTaskCandidateSchema, taskInputSchema, taskOutcomeInputSchema } from "./task.js";
+import { naturalLanguageTaskCandidateSchema, taskBackfillInputSchema, taskInputSchema, taskOutcomeInputSchema } from "./task.js";
 
 const exactTask = {
   title: "Deep work",
@@ -71,6 +71,16 @@ describe("task scheduling validation", () => {
   it("requires a valid IANA time zone", () => {
     expect(taskInputSchema.safeParse({ ...exactTask, timeZone: "Shanghai-ish" }).success).toBe(false);
   });
+
+  it("keeps same-day backfill limited to exact timeline intervals", () => {
+    expect(taskBackfillInputSchema.safeParse(exactTask).success).toBe(true);
+    expect(taskBackfillInputSchema.safeParse({
+      title: "Backfill a rough period",
+      scheduleKind: "daypart",
+      localDate: "2026-07-27",
+      daypart: "morning"
+    }).success).toBe(false);
+  });
 });
 
 describe("AI candidate validation", () => {
@@ -109,7 +119,27 @@ describe("task outcome validation", () => {
     ["complete", 100, true],
     ["complete", 99, false]
   ] as const)("validates %s at %i%%", (outcome, progressPercent, valid) => {
-    const result = taskOutcomeInputSchema.safeParse({ expectedVersion: 1, outcome, progressPercent });
+    const result = taskOutcomeInputSchema.safeParse({
+      expectedVersion: 1,
+      outcome,
+      progressPercent,
+      satisfaction: "neutral"
+    });
     expect(result.success).toBe(valid);
+  });
+
+  it("requires subjective satisfaction for a manual app outcome but keeps system recovery independent", () => {
+    expect(taskOutcomeInputSchema.safeParse({
+      expectedVersion: 1,
+      outcome: "complete",
+      progressPercent: 100,
+      source: "app"
+    }).success).toBe(false);
+    expect(taskOutcomeInputSchema.safeParse({
+      expectedVersion: 1,
+      outcome: "not_completed",
+      progressPercent: 0,
+      source: "system"
+    }).success).toBe(true);
   });
 });

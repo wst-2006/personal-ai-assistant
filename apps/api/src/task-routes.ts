@@ -1,5 +1,6 @@
 import {
   acceptTaskConflictsSchema,
+  taskBackfillInputSchema,
   taskInputSchema,
   taskOutcomeInputSchema,
   taskPatchSchema,
@@ -11,6 +12,7 @@ import { z, ZodError } from "zod";
 import {
   ConflictSetChangedError,
   InvalidTaskTransitionError,
+  TaskBackfillWindowError,
   TaskNotFoundError,
   TaskScheduleWindowError,
   TaskScheduleRevisionConflictError,
@@ -46,6 +48,17 @@ export const taskRoutes: FastifyPluginAsync<TaskRoutesOptions> = async (app, opt
     if (!input.success) return invalid(reply, "invalid_task", input.error);
     try {
       const result = await options.taskService.create(input.data);
+      return reply.status(201).send(result);
+    } catch (error) {
+      return taskError(reply, error);
+    }
+  });
+
+  app.post("/tasks/backfill", async (request, reply) => {
+    const input = taskBackfillInputSchema.safeParse(request.body);
+    if (!input.success) return invalid(reply, "invalid_task_backfill", input.error);
+    try {
+      const result = await options.taskService.createBackfill(input.data);
       return reply.status(201).send(result);
     } catch (error) {
       return taskError(reply, error);
@@ -144,6 +157,10 @@ function invalid(reply: FastifyReply, error: string, validation: ZodError) {
 }
 
 function taskError(reply: FastifyReply, error: unknown) {
+  if (error instanceof TaskBackfillWindowError) return reply.status(400).send({
+    error: "task_backfill_window_unavailable",
+    latestEndAt: error.latestEndAt.toISOString()
+  });
   if (error instanceof TaskScheduleWindowError) return reply.status(400).send({
     error: "task_schedule_window_unavailable",
     earliestStartAt: error.earliestStartAt.toISOString()

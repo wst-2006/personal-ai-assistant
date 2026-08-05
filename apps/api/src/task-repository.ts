@@ -3,17 +3,19 @@ import {
   focusStructures,
   inboxEntries,
   taskConflictAcceptances,
+  taskFeedback,
   taskLifecycleEvents,
   taskOutcomes,
   tasks
 } from "@personal-ai/db/schema";
-import type { TaskEventSource, TaskLifecycle, TaskOutcome, TaskScheduleKind } from "@personal-ai/domain/task";
+import type { TaskEventSource, TaskLifecycle, TaskOutcome, TaskSatisfaction, TaskScheduleKind } from "@personal-ai/domain/task";
 import { and, asc, desc, eq, gt, inArray, isNull, lt, ne, sql } from "drizzle-orm";
 import { syncTaskStartReminder } from "./reminder-scheduler.js";
 
 export type StoredTask = typeof tasks.$inferSelect;
 export type StoredInboxEntry = typeof inboxEntries.$inferSelect;
 export type StoredTaskOutcome = typeof taskOutcomes.$inferSelect;
+export type StoredTaskFeedback = typeof taskFeedback.$inferSelect;
 
 export type NewTaskRecord = {
   id: string;
@@ -57,6 +59,14 @@ export type TaskOutcomeRecord = {
   note?: string | null;
 };
 
+export type TaskFeedbackRecord = {
+  id: string;
+  taskId: string;
+  focusSessionId?: string | null;
+  satisfaction: TaskSatisfaction;
+  note?: string | null;
+};
+
 export type ConflictAcceptanceRecord = {
   taskIdLow: string;
   taskScheduleRevisionLow: number;
@@ -76,6 +86,7 @@ export interface TaskStoreTransaction {
   insertConflictAcceptances(records: ConflictAcceptanceRecord[]): Promise<void>;
   insertLifecycleEvent(record: LifecycleEventRecord): Promise<void>;
   insertOutcome(record: TaskOutcomeRecord): Promise<StoredTaskOutcome>;
+  insertFeedback(record: TaskFeedbackRecord): Promise<StoredTaskFeedback>;
   invalidateFocusStructures(taskId: string, currentScheduleRevision: number, reason: string): Promise<void>;
   syncReminderForTask(task: StoredTask): Promise<void>;
 }
@@ -178,6 +189,12 @@ class PostgresTaskTransaction implements TaskStoreTransaction {
   async insertOutcome(record: TaskOutcomeRecord): Promise<StoredTaskOutcome> {
     const [created] = await this.db.insert(taskOutcomes).values(record).returning();
     if (!created) throw new Error("PostgreSQL did not return the created task outcome.");
+    return created;
+  }
+
+  async insertFeedback(record: TaskFeedbackRecord): Promise<StoredTaskFeedback> {
+    const [created] = await this.db.insert(taskFeedback).values(record).returning();
+    if (!created) throw new Error("PostgreSQL did not return the created task feedback.");
     return created;
   }
 
