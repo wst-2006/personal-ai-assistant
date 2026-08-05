@@ -36,6 +36,11 @@ creates search-backed daily briefs when explicitly requested.
   pause fields remain compatibility data only. Beginning preparation locks the
   current task's confirmed focus structure, while unrelated tasks remain
   editable.
+- During reminder, scheduling, preparation, and active focus, the interface may
+  show one quiet method hint and one brief encouragement. These are selected
+  locally from explicit task-title keywords with a general fallback; they do
+  not call AI, infer mood or personality, open popups, alter the plan, or
+  interrupt the timer. Rest segments do not show work-method prompts.
 - A 30-minute task is one continuous 30-minute focus segment. A 60-minute
   continuous task defaults to 55 minutes of focus plus a 5-minute final rest.
   Longer continuous tasks also reserve a final 5-15 minute user-configurable

@@ -5,10 +5,13 @@ import {
   ChevronLeft,
   CircleDashed,
   Clock3,
+  Compass,
   Play,
+  Sparkles,
   XCircle,
 } from "lucide-react";
 import { FocusStructureEditor, type FocusStructureRecord } from "./FocusStructureEditor";
+import { getFocusGuidance } from "./focus-guidance";
 import type { FocusSegment } from "@personal-ai/domain/focus";
 
 type Task = {
@@ -513,6 +516,16 @@ export function FocusWorkspace({
     && selected?.id === session.taskId
     && ["preparing", "running", "ended"].includes(session.state)
   );
+  const guidance = useMemo(
+    () => displayTask ? getFocusGuidance({ id: displayTask.id, title: displayTask.title }) : null,
+    [displayTask?.id, displayTask?.title],
+  );
+  const showsGuidance = Boolean(
+    guidance
+    && session
+    && ["reminded", "scheduled", "preparing", "running"].includes(stage)
+    && currentSegment?.segmentType !== "break",
+  );
   return (
     <section className="focus-workspace page" aria-labelledby="focus-title">
       <div className="focus-stage">
@@ -616,6 +629,24 @@ export function FocusWorkspace({
                 </button>
               </div>
             </div>
+          )}
+          {showsGuidance && guidance && (
+            <aside className="focus-guidance" aria-label="本次专注提示">
+              <article>
+                <Compass aria-hidden="true" />
+                <div>
+                  <span>方法提示 · {guidance.label}</span>
+                  <p>{guidance.method}</p>
+                </div>
+              </article>
+              <article>
+                <Sparkles aria-hidden="true" />
+                <div>
+                  <span>一句鼓励</span>
+                  <p>{guidance.encouragement}</p>
+                </div>
+              </article>
+            </aside>
           )}
           {selected?.scheduleKind === "exact" && selected.startAt && selected.endAt && !locksSelectedStructure && (
             loadedStructureKey !== structureKey

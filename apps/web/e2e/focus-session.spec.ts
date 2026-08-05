@@ -211,6 +211,49 @@ test("真实专注会话可准备、结束、评估并在刷新后保持",async(
   } finally { if(taskId) await cleanup(request,taskId); }
 });
 
+test("专注页提供稳定的本地方法提示与鼓励且在 390px 下不打断计时", async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const date = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const title = `阅读论文 E2E 提示 ${Date.now().toString(36)}`;
+  let taskId = "";
+  let aiCalls = 0;
+  page.on("request", (outgoing) => {
+    if (outgoing.url().includes("/api/v1/ai/")) aiCalls += 1;
+  });
+  try {
+    const created = await request.post(`${apiBase}/api/v1/tasks`, { data: { title, scheduleKind: "none", localDate: date, timeZone: "Asia/Shanghai" } });
+    expect(created.status()).toBe(201);
+    const task = (await created.json()).task as { id: string; version: number };
+    taskId = task.id;
+    const started = await request.post(`${apiBase}/api/v1/focus-sessions`, { data: { taskId, expectedTaskVersion: task.version, mode: "prepare" } });
+    expect(started.status()).toBe(201);
+
+    await page.goto("/");
+    await page.locator(".app-rail").getByRole("button", { name: "专注", exact: true }).click();
+    const guidance = page.getByLabel("本次专注提示");
+    await expect(guidance).toBeVisible();
+    await expect(guidance.getByText("方法提示 · 阅读理解", { exact: true })).toBeVisible();
+    await expect(guidance.getByText("先确定这一段要回答的问题，再开始读；遇到分支先做标记，结束后再决定是否展开。", { exact: true })).toBeVisible();
+    await expect(guidance.getByText("一句鼓励", { exact: true })).toBeVisible();
+    const encouragement = await guidance.locator("article").nth(1).locator("p").textContent();
+    expect(encouragement).toBeTruthy();
+
+    await page.reload();
+    await page.locator(".app-rail").getByRole("button", { name: "专注", exact: true }).click();
+    await expect(page.getByLabel("本次专注提示").locator("article").nth(1).locator("p")).toHaveText(encouragement!);
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.reload();
+    await page.locator(".mobile-nav").getByRole("button", { name: "专注", exact: true }).click();
+    await expect(page.getByLabel("本次专注提示")).toBeVisible();
+    await expect(page.getByRole("button", { name: "跳过准备，立即开始", exact: true })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    expect(aiCalls).toBe(0);
+  } finally {
+    if (taskId) await cleanup(request, taskId);
+  }
+});
+
 test("1 分钟准备可手动跳过并立即进入固定结束时间计时", async ({ page, request }) => {
   test.setTimeout(120_000);
   const date = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
@@ -589,6 +632,7 @@ test("真实结构执行会持久化段运行并自动切换到休息段", async
     await page.locator(".app-rail").getByRole("button", { name: "专注", exact: true }).click();
     await expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible();
     await expect(page.getByText("第 2 段 · 休息 · 最后一次休息", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("本次专注提示")).toHaveCount(0);
     await page.reload();
     await page.locator(".app-rail").getByRole("button", { name: "专注", exact: true }).click();
     await expect(page.getByText("第 2 段 · 休息 · 最后一次休息", { exact: true })).toBeVisible();
