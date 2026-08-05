@@ -11,7 +11,7 @@ import type { FocusService } from "./focus-service.js";
 import { focusStructureRoutes } from "./focus-structure-routes.js";
 import type { FocusStructureService } from "./focus-structure-service.js";
 import { reviewRoutes } from "./review-routes.js";
-import type { ReviewService } from "./review-service.js";
+import type { ReviewResponder, ReviewService } from "./review-service.js";
 import { briefRoutes } from "./brief-routes.js";
 import type { BriefService } from "./brief-service.js";
 import { diaryRoutes } from "./diary-routes.js";
@@ -47,6 +47,7 @@ type AppOptions = {
   focusStructureService?: FocusStructureService;
   focusStructurePlanner?: FocusStructurePlanner;
   reviewService?: ReviewService;
+  reviewResponder?: ReviewResponder;
   briefService?: BriefService;
   diaryService?: DiaryService;
   growthService?: GrowthService;
@@ -107,7 +108,7 @@ export function buildApp(options: AppOptions = {}) {
     focusStructureService: options.focusStructureService,
     focusStructurePlanner: options.focusStructurePlanner
   });
-  if (options.reviewService) app.register(reviewRoutes, { prefix: "/api/v1", reviewService: options.reviewService });
+  if (options.reviewService) app.register(reviewRoutes, { prefix: "/api/v1", reviewService: options.reviewService, responder: options.reviewResponder });
   if (options.briefService) app.register(briefRoutes, { prefix: "/api/v1", briefService: options.briefService });
   if (options.diaryService) app.register(diaryRoutes, { prefix: "/api/v1", diaryService: options.diaryService });
   if (options.growthService) app.register(growthRoutes, { prefix: "/api/v1", growthService: options.growthService });

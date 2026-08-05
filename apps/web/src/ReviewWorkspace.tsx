@@ -59,7 +59,10 @@ async function request<T>(
     headers: body ? { "content-type": "application/json" } : undefined,
     body: body ? JSON.stringify(body) : undefined,
   });
-  if (!response.ok) throw new Error("review_request_failed");
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw Object.assign(new Error(error.error ?? "review_request_failed"), { body: error });
+  }
   return (await response.json()) as T;
 }
 
@@ -125,21 +128,61 @@ export function ReviewWorkspace() {
       ),
     [context],
   );
-  async function save() {
+  const userMessageCount = useMemo(
+    () => messages.filter((message) => message.source === "app").length,
+    [messages],
+  );
+  async function save(askAi: boolean) {
     if (!review || !draft.trim()) return;
     setSaving(true);
     setError(null);
+    const content = draft.trim();
     try {
-      const result = await request<{ message: Message }>(
+      const result = await request<{ session: Review; message: Message }>(
         `/api/v1/reviews/${review.id}/messages`,
         "POST",
-        { content: draft.trim(), source: "app" },
+        { content, source: "app" },
       );
+      setReview(result.session);
       setMessages((current) => [...current, result.message]);
       setDraft("");
-      await load();
     } catch {
       setError("这段复盘没有保存，请重试。");
+      setSaving(false);
+      return;
+    }
+    if (!askAi) {
+      setSaving(false);
+      return;
+    }
+    try {
+      const result = await request<{ session: Review; messages: Message[] }>(
+        `/api/v1/reviews/${review.id}/reply-last`,
+        "POST",
+      );
+      setReview(result.session);
+      setMessages(result.messages);
+    } catch {
+      setError("复盘文字已经保存，AI 暂时没有回复；可以稍后点击“请 AI 回应最近一条”。");
+      await load().catch(() => undefined);
+    } finally {
+      setSaving(false);
+    }
+  }
+  async function replyToLast() {
+    if (!review || messages.at(-1)?.source !== "app") return;
+    setSaving(true);
+    setError(null);
+    try {
+      const result = await request<{ session: Review; messages: Message[] }>(
+        `/api/v1/reviews/${review.id}/reply-last`,
+        "POST",
+      );
+      setReview(result.session);
+      setMessages(result.messages);
+    } catch {
+      setError("最近一条复盘仍然保留，AI 暂时没有回复；请稍后重试。");
+      await load().catch(() => undefined);
     } finally {
       setSaving(false);
     }
@@ -195,8 +238,8 @@ export function ReviewWorkspace() {
           <p>完成与感受可以同时成立，不需要互相证明。</p>
         </div>
         <div className="review-count">
-          <strong>{messages.length}</strong>
-          <span>条复盘片段</span>
+          <strong>{userMessageCount}</strong>
+          <span>条我的复盘</span>
         </div>
       </div>
       <div className="review-layout">
@@ -243,17 +286,19 @@ export function ReviewWorkspace() {
           />
           <div className="composer-footer">
             <span>{draft.length}/2000</span>
-            <button
-              className="primary-button"
-              disabled={!draft.trim() || saving}
-              onClick={() => void save()}
-            >
-              <Send />
-              留在今天
-            </button>
+            <div className="review-composer-actions">
+              <button className="quiet-button" disabled={!draft.trim() || saving} onClick={() => void save(false)}>
+                <Send />
+                只保存片段
+              </button>
+              <button className="primary-button" disabled={!draft.trim() || saving} onClick={() => void save(true)}>
+                <Sparkles />
+                保存并请 AI 回应
+              </button>
+            </div>
           </div>
         </section>
-        <section className="review-stream">
+        <section className="review-stream" aria-live="polite">
           <p className="section-kicker">今日片段</p>
           {messages.length === 0 ? (
             <div className="stream-empty">
@@ -262,18 +307,24 @@ export function ReviewWorkspace() {
             </div>
           ) : (
             messages.map((message, index) => (
-              <article key={message.id}>
-                <span>{String(index + 1).padStart(2, "0")}</span>
+              <article className={message.source === "ai" ? "ai" : "app"} key={message.id}>
+                <span>{message.source === "ai" ? "AI" : "我"} · {String(index + 1).padStart(2, "0")}</span>
                 <p>{message.content}</p>
               </article>
             ))
+          )}
+          {messages.at(-1)?.source === "app" && (
+            <button className="text-button review-reply-last" type="button" disabled={saving} onClick={() => void replyToLast()}>
+              <RefreshCw />
+              {saving ? "正在等待 AI" : "请 AI 回应最近一条"}
+            </button>
           )}
           <div className="review-brief-actions">
             <label className="review-location-field">
               <span><MapPin />今日地点（可选）</span>
               <input aria-label="今日地点" value={locationName} onChange={(event)=>setLocationName(event.target.value)} placeholder="例如：上海、杭州、西安" maxLength={120}/>
             </label>
-            <button className="primary-button review-brief-trigger" disabled={messages.length===0||saving} onClick={()=>void generateBrief()}><Sparkles />结束今日复盘并生成简报</button>
+            <button className="primary-button review-brief-trigger" disabled={userMessageCount===0||saving} onClick={()=>void generateBrief()}><Sparkles />结束今日复盘并生成简报</button>
           </div>
         </section>
       </div>

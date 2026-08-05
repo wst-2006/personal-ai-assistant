@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import type { AppDatabase } from "@personal-ai/db/client";
 import { dailyBriefs, reviewMessages, reviewSessions, tasks } from "@personal-ai/db/schema";
 import { BriefProviders, type BriefSection, type BriefSource, searchSection } from "./brief-providers.js";
@@ -15,14 +15,14 @@ export class BriefService {
   async generateFromReview(reviewSessionId: string, locationName?: string) {
     const [review] = await this.db.select().from(reviewSessions).where(eq(reviewSessions.id, reviewSessionId)).limit(1);
     if (!review) throw new BriefNotFoundError();
-    const messages = await this.db.select().from(reviewMessages).where(eq(reviewMessages.reviewSessionId, review.id)).orderBy(desc(reviewMessages.createdAt));
-    if (messages.length === 0) throw new BriefReviewRequiredError();
+    const messages = await this.db.select().from(reviewMessages).where(eq(reviewMessages.reviewSessionId, review.id)).orderBy(asc(reviewMessages.createdAt));
+    if (!messages.some((message) => message.source === "app")) throw new BriefReviewRequiredError();
     const taskRows = await this.db.select().from(tasks).where(eq(tasks.localDate, review.localDate));
     const closed = taskRows.filter((task) => task.lifecycleStatus === "closed").length;
     const taskQuery = taskRows.map((task) => task.title).filter(Boolean).slice(0, 3).join(" ");
     const { content, sources } = await this.generateContent({
       localDate: review.localDate,
-      reflection: messages.map((message) => message.content).join("\n\n"),
+      reflection: messages.map((message) => `${message.source === "ai" ? "[AI 回应]" : "[用户复盘]"}\n${message.content}`).join("\n\n"),
       taskSummary: `当天共安排 ${taskRows.length} 项任务，已关闭 ${closed} 项。`,
       taskQuery,
       locationName,

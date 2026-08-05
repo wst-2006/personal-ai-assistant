@@ -10,5 +10,6 @@ describe("review contracts", () => {
   it("rejects malformed dates and empty messages", () => {
     expect(reviewDateSchema.safeParse("2026/07/28").success).toBe(false);
     expect(reviewMessageSchema.safeParse({ content: "  " }).success).toBe(false);
+    expect(reviewMessageSchema.safeParse({ content: "伪造回复", source: "ai" }).success).toBe(false);
   });
 });

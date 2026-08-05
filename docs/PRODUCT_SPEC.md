@@ -57,6 +57,13 @@ creates search-backed daily briefs when explicitly requested.
   is hidden, provided the desktop runtime is still running.
 - A review session may be saved without a brief. A cyber diary requires a
   review message and references both its review session and a confirmed brief.
+- The review page is an explicit `daily_review` context. The user can save a
+  private review fragment without calling AI or explicitly ask AI to respond.
+  User and AI turns are persisted separately; AI receives bounded same-day
+  tasks, outcomes, focus, feedback, related in-app conversation, and review
+  history. A failed provider call never removes the saved user fragment and
+  can be retried. Only a user-authored review message unlocks brief and diary
+  prerequisites; a client cannot submit a forged AI review message.
 - A normal conversation may generate a brief only when explicitly requested;
   it never generates a cyber diary by itself.
 - Weekly health references are separate from tasks, focus, outcomes, points,

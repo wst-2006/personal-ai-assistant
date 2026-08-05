@@ -25,7 +25,7 @@ export class GrowthService {
     const feedback = taskIds.length ? await this.db.select().from(taskFeedback).where(inArray(taskFeedback.taskId, taskIds)) : [];
     const reviews = await this.db.select().from(reviewSessions).where(and(gte(reviewSessions.localDate, start), lte(reviewSessions.localDate, endLocalDate)));
     const reviewIds = reviews.map((review) => review.id);
-    const messages = reviewIds.length ? await this.db.select({ reviewSessionId: reviewMessages.reviewSessionId }).from(reviewMessages).where(inArray(reviewMessages.reviewSessionId, reviewIds)) : [];
+    const messages = reviewIds.length ? await this.db.select({ reviewSessionId: reviewMessages.reviewSessionId }).from(reviewMessages).where(and(inArray(reviewMessages.reviewSessionId, reviewIds), eq(reviewMessages.source, "app"))) : [];
     const reviewDates = new Map(reviews.map((review) => [review.id, review.localDate]));
     const minutesByTask = new Map<string, number>();
     for (const session of sessions) minutesByTask.set(session.taskId, (minutesByTask.get(session.taskId) ?? 0) + Math.round(session.effectiveFocusSeconds / 60));

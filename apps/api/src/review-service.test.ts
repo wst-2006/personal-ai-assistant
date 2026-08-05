@@ -2,14 +2,15 @@ import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { connectVerifiedDatabase } from "@personal-ai/db/client";
 import { loadDatabaseConfig } from "@personal-ai/db/config";
-import { appConversationMessages, appConversations, reviewMessages, reviewSessions } from "@personal-ai/db/schema";
+import { appConversationMessages, appConversations, focusSessions, reviewMessages, reviewSessions, taskFeedback, taskOutcomes, tasks } from "@personal-ai/db/schema";
 import { eq, inArray } from "drizzle-orm";
-import { ReviewService } from "./review-service.js";
+import { ReviewReplyUnavailableError, ReviewService, type ReviewResponderInput } from "./review-service.js";
 
 const connection = await connectVerifiedDatabase(loadDatabaseConfig());
 const service = new ReviewService(connection.db);
 const reviewIds: string[] = [];
 const conversationIds: string[] = [];
+const taskIds: string[] = [];
 
 afterEach(async () => {
   if (reviewIds.length) {
@@ -21,6 +22,13 @@ afterEach(async () => {
     const ids = conversationIds.splice(0);
     await connection.db.delete(appConversationMessages).where(inArray(appConversationMessages.conversationId, ids));
     await connection.db.delete(appConversations).where(inArray(appConversations.id, ids));
+  }
+  if (taskIds.length) {
+    const ids = taskIds.splice(0);
+    await connection.db.delete(taskFeedback).where(inArray(taskFeedback.taskId, ids));
+    await connection.db.delete(taskOutcomes).where(inArray(taskOutcomes.taskId, ids));
+    await connection.db.delete(focusSessions).where(inArray(focusSessions.taskId, ids));
+    await connection.db.delete(tasks).where(inArray(tasks.id, ids));
   }
 });
 
@@ -54,5 +62,82 @@ describe("ReviewService conversation context", () => {
       "这是建议，不会修改任务。"
     ]);
     expect(loaded.session.state).toBe("review_open");
+  });
+
+  it("persists user and AI review turns, passes explicit daily context, and recovers after provider failure", async () => {
+    const localDate = "2099-08-07";
+    const taskId = randomUUID();
+    const focusId = randomUUID();
+    const conversationId = randomUUID();
+    taskIds.push(taskId);
+    conversationIds.push(conversationId);
+    await connection.db.transaction(async (transaction) => {
+      await transaction.insert(tasks).values({
+        id: taskId,
+        title: "复盘上下文任务",
+        lifecycleStatus: "closed",
+        currentOutcome: "partial",
+        scheduleKind: "none",
+        localDate,
+        timeZone: "Asia/Shanghai",
+      });
+      await transaction.insert(focusSessions).values({
+        id: focusId,
+        taskId,
+        state: "evaluated",
+        rawActiveSeconds: 3_600,
+        effectiveFocusSeconds: 3_000,
+      });
+      await transaction.insert(taskOutcomes).values({
+        id: randomUUID(),
+        taskId,
+        focusSessionId: focusId,
+        outcome: "partial",
+        progressPercent: 60,
+        source: "app",
+        note: "保留了主要进展",
+      });
+      await transaction.insert(taskFeedback).values({
+        id: randomUUID(),
+        taskId,
+        focusSessionId: focusId,
+        satisfaction: "satisfied",
+        note: "节奏合适",
+      });
+      await transaction.insert(appConversations).values({ id: conversationId, localDate });
+      await transaction.insert(appConversationMessages).values({
+        id: randomUUID(), conversationId, role: "user", content: "今天临时调整过一次顺序。",
+      });
+    });
+
+    const opened = await service.getOrOpen(localDate);
+    reviewIds.push(opened.session.id);
+    await service.addUserMessage(opened.session.id, "今天完成了核心部分，还想判断明天如何衔接。");
+    let captured: ReviewResponderInput | null = null;
+    const replied = await service.replyLast(opened.session.id, {
+      async reply(input) {
+        captured = input;
+        return "核心部分已经留下，可以先明确明天最小的承接动作。";
+      },
+    });
+
+    expect(replied.session.state).toBe("review_has_message");
+    expect(replied.messages.map((message) => message.source)).toEqual(["app", "ai"]);
+    expect(captured).not.toBeNull();
+    expect(captured!.localDate).toBe(localDate);
+    expect(captured!.context.tasks[0]).toMatchObject({ id: taskId, title: "复盘上下文任务", lifecycleStatus: "closed" });
+    expect(captured!.context.outcomes[0]).toMatchObject({ taskId, outcome: "partial", progressPercent: 60 });
+    expect(captured!.context.focusSessions[0]).toMatchObject({ taskId, rawActiveSeconds: 3_600, effectiveFocusSeconds: 3_000 });
+    expect(captured!.context.feedback[0]).toMatchObject({ taskId, satisfaction: "satisfied", note: "节奏合适" });
+    expect(captured!.context.conversationMessages[0]).toMatchObject({ role: "user", content: "今天临时调整过一次顺序。" });
+
+    await service.addUserMessage(opened.session.id, "这条在接口失败时也必须保留。");
+    await expect(service.replyLast(opened.session.id, { async reply() { throw new Error("provider unavailable"); } }))
+      .rejects.toBeInstanceOf(ReviewReplyUnavailableError);
+    const afterFailure = await service.getOrOpen(localDate);
+    expect(afterFailure.messages.at(-1)).toMatchObject({ source: "app", content: "这条在接口失败时也必须保留。" });
+
+    const retried = await service.replyLast(opened.session.id, { async reply() { return "已经恢复回复。"; } });
+    expect(retried.messages.at(-1)).toMatchObject({ source: "ai", content: "已经恢复回复。" });
   });
 });

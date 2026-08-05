@@ -73,6 +73,12 @@ Review sessions are independently durable:
 
 `not_opened -> review_open -> review_has_message`
 
+Only a user-authored review-page message performs
+`review_open -> review_has_message`. A server-generated AI response is a
+separate persisted turn and never satisfies the review prerequisite by itself.
+The user may save without AI, explicitly request a reply, or retry a failed
+reply without duplicating or losing the saved user message.
+
 An explicit finish-and-generate action then follows:
 
 `review_has_message -> brief_generating -> brief_ready -> diary_draft ->

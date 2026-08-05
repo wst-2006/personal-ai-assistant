@@ -72,7 +72,7 @@ test("复盘消息与每日简报通过真实 API 持久保存、编辑、刷新
     const message = `E2E 复盘消息 ${suffix}：完成了核心任务，也记录了今天的节奏。`;
     await page.getByLabel("复盘正文", { exact: true }).fill(message);
     const messageSaved = page.waitForResponse((response) => response.url().endsWith(`/api/v1/reviews/${ids.review}/messages`) && response.request().method() === "POST" && response.status() === 201);
-    await page.getByRole("button", { name: "留在今天", exact: true }).click();
+    await page.getByRole("button", { name: "只保存片段", exact: true }).click();
     await messageSaved;
     await expect(page.locator(".review-stream").getByText(message, { exact: true })).toBeVisible();
 

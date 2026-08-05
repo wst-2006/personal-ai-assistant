@@ -82,7 +82,7 @@ export class DiaryService {
     return this.db.transaction(async (transaction) => {
       const reviewRows = await transaction.select().from(reviewSessions).where(and(gte(reviewSessions.localDate, start), lte(reviewSessions.localDate, end)));
       const reviewIds = reviewRows.map((review) => review.id);
-      const messageRows = reviewIds.length ? await transaction.select({ reviewSessionId: reviewMessages.reviewSessionId }).from(reviewMessages).where(inArray(reviewMessages.reviewSessionId, reviewIds)) : [];
+      const messageRows = reviewIds.length ? await transaction.select({ reviewSessionId: reviewMessages.reviewSessionId }).from(reviewMessages).where(and(inArray(reviewMessages.reviewSessionId, reviewIds), eq(reviewMessages.source, "app"))) : [];
       const briefRows = reviewIds.length ? await transaction.select({ reviewSessionId: dailyBriefs.reviewSessionId }).from(dailyBriefs).where(and(inArray(dailyBriefs.reviewSessionId, reviewIds), eq(dailyBriefs.state, "confirmed"))) : [];
       const diaryRows = await transaction.select({ localDate: cyberDiaries.localDate }).from(cyberDiaries).where(and(gte(cyberDiaries.localDate, start), lte(cyberDiaries.localDate, end)));
       const taskRows = await transaction.select().from(tasks).where(and(isNull(tasks.deletedAt), gte(tasks.localDate, start), lte(tasks.localDate, end)));
@@ -114,7 +114,7 @@ export class DiaryService {
     return this.db.transaction(async (transaction) => {
       const [review] = await transaction.select().from(reviewSessions).where(eq(reviewSessions.localDate, localDate)).limit(1);
       if (!review) return { diary: null, review: null, confirmedBrief: null, hasReviewMessage: false };
-      const messages = await transaction.select({ id: reviewMessages.id }).from(reviewMessages).where(eq(reviewMessages.reviewSessionId, review.id)).limit(1);
+      const messages = await transaction.select({ id: reviewMessages.id }).from(reviewMessages).where(and(eq(reviewMessages.reviewSessionId, review.id), eq(reviewMessages.source, "app"))).limit(1);
       const [confirmedBrief] = await transaction.select().from(dailyBriefs).where(and(eq(dailyBriefs.reviewSessionId, review.id), eq(dailyBriefs.state, "confirmed"))).orderBy(desc(dailyBriefs.updatedAt)).limit(1);
       const [diary] = await transaction.select().from(cyberDiaries).where(eq(cyberDiaries.localDate, localDate)).limit(1);
       const taskRows = await transaction.select().from(tasks).where(and(eq(tasks.localDate, localDate), isNull(tasks.deletedAt))).orderBy(tasks.createdAt);
@@ -131,7 +131,7 @@ export class DiaryService {
     return this.db.transaction(async (transaction) => {
       const [review] = await transaction.select().from(reviewSessions).where(eq(reviewSessions.id, reviewSessionId)).limit(1);
       if (!review || review.localDate !== localDate) throw new DiaryPrerequisiteError("invalid_diary_links");
-      const messages = await transaction.select({ id: reviewMessages.id }).from(reviewMessages).where(eq(reviewMessages.reviewSessionId, review.id)).limit(1);
+      const messages = await transaction.select({ id: reviewMessages.id }).from(reviewMessages).where(and(eq(reviewMessages.reviewSessionId, review.id), eq(reviewMessages.source, "app"))).limit(1);
       if (messages.length === 0) throw new DiaryPrerequisiteError("review_message_required");
       const [brief] = await transaction.select().from(dailyBriefs).where(eq(dailyBriefs.id, briefId)).limit(1);
       if (!brief || brief.reviewSessionId !== review.id || brief.state !== "confirmed") throw new DiaryPrerequisiteError("confirmed_brief_required");
