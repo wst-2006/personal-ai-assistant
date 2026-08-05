@@ -9,7 +9,7 @@ const backupService: BackupExporter = {
       formatVersion: logicalBackupFormatVersion,
       exportedAt: "2026-08-02T12:34:56.789Z",
       data: {
-        inboxEntries: [], feishuIntakeCandidates: [], healthProfiles: [], healthWeekPlans: [], healthDailyReferences: [], healthSleepAnalyses: [], tasks: [], taskLegacyMetadata: [], taskOutcomes: [], taskFeedback: [], taskLifecycleEvents: [], taskConflictAcceptances: [], reminderJobs: [], focusStructures: [], focusStructureSegments: [], focusSessions: [], focusSessionSegmentRuns: [], focusTimerJobs: [], reviewSessions: [], reviewMessages: [], appConversations: [], appConversationMessages: [], dailyBriefs: [], cyberDiaries: []
+        inboxEntries: [], feishuIntakeCandidates: [], healthProfiles: [], healthWeekPlans: [], healthDailyReferences: [], healthSleepAnalyses: [], tasks: [], taskLegacyMetadata: [], taskOutcomes: [], taskFeedback: [], taskLifecycleEvents: [], taskConflictAcceptances: [], reminderJobs: [], desktopCommandRequests: [], focusStructures: [], focusStructureSegments: [], focusSessions: [], focusSessionSegmentRuns: [], focusTimerJobs: [], reviewSessions: [], reviewMessages: [], appConversations: [], appConversationMessages: [], dailyBriefs: [], cyberDiaries: []
       }
     };
   }

@@ -70,9 +70,10 @@ function buildReminderCard(payload: ReturnType<typeof parsePayload>, taskUrlBase
   const time = new Intl.DateTimeFormat("zh-CN", { timeZone: payload.timeZone, hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(payload.startAt));
   const actions: Array<Record<string, unknown>> = [
     { tag: "button", text: { tag: "plain_text", content: "开始" }, type: "primary", value: { action: "start", taskId: payload.taskId, scheduleRevision: payload.scheduleRevision } },
-    { tag: "button", text: { tag: "plain_text", content: "另有安排" }, value: { action: "other_arrangement", taskId: payload.taskId, scheduleRevision: payload.scheduleRevision } }
+    { tag: "button", text: { tag: "plain_text", content: "另有安排" }, value: { action: "other_arrangement", taskId: payload.taskId, scheduleRevision: payload.scheduleRevision } },
+    { tag: "button", text: { tag: "plain_text", content: "打开任务" }, value: { action: "open_task", taskId: payload.taskId, scheduleRevision: payload.scheduleRevision } }
   ];
-  if (taskUrlBase) actions.push({ tag: "button", text: { tag: "plain_text", content: "打开任务" }, url: `${taskUrlBase.replace(/\/$/, "")}/?task=${encodeURIComponent(payload.taskId)}` });
+  if (taskUrlBase) actions.push({ tag: "button", text: { tag: "plain_text", content: "打开网页版" }, url: `${taskUrlBase.replace(/\/$/, "")}/?task=${encodeURIComponent(payload.taskId)}` });
   return {
     config: { wide_screen_mode: true },
     header: { template: "green", title: { tag: "plain_text", content: `${time} · 即将开始` } },

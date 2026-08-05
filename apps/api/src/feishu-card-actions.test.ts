@@ -6,6 +6,7 @@ import {
   loadFeishuCardActionConfig
 } from "./feishu-card-actions.js";
 import type { TaskService } from "./task-service.js";
+import type { DesktopCommandService } from "./desktop-command-service.js";
 
 const taskId = "7f9a4ad8-4dc7-4d18-92df-1d8be780a1b1";
 
@@ -15,12 +16,18 @@ function service() {
     create: vi.fn().mockResolvedValue({ id: "focus-1", version: 1 }),
     respondToReminder: vi.fn().mockResolvedValue({ id: "focus-1", version: 2 })
   };
+  const desktopCommandService = {
+    requestOpenTask: vi.fn().mockResolvedValue({ id: "command-1" })
+  };
   return {
     focusService,
+    desktopCommandService,
     actions: new FeishuCardActionService(
       { targetOpenId: "ou_owner" },
       taskService as unknown as TaskService,
-      focusService as unknown as FocusService
+      focusService as unknown as FocusService,
+      undefined,
+      desktopCommandService as unknown as DesktopCommandService
     )
   };
 }
@@ -50,5 +57,12 @@ describe("Feishu card actions", () => {
       .resolves.toEqual({ type: "success", message: expect.stringContaining("任务仍保留") });
     expect(focusService.create).toHaveBeenCalledWith(taskId, 8, "remind");
     expect(focusService.respondToReminder).toHaveBeenCalledWith("focus-1", 1, "other_arrangement");
+  });
+
+  it("queues a non-terminal desktop navigation request", async () => {
+    const { actions, desktopCommandService } = service();
+    await expect(actions.handle("ou_owner", { action: "open_task", taskId, scheduleRevision: 3 }))
+      .resolves.toEqual({ type: "success", message: expect.stringContaining("电脑端打开"), terminal: false });
+    expect(desktopCommandService.requestOpenTask).toHaveBeenCalledWith(taskId, 3);
   });
 });

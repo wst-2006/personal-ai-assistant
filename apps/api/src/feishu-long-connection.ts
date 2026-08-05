@@ -75,6 +75,12 @@ export class FeishuLongConnectionService {
       this.logger.info(`Feishu card action received: ${event.value && typeof event.value === "object" && "action" in event.value ? String((event.value as { action?: unknown }).action) : "unknown"}.`);
       try {
         const result = await this.actions.handle(event.operatorOpenId, event.value);
+        if (result.terminal === false) {
+          // Navigation is not a terminal decision. Keep the reminder controls
+          // available so the user can still choose “开始” or “另有安排”.
+          await channel.sendText(event.chatId, result.message);
+          return;
+        }
         try {
           // Preserve the original message and replace its controls with an
           // immutable terminal state. Feishu recalls always leave a visible

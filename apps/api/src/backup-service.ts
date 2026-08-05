@@ -5,6 +5,7 @@ import {
   appConversations,
   cyberDiaries,
   dailyBriefs,
+  desktopCommandRequests,
   focusSessionSegmentRuns,
   focusSessions,
   focusStructureSegments,
@@ -28,7 +29,7 @@ import {
 } from "@personal-ai/db/schema";
 
 export const logicalBackupFormat = "personal-ai-assistant.backup" as const;
-export const logicalBackupFormatVersion = 3 as const;
+export const logicalBackupFormatVersion = 4 as const;
 
 export type LogicalBackup = {
   format: typeof logicalBackupFormat;
@@ -48,6 +49,7 @@ export type LogicalBackup = {
     taskLifecycleEvents: Array<typeof taskLifecycleEvents.$inferSelect>;
     taskConflictAcceptances: Array<typeof taskConflictAcceptances.$inferSelect>;
     reminderJobs: Array<typeof reminderJobs.$inferSelect>;
+    desktopCommandRequests: Array<typeof desktopCommandRequests.$inferSelect>;
     focusStructures: Array<typeof focusStructures.$inferSelect>;
     focusStructureSegments: Array<typeof focusStructureSegments.$inferSelect>;
     focusSessions: Array<typeof focusSessions.$inferSelect>;
@@ -91,6 +93,7 @@ export class BackupService implements BackupExporter {
       const lifecycleEventRows = await transaction.select().from(taskLifecycleEvents).orderBy(asc(taskLifecycleEvents.createdAt), asc(taskLifecycleEvents.id));
       const conflictAcceptanceRows = await transaction.select().from(taskConflictAcceptances).orderBy(asc(taskConflictAcceptances.acceptedAt), asc(taskConflictAcceptances.taskIdLow), asc(taskConflictAcceptances.taskIdHigh));
       const reminderRows = await transaction.select().from(reminderJobs).orderBy(asc(reminderJobs.createdAt), asc(reminderJobs.id));
+      const desktopCommandRows = await transaction.select().from(desktopCommandRequests).orderBy(asc(desktopCommandRequests.createdAt), asc(desktopCommandRequests.id));
       const structureRows = await transaction.select().from(focusStructures).orderBy(asc(focusStructures.createdAt), asc(focusStructures.id));
       const structureSegmentRows = await transaction.select().from(focusStructureSegments).orderBy(asc(focusStructureSegments.focusStructureId), asc(focusStructureSegments.position));
       const focusSessionRows = await transaction.select().from(focusSessions).orderBy(asc(focusSessions.createdAt), asc(focusSessions.id));
@@ -121,6 +124,7 @@ export class BackupService implements BackupExporter {
           taskLifecycleEvents: lifecycleEventRows,
           taskConflictAcceptances: conflictAcceptanceRows,
           reminderJobs: reminderRows,
+          desktopCommandRequests: desktopCommandRows,
           focusStructures: structureRows,
           focusStructureSegments: structureSegmentRows,
           focusSessions: focusSessionRows,

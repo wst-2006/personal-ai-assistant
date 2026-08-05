@@ -44,7 +44,22 @@ describe("Feishu reminder delivery", () => {
     const body = JSON.parse(String(messageRequest[1]?.body)) as { receive_id: string; content: string };
     expect(body.receive_id).toBe("ou_x");
     expect(body.content).toContain("另有安排");
+    expect(body.content).toContain('"action":"open_task"');
     expect(body.content).toContain("https://assistant.example/?task=task-1");
+  });
+
+  it("always includes a local desktop open action without a public URL", async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ code: 0, tenant_access_token: "token", expire: 7200 }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ code: 0, msg: "success" }), { status: 200 }));
+    const provider = new FeishuDeliveryProvider({ appId: "id", appSecret: "secret", targetOpenId: "ou_x" }, fetcher);
+
+    await provider.deliver(job);
+
+    const body = JSON.parse(String(fetcher.mock.calls[1]?.[1]?.body)) as { content: string };
+    expect(body.content).toContain("打开任务");
+    expect(body.content).toContain('"action":"open_task"');
+    expect(body.content).not.toContain("打开网页版");
   });
 
   it("throws when Feishu does not confirm delivery", async () => {

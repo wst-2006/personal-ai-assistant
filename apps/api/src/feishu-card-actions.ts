@@ -2,12 +2,13 @@ import { z } from "zod";
 import type { FocusService } from "./focus-service.js";
 import type { TaskService } from "./task-service.js";
 import type { FeishuIntakeService } from "./feishu-intake-service.js";
+import type { DesktopCommandService } from "./desktop-command-service.js";
 
 export type FeishuCardActionConfig = { targetOpenId: string };
-export type FeishuCardActionResult = { type: "success" | "error"; message: string };
+export type FeishuCardActionResult = { type: "success" | "error"; message: string; terminal?: boolean };
 
 const reminderActionSchema = z.object({
-  action: z.enum(["start", "other_arrangement"]),
+  action: z.enum(["start", "other_arrangement", "open_task"]),
   taskId: z.string().uuid(),
   scheduleRevision: z.number().int().positive()
 }).passthrough();
@@ -26,7 +27,8 @@ export class FeishuCardActionService {
     private readonly config: FeishuCardActionConfig,
     private readonly taskService: TaskService,
     private readonly focusService: FocusService,
-    private readonly intakeService?: FeishuIntakeService
+    private readonly intakeService?: FeishuIntakeService,
+    private readonly desktopCommandService?: DesktopCommandService
   ) {}
 
   async handle(operatorOpenId: string | undefined, value: unknown): Promise<FeishuCardActionResult> {
@@ -45,6 +47,11 @@ export class FeishuCardActionService {
       const detail = await this.taskService.get(action.data.taskId);
       if (detail.task.scheduleRevision !== action.data.scheduleRevision) {
         return { type: "error", message: "任务排期已经变化，请在软件中查看最新安排。" };
+      }
+      if (action.data.action === "open_task") {
+        if (!this.desktopCommandService) return { type: "error", message: "桌面任务打开功能尚未启用。", terminal: false };
+        await this.desktopCommandService.requestOpenTask(detail.task.id, detail.task.scheduleRevision);
+        return { type: "success", message: "已通知电脑端打开对应任务。", terminal: false };
       }
       if (action.data.action === "start") {
         await this.focusService.create(detail.task.id, detail.task.version, "prepare");

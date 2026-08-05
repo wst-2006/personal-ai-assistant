@@ -73,6 +73,19 @@ describe("Feishu long connection", () => {
     await service.stop();
   });
 
+  it("keeps reminder controls available after a desktop navigation action", async () => {
+    const channel = new FakeChannel();
+    const actions = { handle: vi.fn().mockResolvedValue({ type: "success", message: "已通知电脑端打开对应任务。", terminal: false }) };
+    const service = new FeishuLongConnectionService(config, actions as unknown as FeishuCardActionService, () => channel, silentLogger);
+
+    await service.start();
+    await channel.cardHandler?.({ messageId: "om_open", chatId: "oc_open", operatorOpenId: "ou_owner", value: { action: "open_task" } });
+
+    expect(channel.updateCard).not.toHaveBeenCalled();
+    expect(channel.sendText).toHaveBeenCalledWith("oc_open", "已通知电脑端打开对应任务。");
+    await service.stop();
+  });
+
   it("acknowledges the SDK card event before asynchronous business processing finishes", async () => {
     let sdkHandler: ((event: CardActionEvent) => void | Promise<void>) | undefined;
     const rawChannel = {

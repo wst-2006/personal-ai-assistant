@@ -1,4 +1,5 @@
 import {
+  desktopCommandRequests,
   focusSessionSegmentRuns,
   focusSessions,
   focusStructureSegments,
@@ -42,6 +43,13 @@ describe("formal task and inbox schema contract", () => {
     expect(reminderJobs.scheduleRevision.name).toBe("schedule_revision");
     expect(reminderJobs.scheduledAt.name).toBe("scheduled_at");
     expect(reminderJobs.availableAt.name).toBe("available_at");
+  });
+
+  it("persists local desktop navigation commands independently from reminder delivery", () => {
+    expect(desktopCommandRequests.taskId.name).toBe("task_id");
+    expect(desktopCommandRequests.scheduleRevision.name).toBe("schedule_revision");
+    expect(desktopCommandRequests.claimedBy.name).toBe("claimed_by");
+    expect(desktopCommandRequests.completedAt.name).toBe("completed_at");
   });
 
   it("keeps legacy task fields in an explicit archive and models confirmed focus structures", () => {

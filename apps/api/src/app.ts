@@ -34,6 +34,8 @@ import { userProfileRoutes } from "./user-profile-routes.js";
 import type { UserProfileService } from "./user-profile-service.js";
 import { conversationRoutes } from "./conversation-routes.js";
 import type { ConversationResponder, ConversationService } from "./conversation-service.js";
+import { desktopCommandRoutes } from "./desktop-command-routes.js";
+import type { DesktopCommandService } from "./desktop-command-service.js";
 
 declare module "fastify" {
   interface FastifyRequest { rawBody?: string }
@@ -61,6 +63,7 @@ type AppOptions = {
   userProfileService?: UserProfileService;
   conversationService?: ConversationService;
   conversationResponder?: ConversationResponder;
+  desktopCommandService?: DesktopCommandService;
 };
 
 export function buildApp(options: AppOptions = {}) {
@@ -116,6 +119,10 @@ export function buildApp(options: AppOptions = {}) {
     prefix: "/api/v1",
     conversationService: options.conversationService,
     responder: options.conversationResponder
+  });
+  if (options.desktopCommandService) app.register(desktopCommandRoutes, {
+    prefix: "/api/v1",
+    desktopCommandService: options.desktopCommandService
   });
 
   if (options.taskParser || (options.taskService && options.planChangeAdvisor)) {

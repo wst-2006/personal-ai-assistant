@@ -570,6 +570,38 @@ export const reminderJobs = pgTable("reminder_jobs", {
   check("reminder_jobs_schedule_revision_check", sql`${table.scheduleRevision} > 0`)
 ]);
 
+/**
+ * Commands created by a local integration (currently Feishu) for the running
+ * desktop shell. They are durable so a short UI refresh cannot lose an
+ * explicit "open task" request. The desktop client claims a command before
+ * navigating and completes it after the route change.
+ */
+export const desktopCommandRequests = pgTable(
+  "desktop_command_requests",
+  {
+    id: uuid("id").primaryKey(),
+    kind: varchar("kind", { length: 32 }).notNull(),
+    taskId: uuid("task_id").notNull().references(() => tasks.id, { onDelete: "cascade" }),
+    scheduleRevision: integer("schedule_revision").notNull(),
+    status: varchar("status", { length: 16 }).notNull().default("pending"),
+    claimedBy: varchar("claimed_by", { length: 128 }),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    index("desktop_command_requests_pending_idx").on(table.status, table.expiresAt, table.createdAt),
+    index("desktop_command_requests_task_idx").on(table.taskId, table.createdAt),
+    check("desktop_command_requests_kind_check", sql`${table.kind} in ('open_task')`),
+    check("desktop_command_requests_status_check", sql`${table.status} in ('pending', 'claimed', 'completed', 'expired')`),
+    check("desktop_command_requests_schedule_revision_check", sql`${table.scheduleRevision} > 0`),
+    check("desktop_command_requests_claimed_at_check", sql`(${table.status} = 'pending' and ${table.claimedAt} is null and ${table.claimedBy} is null) or (${table.status} in ('claimed', 'completed') and ${table.claimedAt} is not null and ${table.claimedBy} is not null) or (${table.status} = 'expired')`),
+    check("desktop_command_requests_completed_at_check", sql`(${table.status} = 'completed') = (${table.completedAt} is not null)`)
+  ]
+);
+
 export const healthProfiles = pgTable("health_profiles", {
   id: uuid("id").primaryKey(),
   profile: jsonb("profile").notNull(),

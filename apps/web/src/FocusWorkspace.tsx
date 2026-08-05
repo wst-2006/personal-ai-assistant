@@ -90,10 +90,12 @@ export function FocusWorkspace({
   preferredTaskId,
   onBack,
   onPlanChange,
+  onPreferredTaskReady,
 }: {
   preferredTaskId: string | null;
   onBack: () => void;
   onPlanChange: (task: { id: string; title: string }) => void;
+  onPreferredTaskReady?: (taskId: string) => void;
 }) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [session, setSession] = useState<Session | null>(null);
@@ -139,11 +141,17 @@ export function FocusWorkspace({
       setError("无法恢复专注会话，请确认 API 正在运行。"),
     );
   }, [load]);
+  useEffect(() => {
+    if (preferredTaskId) setSelectedId(preferredTaskId);
+  }, [preferredTaskId]);
   const selected = useMemo(
     () =>
       tasks.find((task) => task.id === (session?.taskId ?? selectedId)) ?? null,
     [tasks, session, selectedId],
   );
+  useEffect(() => {
+    if (preferredTaskId && selected?.id === preferredTaskId) onPreferredTaskReady?.(selected.id);
+  }, [onPreferredTaskReady, preferredTaskId, selected?.id]);
   const structureKey = selected?.scheduleKind === "exact" && selected.startAt && selected.endAt
     ? `${selected.id}:${selected.scheduleRevision}:${selected.startAt}:${selected.endAt}`
     : null;

@@ -28,6 +28,7 @@ import { DeepSeekConversationResponder } from "./ai/conversation-responder.js";
 import { FeishuCardActionService, loadFeishuCardActionConfig } from "./feishu-card-actions.js";
 import { FeishuLongConnectionService, loadFeishuLongConnectionConfig } from "./feishu-long-connection.js";
 import { FeishuIntakeService, loadFeishuIntakeConfig } from "./feishu-intake-service.js";
+import { DesktopCommandService } from "./desktop-command-service.js";
 
 const config = loadServerConfig();
 const database = await connectVerifiedDatabase(loadDatabaseConfig());
@@ -36,6 +37,7 @@ const taskService = new TaskService(taskStore);
 const userProfileService = new UserProfileService(database.db);
 const focusService = new FocusService(database.db);
 const focusStructureService = new FocusStructureService(database.db);
+const desktopCommandService = new DesktopCommandService(database.db);
 const feishuActionConfig = loadFeishuCardActionConfig(process.env);
 const feishuIntakeConfig = loadFeishuIntakeConfig(process.env);
 const feishuWebhookConfig = loadFeishuWebhookConfig(process.env);
@@ -44,7 +46,9 @@ const deepSeekConfig = loadDeepSeekConfig();
 const feishuIntake = feishuIntakeConfig
   ? new FeishuIntakeService(feishuIntakeConfig, database.db, taskService, new DeepSeekTaskParser(deepSeekConfig, userProfileService))
   : null;
-const feishuActions = feishuActionConfig ? new FeishuCardActionService(feishuActionConfig, taskService, focusService, feishuIntake ?? undefined) : null;
+const feishuActions = feishuActionConfig
+  ? new FeishuCardActionService(feishuActionConfig, taskService, focusService, feishuIntake ?? undefined, desktopCommandService)
+  : null;
 const feishuLongConnection = feishuActions && feishuLongConnectionConfig
   ? new FeishuLongConnectionService(feishuLongConnectionConfig, feishuActions, undefined, undefined, feishuIntake ?? undefined)
   : null;
@@ -67,6 +71,7 @@ const app = buildApp({
   userProfileService,
   conversationService: new ConversationService(database.db),
   conversationResponder: new DeepSeekConversationResponder(deepSeekConfig, userProfileService),
+  desktopCommandService,
   feishuWebhookService: feishuActions && feishuWebhookConfig
     ? new FeishuWebhookService(feishuWebhookConfig, feishuActions)
     : undefined,

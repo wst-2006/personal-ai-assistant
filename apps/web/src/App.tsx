@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { BarChart3, Bot, BrainCircuit, CalendarDays, Check, CircleHelp, Download, HardDriveDownload, HeartPulse, LoaderCircle, Map, NotebookPen, RefreshCw, Send, Settings2, Sparkles, Target, X } from "lucide-react";
 import { DiaryWorkspace } from "./DiaryWorkspace";
 import { FocusWorkspace } from "./FocusWorkspace";
@@ -62,6 +62,7 @@ type ConversationResponse = {
   messages: ConversationMessage[];
 };
 type PlanChangeContext = { taskId: string; taskTitle: string };
+type DesktopCommand = { id: string; kind: "open_task"; taskId: string; expiresAt: string };
 
 class ApiError extends Error {
   constructor(readonly status: number, readonly body: ApiErrorBody) {
@@ -80,6 +81,19 @@ const navItems: Array<{ id: View; label: string; icon: typeof CalendarDays }> = 
   { id: "plans", label: "规划", icon: Map },
   { id: "health", label: "健康", icon: HeartPulse },
 ];
+
+function isDesktopRuntime() {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+function desktopCommandClientId() {
+  const storageKey = "personal-ai.desktop-command-client-id";
+  const existing = window.localStorage.getItem(storageKey);
+  if (existing) return existing;
+  const created = `desktop-${crypto.randomUUID()}`;
+  window.localStorage.setItem(storageKey, created);
+  return created;
+}
 
 function shanghaiDate() {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
@@ -218,8 +232,80 @@ export function App() {
   const [conversationMessages, setConversationMessages] = useState<ConversationMessage[]>([]);
   const [conversationLoading, setConversationLoading] = useState(false);
   const [conversationSending, setConversationSending] = useState(false);
+  const [pendingDesktopCommand, setPendingDesktopCommand] = useState<DesktopCommand | null>(null);
+  const [desktopTaskReadyId, setDesktopTaskReadyId] = useState<string | null>(null);
+  const desktopCommandInFlight = useRef(false);
   const activeNavLabel = navItems.find((item) => item.id === view)?.label ?? "今日";
   const selectedStandaloneBrief = standaloneBriefs.find((brief) => brief.id === selectedStandaloneBriefId) ?? standaloneBriefs[0] ?? null;
+
+  useEffect(() => {
+    if (!isDesktopRuntime() || pendingDesktopCommand) return;
+    const clientId = desktopCommandClientId();
+    let stopped = false;
+
+    async function pollDesktopCommand() {
+      if (stopped || desktopCommandInFlight.current) return;
+      desktopCommandInFlight.current = true;
+      try {
+        const result = await requestJson<{ command: DesktopCommand | null }>(`/api/v1/desktop-commands/pending?clientId=${encodeURIComponent(clientId)}`, "GET");
+        if (!result.command || stopped) return;
+        setAiOpen(false);
+        setPlanChange(null);
+        setDesktopTaskReadyId(null);
+        setPendingDesktopCommand(result.command);
+        setSelectedTaskId(result.command.taskId);
+        setView("focus");
+      } catch {
+        // The desktop API may still be starting. The next bounded poll retries
+        // without turning a transient integration issue into a blocking banner.
+      } finally {
+        desktopCommandInFlight.current = false;
+      }
+    }
+
+    void pollDesktopCommand();
+    const timer = window.setInterval(() => void pollDesktopCommand(), 1_500);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+    };
+  }, [pendingDesktopCommand]);
+
+  useEffect(() => {
+    if (!isDesktopRuntime() || !pendingDesktopCommand || desktopTaskReadyId !== pendingDesktopCommand.taskId) return;
+    const command = pendingDesktopCommand;
+    const clientId = desktopCommandClientId();
+    let stopped = false;
+    let retryTimer: number | undefined;
+
+    async function completeWhenReady() {
+      if (stopped) return;
+      if (Date.now() >= new Date(command.expiresAt).getTime()) {
+        setPendingDesktopCommand(null);
+        setDesktopTaskReadyId(null);
+        return;
+      }
+      try {
+        await requestJson(`/api/v1/desktop-commands/${command.id}/complete`, "POST", { clientId });
+        if (!stopped) {
+          setPendingDesktopCommand(null);
+          setDesktopTaskReadyId(null);
+        }
+      } catch {
+        if (!stopped) retryTimer = window.setTimeout(() => void completeWhenReady(), 1_500);
+      }
+    }
+
+    void completeWhenReady();
+    return () => {
+      stopped = true;
+      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+    };
+  }, [desktopTaskReadyId, pendingDesktopCommand]);
+
+  const handleDesktopTaskReady = useCallback((taskId: string) => {
+    setDesktopTaskReadyId(taskId);
+  }, []);
 
   async function loadStandaloneBriefs() {
     setStandaloneLoading(true);
@@ -450,7 +536,7 @@ export function App() {
       <header className="topbar"><div className="context-line"><span className="live-dot" />{displayDate()}<span>/</span>{activeNavLabel}</div><div className="topbar-actions"><button className="quiet-icon profile-trigger" type="button" aria-label="个人设置" title="个人设置" onClick={() => setSettingsOpen(true)}><Settings2 /></button><a className="quiet-icon backup-trigger" href={`${apiBaseUrl}/api/v1/backups/export`} download aria-label="备份所有数据" title="备份所有数据"><HardDriveDownload /></a><button className="ai-trigger" type="button" onClick={openAiDrawer}><Bot /> 与 AI 一起整理</button></div></header>
       {error && <div className="error-banner" role="alert"><X />{error}<button type="button" aria-label="关闭错误提示" onClick={() => setError(null)}><X /></button></div>}
       {view === "today" && <TodayWorkspace refreshToken={todayRefreshToken} onFocus={(id) => { setSelectedTaskId(id); setView("focus"); }} />}
-      {view === "focus" && <FocusWorkspace preferredTaskId={selectedTaskId} onBack={() => setView("today")} onPlanChange={openPlanChange} />}
+      {view === "focus" && <FocusWorkspace preferredTaskId={selectedTaskId} onBack={() => setView("today")} onPlanChange={openPlanChange} onPreferredTaskReady={handleDesktopTaskReady} />}
       {view === "review" && <ReviewWorkspace />}
       {view === "diary" && <DiaryWorkspace onOpenReview={() => setView("review")} />}
       {view === "growth" && <GrowthWorkspace />}
