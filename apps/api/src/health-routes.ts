@@ -25,6 +25,11 @@ const sleepAnalysisParams = z.object({ localDate: reviewDateSchema });
 export async function healthRoutes(app: FastifyInstance, options: { healthService: HealthService; healthPlanner?: HealthPlanner; sleepImageAnalyzer?: SleepImageAnalyzer }) {
   const { healthService, healthPlanner, sleepImageAnalyzer } = options;
 
+  app.get("/health/capabilities", async () => ({
+    sleepImageAnalysis: Boolean(sleepImageAnalyzer),
+    sleepImageAnalysisReason: sleepImageAnalyzer ? null : "vision_model_not_configured"
+  }));
+
   app.get("/health/profile", async () => ({ profile: serializeProfile(await healthService.getProfile()) }));
 
   app.put("/health/profile", async (request, reply) => {
@@ -42,6 +47,13 @@ export async function healthRoutes(app: FastifyInstance, options: { healthServic
     if (!params.success) return reply.status(400).send({ error: "invalid_health_week" });
     const week = await healthService.getWeek(params.data.weekStart);
     return { active: serializePlan(week.active), candidate: serializePlan(week.candidate) };
+  });
+
+  app.get("/health/days/:localDate", async (request, reply) => {
+    const params = sleepAnalysisParams.safeParse(request.params);
+    if (!params.success) return reply.status(400).send({ error: "invalid_health_reference_date" });
+    const reference = await healthService.getDay(params.data.localDate);
+    return { reference: reference ? { plan: reference.plan, day: { ...reference.day, content: reference.day.content } } : null };
   });
 
   app.get("/health/sleep-analyses/:localDate", async (request, reply) => {

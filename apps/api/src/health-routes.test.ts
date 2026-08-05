@@ -43,6 +43,43 @@ afterAll(async () => {
 });
 
 describe("sleep screenshot routes", () => {
+  it("reports visual-analysis capability explicitly", async () => {
+    const available = await app.inject({ method: "GET", url: "/api/v1/health/capabilities" });
+    expect(available.statusCode).toBe(200);
+    expect(available.json()).toEqual({ sleepImageAnalysis: true, sleepImageAnalysisReason: null });
+
+    const withoutVision = buildApp({ healthService: service });
+    try {
+      const unavailable = await withoutVision.inject({ method: "GET", url: "/api/v1/health/capabilities" });
+      expect(unavailable.json()).toEqual({ sleepImageAnalysis: false, sleepImageAnalysisReason: "vision_model_not_configured" });
+      const upload = await withoutVision.inject({ method: "POST", url: "/api/v1/health/sleep-analyses", payload: {} });
+      expect(upload.statusCode).toBe(503);
+      expect(upload.json()).toMatchObject({ error: "sleep_image_analysis_unavailable" });
+    } finally {
+      await withoutVision.close();
+    }
+  });
+
+  it("returns only the confirmed daily reference for the Today summary", async () => {
+    const weekStart = "2099-05-03";
+    const candidate = await service.createTemplateCandidate(weekStart, null);
+    try {
+      const before = await app.inject({ method: "GET", url: "/api/v1/health/days/2099-05-04" });
+      expect(before.statusCode).toBe(200);
+      expect(before.json()).toEqual({ reference: null });
+
+      const active = await service.confirm(candidate.plan.id, candidate.plan.version);
+      const after = await app.inject({ method: "GET", url: "/api/v1/health/days/2099-05-04" });
+      expect(after.statusCode).toBe(200);
+      expect(after.json()).toMatchObject({ reference: { plan: { id: active.plan.id, state: "active" }, day: { localDate: "2099-05-04", dayIndex: 1 } } });
+    } finally {
+      await connection.db.transaction(async (transaction) => {
+        await transaction.delete(healthDailyReferences).where(eq(healthDailyReferences.healthWeekPlanId, candidate.plan.id));
+        await transaction.delete(healthWeekPlans).where(eq(healthWeekPlans.id, candidate.plan.id));
+      });
+    }
+  });
+
   it("persists structured results and never accepts mismatched image bytes", async () => {
     const dataUrl = `data:image/png;base64,${Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString("base64")}`;
     const created = await app.inject({ method: "POST", url: "/api/v1/health/sleep-analyses", payload: {

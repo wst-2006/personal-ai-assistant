@@ -54,6 +54,18 @@ creates search-backed daily briefs when explicitly requested.
   review message and references both its review session and a confirmed brief.
 - A normal conversation may generate a brief only when explicitly requested;
   it never generates a cyber diary by itself.
+- Weekly health references are separate from tasks, focus, outcomes, points,
+  and growth. The user maintains the health profile; template, AI, manual, and
+  sleep-based changes remain versioned candidates until explicit confirmation.
+- The Today page reads only the confirmed health reference for that date. Food
+  and movement question buttons open a prefilled ordinary conversation without
+  sending it or modifying the plan. Converting a movement reference opens a
+  new exact-task form with blank start/end fields; no task is written until the
+  user confirms those times, and the original health reference remains intact.
+- A health candidate is bound to the profile version and, when revising an
+  active week, to that active plan ID/version. A stale candidate cannot replace
+  newer profile or plan data. Sleep screenshot analysis is opt-in and reports
+  an explicit unavailable state when no verified vision model is configured.
 - The product does not monitor user behavior, mood, camera, microphone, or
   external AI history. It does not perform personality analysis.
 
@@ -61,10 +73,11 @@ creates search-backed daily briefs when explicitly requested.
 
 First release: task creation, daily timeline and conflict warnings, focus
 sessions, review mode, brief and diary workflow, search/weather adapters,
-export, basic trends, and an optional local Feishu reminder worker while the
-computer is running. Cloud deployment, remote access, and cloud-backed
-reminders are explicitly deferred. File parsing, Huawei Calendar integration,
-native Android work, and advanced game visuals remain future work.
+export, basic trends, a user-controlled weekly health reference, and an
+optional local Feishu reminder worker while the computer is running. Cloud
+deployment, remote access, and cloud-backed reminders are explicitly deferred.
+File parsing, Huawei Calendar integration, native Android work, and advanced
+game visuals remain future work.
 
 Initial Feishu controls are reminder delivery, start, other arrangement, and
 opening the corresponding task. Complex editing and full review remain in the

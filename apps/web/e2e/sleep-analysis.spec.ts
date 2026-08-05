@@ -22,6 +22,9 @@ test("用户主动上传睡眠截图后只显示结构化可见结果", async ({
       await route.continue();
     }
   });
+  await page.route("**/api/v1/health/capabilities", async (route) => {
+    await route.fulfill({ contentType: "application/json", body: JSON.stringify({ sleepImageAnalysis: true, sleepImageAnalysisReason: null }) });
+  });
   await page.goto("/");
   await page.getByRole("button", { name: "健康", exact: true }).click();
   await expect(page.getByText("睡眠截图", { exact: true })).toBeVisible();

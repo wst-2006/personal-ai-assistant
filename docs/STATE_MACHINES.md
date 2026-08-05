@@ -82,3 +82,27 @@ The transition to `brief_generating` is unavailable without a review-page
 message. Normal-chat brief generation is a separate path that ends at
 `brief_ready` and cannot create a diary. A saved diary must reference both the
 review session and a confirmed brief.
+
+## Health Reference
+
+Weekly plans use explicit durable states:
+
+`candidate -> active -> superseded`
+
+A candidate may instead transition to `cancelled`. Creating a candidate never
+changes the active week. Template, AI, manual, and sleep-based candidates store
+the health-profile version used to create them. A revision of an active week
+also stores `basedOnPlanId` and `basedOnPlanVersion`.
+
+Confirmation checks the candidate version, current profile version, and current
+active-plan identity/version inside one serializable transaction. If any base
+has changed, the candidate remains non-active and the API returns a conflict;
+it never silently replaces the newer plan. Confirming one candidate supersedes
+the previous active plan and cancels other still-pending candidates for that
+week.
+
+Only an `active` daily reference is exposed to the Today summary. Asking about
+food or movement opens an ordinary AI conversation but is not a plan state
+transition. “Convert to task” opens an unsaved formal-task form; only the
+separate task-form confirmation creates the task, and the health reference is
+not changed or marked complete.

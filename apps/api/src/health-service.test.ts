@@ -3,7 +3,7 @@ import { connectVerifiedDatabase } from "@personal-ai/db/client";
 import { loadDatabaseConfig } from "@personal-ai/db/config";
 import { healthDailyReferences, healthSleepAnalyses, healthWeekPlans } from "@personal-ai/db/schema";
 import { eq, inArray } from "drizzle-orm";
-import { HealthService } from "./health-service.js";
+import { HealthPlanBaseChangedError, HealthService } from "./health-service.js";
 
 const connection = await connectVerifiedDatabase(loadDatabaseConfig());
 const service = new HealthService(connection.db);
@@ -157,6 +157,32 @@ describe("health reference persistence", () => {
       await connection.db.transaction(async (transaction) => {
         await transaction.delete(healthDailyReferences).where(inArray(healthDailyReferences.healthWeekPlanId, planIds));
         await transaction.delete(healthWeekPlans).where(inArray(healthWeekPlans.id, planIds));
+      });
+    }
+  });
+
+  it("binds template revisions to the active version and rejects a stale confirmation", async () => {
+    const weekStart = "2099-04-12";
+    const base = await service.createTemplateCandidate(weekStart, null);
+    const active = await service.confirm(base.plan.id, base.plan.version);
+    const revision = await service.createTemplateCandidate(weekStart, "周三外出，用餐场景会变化");
+    try {
+      expect(revision.plan).toMatchObject({
+        state: "candidate",
+        basedOnPlanId: active.plan.id,
+        basedOnPlanVersion: active.plan.version
+      });
+      expect(revision.plan.revisionReason).toContain("修订候选");
+      expect(revision.plan.overview).toContain("周三外出，用餐场景会变化");
+      expect(revision.plan.overview).toContain("清明");
+      expect((revision.days[0]?.content as { seasonalVegetables: string[] }).seasonalVegetables).toEqual(["菠菜", "芦笋"]);
+      await connection.db.update(healthWeekPlans).set({ version: active.plan.version + 1 }).where(eq(healthWeekPlans.id, active.plan.id));
+      await expect(service.confirm(revision.plan.id, revision.plan.version)).rejects.toBeInstanceOf(HealthPlanBaseChangedError);
+      expect((await service.getWeek(weekStart)).active?.plan.id).toBe(active.plan.id);
+    } finally {
+      await connection.db.transaction(async (transaction) => {
+        await transaction.delete(healthDailyReferences).where(inArray(healthDailyReferences.healthWeekPlanId, [base.plan.id, revision.plan.id]));
+        await transaction.delete(healthWeekPlans).where(inArray(healthWeekPlans.id, [base.plan.id, revision.plan.id]));
       });
     }
   });

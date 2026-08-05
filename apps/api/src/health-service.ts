@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import type { AppDatabase } from "@personal-ai/db/client";
 import { healthDailyReferences, healthProfiles, healthSleepAnalyses, healthWeekPlans, tasks } from "@personal-ai/db/schema";
 import {
@@ -89,18 +89,32 @@ export class HealthService {
     return { active, candidate };
   }
 
+  async getDay(localDate: string): Promise<{ plan: typeof healthWeekPlans.$inferSelect; day: typeof healthDailyReferences.$inferSelect } | null> {
+    const active = await this.findPlan(weekStartForDate(localDate), "active");
+    if (!active) return null;
+    const day = active.days.find((reference) => reference.localDate === localDate);
+    return day ? { plan: active.plan, day } : null;
+  }
+
   async createTemplateCandidate(weekStart: string, specialContext: string | null): Promise<HealthPlanWithDays> {
-    const profileRecord = await this.requireProfile(this.db);
+    const [profileRecord, scheduledActivities, basePlan] = await Promise.all([
+      this.requireProfile(this.db),
+      this.weekActivities(weekStart),
+      this.findPlan(weekStart, "active")
+    ]);
     const profile = profileRecord.profile as HealthProfile;
-    const scheduledActivities = await this.weekActivities(weekStart);
+    const solarTerm = solarTermFor(weekStart);
     return this.storeCandidate({
       weekStart,
       profileVersion: profileRecord.version,
       city: profile.city,
-      solarTerm: solarTermFor(weekStart),
+      solarTerm,
       specialContext,
       source: "template",
-      content: buildTemplateHealthPlan(profile, scheduledActivities)
+      content: buildTemplateHealthPlan(profile, scheduledActivities, solarTerm, specialContext),
+      basedOnPlanId: basePlan?.plan.id,
+      basedOnPlanVersion: basePlan?.plan.version,
+      revisionReason: basePlan ? "基于当前生效版本生成基础修订候选；确认前，原本周参考保持不变。" : undefined
     });
   }
 
@@ -149,12 +163,26 @@ export class HealthService {
   }
 
   async createAiCandidate(weekStart: string, specialContext: string | null, planner: HealthPlanner): Promise<HealthPlanWithDays> {
-    const profileRecord = await this.requireProfile(this.db);
+    const [profileRecord, scheduledActivities, basePlan] = await Promise.all([
+      this.requireProfile(this.db),
+      this.weekActivities(weekStart),
+      this.findPlan(weekStart, "active")
+    ]);
     const profile = profileRecord.profile as HealthProfile;
-    const scheduledActivities = await this.weekActivities(weekStart);
     const solarTerm = solarTermFor(weekStart);
     const content = healthPlanContentSchema.parse(await planner.plan({ profile, weekStart, solarTerm, scheduledActivities, specialContext, sleepAnalysis: null }));
-    return this.storeCandidate({ weekStart, profileVersion: profileRecord.version, city: profile.city, solarTerm, specialContext, source: "ai", content });
+    return this.storeCandidate({
+      weekStart,
+      profileVersion: profileRecord.version,
+      city: profile.city,
+      solarTerm,
+      specialContext,
+      source: "ai",
+      content,
+      basedOnPlanId: basePlan?.plan.id,
+      basedOnPlanVersion: basePlan?.plan.version,
+      revisionReason: basePlan ? "基于当前生效版本生成 AI 修订候选；确认前，原本周参考保持不变。" : undefined
+    });
   }
 
   async createSleepRevisionCandidate(input: { weekStart: string; sleepAnalysisId: string; specialContext?: string | null }, planner: HealthPlanner): Promise<HealthPlanWithDays> {
@@ -201,16 +229,22 @@ export class HealthService {
       if (current.plan.state === "active") return current;
       if (current.plan.state !== "candidate") throw new HealthPlanStateError(current.plan.state, "confirm");
       const now = new Date();
+      const profile = await this.requireProfile(transaction);
+      if (profile.version !== current.plan.profileVersion) throw new HealthProfileVersionConflictError(profile);
+      const [active] = await transaction.select().from(healthWeekPlans)
+        .where(and(eq(healthWeekPlans.weekStart, current.plan.weekStart), eq(healthWeekPlans.state, "active")))
+        .limit(1);
       if (current.plan.basedOnPlanId) {
-        const [active] = await transaction.select().from(healthWeekPlans)
-          .where(and(eq(healthWeekPlans.weekStart, current.plan.weekStart), eq(healthWeekPlans.state, "active")))
-          .limit(1);
         if (!active || active.id !== current.plan.basedOnPlanId || active.version !== current.plan.basedOnPlanVersion) {
           throw new HealthPlanBaseChangedError(active ? { plan: active, days: await this.daysForPlan(transaction, active.id) } : null);
         }
+      } else if (active) {
+        throw new HealthPlanBaseChangedError({ plan: active, days: await this.daysForPlan(transaction, active.id) });
       }
       await transaction.update(healthWeekPlans).set({ state: "superseded", supersededAt: now, version: sql`${healthWeekPlans.version} + 1`, updatedAt: now })
         .where(and(eq(healthWeekPlans.weekStart, current.plan.weekStart), eq(healthWeekPlans.state, "active")));
+      await transaction.update(healthWeekPlans).set({ state: "cancelled", cancelledAt: now, version: sql`${healthWeekPlans.version} + 1`, updatedAt: now })
+        .where(and(eq(healthWeekPlans.weekStart, current.plan.weekStart), eq(healthWeekPlans.state, "candidate"), ne(healthWeekPlans.id, current.plan.id)));
       const [confirmed] = await transaction.update(healthWeekPlans).set({ state: "active", confirmedAt: now, version: current.plan.version + 1, updatedAt: now })
         .where(and(eq(healthWeekPlans.id, id), eq(healthWeekPlans.version, expectedVersion), eq(healthWeekPlans.state, "candidate"))).returning();
       if (!confirmed) throw new HealthPlanVersionConflictError(await this.requirePlan(transaction, id));
@@ -305,7 +339,7 @@ export class HealthService {
   private async weekActivities(weekStart: string): Promise<Array<{ localDate: string; title: string }>> {
     const dates = localDatesForHealthWeek(weekStart);
     return this.db.select({ localDate: tasks.localDate, title: tasks.title }).from(tasks)
-      .where(and(inArray(tasks.localDate, dates), inArray(tasks.lifecycleStatus, ["open", "active", "awaiting_outcome"])))
+      .where(and(inArray(tasks.localDate, dates), inArray(tasks.lifecycleStatus, ["open", "active", "awaiting_outcome"]), isNull(tasks.deletedAt)))
       .orderBy(asc(tasks.localDate), asc(tasks.createdAt))
       .then((rows) => rows.filter((row): row is { localDate: string; title: string } => row.localDate !== null));
   }
@@ -360,7 +394,12 @@ function decodeSleepImage(input: SleepImageAnalysisRequest): { bytes: Buffer } {
   return { bytes };
 }
 
-function buildTemplateHealthPlan(profile: HealthProfile, activities: Array<{ localDate: string; title: string }>): HealthPlanContent {
+function buildTemplateHealthPlan(
+  profile: HealthProfile,
+  activities: Array<{ localDate: string; title: string }>,
+  solarTerm: string,
+  specialContext: string | null
+): HealthPlanContent {
   const base = ["strength", "recovery", "volleyball", "rest", "cycling", "strength", "running"] as const;
   const defaults: Record<typeof base[number], HealthPlanContent["days"][number]["movement"]> = {
     strength: { category: "strength", durationMinutes: { minimum: 60, maximum: 90 }, intensity: "moderate", highIntensity: false, safetyReminder: "以动作稳定和舒适范围为先；颈肩或膝部不适时主动降低负荷。" },
@@ -370,9 +409,10 @@ function buildTemplateHealthPlan(profile: HealthProfile, activities: Array<{ loc
     cycling: { category: "cycling", durationMinutes: { minimum: 45, maximum: 90 }, intensity: "moderate", highIntensity: false, safetyReminder: "优先白天、熟悉且安全的路线；感觉膝部不适时缩短行程。" },
     running: { category: "running", durationMinutes: { minimum: 30, maximum: 45 }, intensity: "moderate", highIntensity: false, safetyReminder: "以舒适、可对话的强度为参考；膝部不适时改为恢复活动。" }
   };
-  const vegetableSets = [["番茄", "油麦菜"], ["芦笋", "白菜"], ["苦瓜", "番茄"], ["莲花白", "深色叶菜"], ["芹菜", "白菜"], ["苦菜", "番茄"], ["时令绿叶菜", "菌菇"]];
+  const vegetableSets = seasonalVegetableSets(solarTerm);
+  const contextNote = specialContext ? ` 本周特别说明：${specialContext}` : "";
   return {
-    overview: `本周以稳定增肌支持、恢复和不过度堆叠高强度为主。结合${profile.city ? ` ${profile.city} 的` : "日常"}食堂或外卖场景，不需要称重或打卡；若有不适，请以安全和休息为先。`,
+    overview: `本周以稳定增肌支持、恢复和不过度堆叠高强度为主。结合${profile.city ? ` ${profile.city}` : "当前城市未设置时的通用"}${solarTerm}时令与食堂或外卖场景，不需要称重或打卡；若有不适，请以安全和休息为先。${contextNote}`,
     supplements: ["鱼油、多种维生素与维生素 D 仅作可选参考：先查看实际标签，避免重复成分。", "未掌握产品含量、近期检查和药物情况时，不给出确定剂量；有疑问请咨询专业人士。", "肌酸仍保持“未来可讨论”的状态，不自动加入本周安排。"],
     days: base.map((kind, index) => {
       const scheduled = activities.find((activity) => activity.localDate && includesActivity(activity.title, kind));
@@ -394,13 +434,23 @@ function buildTemplateHealthPlan(profile: HealthProfile, activities: Array<{ loc
 }
 
 function includesActivity(title: string, kind: string): boolean {
-  const lower = title.toLowerCase();
   return (kind === "strength" && /力量|健身|训练/.test(title))
     || (kind === "volleyball" && /排球/.test(title))
     || (kind === "cycling" && /骑行/.test(title))
     || (kind === "running" && /跑步|慢跑/.test(title))
-    || (kind === "recovery" && /恢复|拉伸|散步/.test(title))
-    || lower.length < 0;
+    || (kind === "recovery" && /恢复|拉伸|散步/.test(title));
+}
+
+function seasonalVegetableSets(solarTerm: string): string[][] {
+  const spring = ["菠菜", "油麦菜", "芦笋", "春笋", "生菜", "韭菜", "豌豆苗"];
+  const summer = ["番茄", "黄瓜", "苦瓜", "茄子", "丝瓜", "苋菜", "空心菜"];
+  const autumn = ["莲藕", "南瓜", "芹菜", "西兰花", "莲花白", "胡萝卜", "菌菇"];
+  const winter = ["白菜", "白萝卜", "菠菜", "菜花", "芥蓝", "胡萝卜", "菌菇"];
+  const springTerms = new Set(["立春", "雨水", "惊蛰", "春分", "清明", "谷雨"]);
+  const summerTerms = new Set(["立夏", "小满", "芒种", "夏至", "小暑", "大暑"]);
+  const autumnTerms = new Set(["立秋", "处暑", "白露", "秋分", "寒露", "霜降"]);
+  const vegetables = springTerms.has(solarTerm) ? spring : summerTerms.has(solarTerm) ? summer : autumnTerms.has(solarTerm) ? autumn : winter;
+  return Array.from({ length: 7 }, (_, index) => [vegetables[index]!, vegetables[(index + 2) % vegetables.length]!]);
 }
 
 function sleepRevisionReason(localDate: string, analysis: SleepImageAnalysis): string {
@@ -423,4 +473,10 @@ function solarTermFor(localDate: string): string {
 
 function isSerializationFailure(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "40001";
+}
+
+function weekStartForDate(localDate: string): string {
+  const current = new Date(`${localDate}T00:00:00.000Z`);
+  current.setUTCDate(current.getUTCDate() - current.getUTCDay());
+  return current.toISOString().slice(0, 10);
 }

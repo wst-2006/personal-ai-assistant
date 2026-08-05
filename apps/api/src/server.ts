@@ -64,7 +64,9 @@ const app = buildApp({
   backupService: new BackupService(database.db),
   healthService: new HealthService(database.db),
   healthPlanner: new DeepSeekHealthPlanner(deepSeekConfig, userProfileService),
-  sleepImageAnalyzer: new DeepSeekSleepImageAnalyzer(deepSeekConfig, userProfileService),
+  sleepImageAnalyzer: deepSeekConfig.DEEPSEEK_VISION_MODEL
+    ? new DeepSeekSleepImageAnalyzer(deepSeekConfig, userProfileService)
+    : undefined,
   longRangePlanService: new LongRangePlanService(database.db),
   longRangeTaskTreeService: new LongRangeTaskTreeService(database.db),
   longRangeTaskTreePlanner: new DeepSeekLongRangeTaskTreePlanner(deepSeekConfig, userProfileService),

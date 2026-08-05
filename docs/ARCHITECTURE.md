@@ -2,8 +2,9 @@
 
 ## Chosen Architecture
 
-The project is a pnpm monorepo. A React PWA provides shared desktop and mobile
-UI. Tauri wraps the same interface for the Windows-first experience. A Fastify
+The project is a pnpm monorepo. A responsive React interface provides the
+shared desktop and narrow-screen UI; it is not currently shipped as a PWA.
+Tauri wraps the same interface for the Windows-first experience. A Fastify
 API owns business operations, provider adapters, and server-side secrets. A
 separate worker will process durable reminders and retries. PostgreSQL stores
 application state and the future job queue.
@@ -23,6 +24,11 @@ the repository.
 - `packages/db` owns PostgreSQL schema, migrations, and migration safety guard.
 - External model, search, weather, Feishu, and calendar clients implement
   replaceable adapters. Business logic must not depend on a provider SDK.
+- Health profile, weekly-plan, daily-reference, and sleep-analysis records use
+  dedicated database tables and API services. They are never simulated through
+  task, focus, outcome, or growth tables. The Today surface reads only the
+  confirmed daily reference, while candidate creation and confirmation stay in
+  the Health module.
 
 ## Database Safety
 
@@ -43,3 +49,7 @@ outbound reminders; an encrypted HTTP callback remains an explicit fallback
 for card actions only. Inbound text is first stored as a deduplicated candidate
 and never creates a task until the owner confirms its card. Huawei Calendar
 remains an unimplemented adapter until its capability is verified.
+
+Sleep screenshot analysis is an optional vision-adapter capability. When no
+verified image-capable model is configured, the API exposes that capability as
+unavailable and stores neither the uploaded image nor a fabricated result.

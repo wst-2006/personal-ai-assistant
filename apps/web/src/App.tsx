@@ -63,6 +63,7 @@ type ConversationResponse = {
 };
 type PlanChangeContext = { taskId: string; taskTitle: string };
 type DesktopCommand = { id: string; kind: "open_task"; taskId: string; expiresAt: string };
+type HealthTaskDraft = { requestId: string; title: string; localDate: string; notes: string };
 
 class ApiError extends Error {
   constructor(readonly status: number, readonly body: ApiErrorBody) {
@@ -234,6 +235,7 @@ export function App() {
   const [conversationSending, setConversationSending] = useState(false);
   const [pendingDesktopCommand, setPendingDesktopCommand] = useState<DesktopCommand | null>(null);
   const [desktopTaskReadyId, setDesktopTaskReadyId] = useState<string | null>(null);
+  const [healthTaskDraft, setHealthTaskDraft] = useState<HealthTaskDraft | null>(null);
   const desktopCommandInFlight = useRef(false);
   const activeNavLabel = navItems.find((item) => item.id === view)?.label ?? "今日";
   const selectedStandaloneBrief = standaloneBriefs.find((brief) => brief.id === selectedStandaloneBriefId) ?? standaloneBriefs[0] ?? null;
@@ -337,6 +339,19 @@ export function App() {
     setPlanChange(null);
     setAiOpen(true);
     void Promise.all([loadStandaloneBriefs(), loadConversation()]);
+  }
+
+  function openHealthQuestion(prompt: string) {
+    setAiCandidate(null);
+    setPlanChange(null);
+    setAiInput(prompt);
+    setAiOpen(true);
+    void Promise.all([loadStandaloneBriefs(), loadConversation()]);
+  }
+
+  function openHealthTaskDraft(draft: Omit<HealthTaskDraft, "requestId">) {
+    setHealthTaskDraft({ ...draft, requestId: crypto.randomUUID() });
+    setView("today");
   }
 
   function closeAiDrawer() {
@@ -535,13 +550,19 @@ export function App() {
     <section className="app-canvas">
       <header className="topbar"><div className="context-line"><span className="live-dot" />{displayDate()}<span>/</span>{activeNavLabel}</div><div className="topbar-actions"><button className="quiet-icon profile-trigger" type="button" aria-label="个人设置" title="个人设置" onClick={() => setSettingsOpen(true)}><Settings2 /></button><a className="quiet-icon backup-trigger" href={`${apiBaseUrl}/api/v1/backups/export`} download aria-label="备份所有数据" title="备份所有数据"><HardDriveDownload /></a><button className="ai-trigger" type="button" onClick={openAiDrawer}><Bot /> 与 AI 一起整理</button></div></header>
       {error && <div className="error-banner" role="alert"><X />{error}<button type="button" aria-label="关闭错误提示" onClick={() => setError(null)}><X /></button></div>}
-      {view === "today" && <TodayWorkspace refreshToken={todayRefreshToken} onFocus={(id) => { setSelectedTaskId(id); setView("focus"); }} />}
+      {view === "today" && <TodayWorkspace
+        refreshToken={todayRefreshToken}
+        healthTaskDraft={healthTaskDraft}
+        onHealthTaskDraftConsumed={() => setHealthTaskDraft(null)}
+        onOpenHealth={() => setView("health")}
+        onFocus={(id) => { setSelectedTaskId(id); setView("focus"); }}
+      />}
       {view === "focus" && <FocusWorkspace preferredTaskId={selectedTaskId} onBack={() => setView("today")} onPlanChange={openPlanChange} onPreferredTaskReady={handleDesktopTaskReady} />}
       {view === "review" && <ReviewWorkspace />}
       {view === "diary" && <DiaryWorkspace onOpenReview={() => setView("review")} />}
       {view === "growth" && <GrowthWorkspace />}
       {view === "plans" && <LongRangePlansWorkspace />}
-      {view === "health" && <HealthWorkspace />}
+      {view === "health" && <HealthWorkspace onAskHealth={openHealthQuestion} onCreateTask={openHealthTaskDraft} />}
     </section>
     <aside className={`ai-drawer ${aiOpen ? "open" : ""}`} aria-label={planChange ? "计划变更协商" : "AI 助手"} aria-hidden={!aiOpen}>
       <div className="drawer-header"><div><span className="bot-orb"><Bot /></span><div><p>{planChange ? "计划变更协商" : "AI 整理助手"}</p><strong>{planChange ? "建议可见，决定仍在你手上" : "把一句话变得清楚"}</strong></div></div><button className="quiet-icon" type="button" aria-label="关闭 AI 助手" onClick={closeAiDrawer}><X /></button></div>
