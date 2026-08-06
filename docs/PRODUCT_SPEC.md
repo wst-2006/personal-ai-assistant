@@ -66,6 +66,16 @@ creates search-backed daily briefs when explicitly requested.
   prerequisites; a client cannot submit a forged AI review message.
 - A normal conversation may generate a brief only when explicitly requested;
   it never generates a cyber diary by itself.
+- A cyber diary uses the six confirmed dimensions: mainline progress, overall
+  execution, focus quality, energy state, wellbeing maintenance, and growth
+  gained. The first three are prefilled from persisted task/outcome/focus/
+  feedback records but remain user-editable. The latter three stay explicitly
+  unrated until the user chooses values; the system and AI do not invent them.
+  The final user-controlled values are saved with the diary and restored after
+  refresh. Daily and monthly state colors derive from the real satisfied,
+  neutral, and dissatisfied feedback mix: green for predominantly satisfied,
+  yellow for mixed/neutral, red for predominantly dissatisfied, and grey when
+  no subjective feedback exists.
 - Weekly health references are separate from tasks, focus, outcomes, points,
   and growth. The user maintains the health profile; template, AI, manual, and
   sleep-based changes remain versioned candidates until explicit confirmation.

@@ -11,6 +11,35 @@ type FocusRow = typeof focusSessions.$inferSelect;
 type OutcomeRow = typeof taskOutcomes.$inferSelect;
 type FeedbackRow = typeof taskFeedback.$inferSelect;
 
+export type DailyStateTone = "quiet" | "steady" | "bright" | "strained";
+
+const radarDefinitions = [
+  { key: "mainlineProgress", label: "主线推进", source: "system" },
+  { key: "overallExecution", label: "总体执行", source: "system" },
+  { key: "focusQuality", label: "专注质量", source: "system" },
+  { key: "energyState", label: "精力状态", source: "user" },
+  { key: "wellbeing", label: "身心维护", source: "user" },
+  { key: "growthGain", label: "成长获得", source: "user" }
+] as const;
+
+function percentage(value: number, total: number) {
+  return total ? Math.round(value / total * 100) : 0;
+}
+
+function stateTone(feedback: FeedbackRow[]): DailyStateTone {
+  if (feedback.length === 0) return "quiet";
+  const satisfied = feedback.filter((item) => item.satisfaction === "satisfied").length;
+  const dissatisfied = feedback.filter((item) => item.satisfaction === "dissatisfied").length;
+  if (dissatisfied / feedback.length >= 0.5) return "strained";
+  if (satisfied / feedback.length >= 0.6 && dissatisfied / feedback.length <= 0.2) return "bright";
+  return "steady";
+}
+
+function progressAverage(taskRows: TaskRow[], latestOutcomeByTask: Map<string, OutcomeRow>) {
+  if (taskRows.length === 0) return 0;
+  return Math.round(taskRows.reduce((sum, task) => sum + (latestOutcomeByTask.get(task.id)?.progressPercent ?? 0), 0) / taskRows.length);
+}
+
 export function buildDiaryDayData(taskRows: TaskRow[], sessions: FocusRow[], outcomes: OutcomeRow[], feedback: FeedbackRow[], hasReviewMessage: boolean) {
   const focusByTask = new Map<string, { rawSeconds: number; effectiveSeconds: number }>();
   for (const session of sessions) {
@@ -25,7 +54,8 @@ export function buildDiaryDayData(taskRows: TaskRow[], sessions: FocusRow[], out
     if (!previous || outcome.recordedAt > previous.recordedAt) latestOutcomeByTask.set(outcome.taskId, outcome);
   }
   const closedTasks = taskRows.filter((task) => task.lifecycleStatus === "closed").length;
-  const plannedTasks = taskRows.filter((task) => task.lifecycleStatus !== "cancelled").length;
+  const plannedTaskRows = taskRows.filter((task) => task.lifecycleStatus !== "cancelled");
+  const plannedTasks = plannedTaskRows.length;
   const rawFocusSeconds = sessions.reduce((sum, session) => sum + session.rawActiveSeconds, 0);
   const effectiveFocusSeconds = sessions.reduce((sum, session) => sum + session.effectiveFocusSeconds, 0);
   const satisfaction = {
@@ -33,23 +63,21 @@ export function buildDiaryDayData(taskRows: TaskRow[], sessions: FocusRow[], out
     neutral: feedback.filter((item) => item.satisfaction === "neutral").length,
     dissatisfied: feedback.filter((item) => item.satisfaction === "dissatisfied").length
   };
-  const outcomeCount = latestOutcomeByTask.size;
-  const completeCount = [...latestOutcomeByTask.values()].filter((outcome) => outcome.outcome === "complete").length;
-  const percentage = (value: number, total: number) => total ? Math.round(value / total * 100) : 0;
-  const completion = percentage(closedTasks, plannedTasks);
-  const quality = percentage(completeCount, outcomeCount);
-  const balance = percentage(satisfaction.satisfied + satisfaction.neutral, feedback.length);
+  const latestOutcomes = [...latestOutcomeByTask.values()];
+  const outcomeCount = latestOutcomes.length;
+  const completeCount = latestOutcomes.filter((outcome) => outcome.outcome === "complete").length;
+  const quality = outcomeCount ? Math.round(latestOutcomes.reduce((sum, outcome) => sum + outcome.progressPercent, 0) / outcomeCount) : 0;
   const focusMinutes = Math.round(effectiveFocusSeconds / 60);
-  const deepFocusMinutes = focusMinutes;
-  const radar = [
-    { key: "focus", label: "专注", value: Math.min(100, Math.round(focusMinutes / 60 * 100)) },
-    { key: "completion", label: "完成", value: completion },
-    { key: "depth", label: "深度", value: Math.min(100, Math.round(deepFocusMinutes / 45 * 100)) },
-    { key: "quality", label: "质量", value: quality },
-    { key: "balance", label: "感受", value: balance },
-    { key: "reflection", label: "复盘", value: hasReviewMessage ? 100 : 0 }
-  ];
+  const mainlineProgress = progressAverage(plannedTaskRows.filter((task) => task.sourceLongRangePlanId !== null), latestOutcomeByTask);
+  const overallExecution = progressAverage(plannedTaskRows, latestOutcomeByTask);
+  const feedbackScore = feedback.length
+    ? Math.round(feedback.reduce((sum, item) => sum + (item.satisfaction === "satisfied" ? 100 : item.satisfaction === "neutral" ? 60 : 20), 0) / feedback.length)
+    : rawFocusSeconds > 0 ? Math.min(100, percentage(effectiveFocusSeconds, rawFocusSeconds)) : 0;
+  const radarValues = { mainlineProgress, overallExecution, focusQuality: feedbackScore, energyState: null, wellbeing: null, growthGain: null };
+  const radar = radarDefinitions.map((definition) => ({ ...definition, value: radarValues[definition.key] }));
   const treeKind = quality >= 80 ? "常青树" : quality >= 45 ? "银杏" : outcomeCount > 0 ? "苔藓" : "种子";
+  const outcomePoints = latestOutcomes.reduce((sum, outcome) => sum + (outcome.outcome === "complete" ? 20 : outcome.outcome === "partial" ? Math.max(1, Math.round(outcome.progressPercent / 5)) : 0), 0);
+  const satisfactionPoints = satisfaction.satisfied * 10 + satisfaction.neutral * 5;
   return {
     tasks: taskRows.map((task) => ({
       id: task.id, title: task.title, lifecycleStatus: task.lifecycleStatus, scheduleKind: task.scheduleKind,
@@ -58,9 +86,10 @@ export function buildDiaryDayData(taskRows: TaskRow[], sessions: FocusRow[], out
       rawFocusMinutes: Math.round((focusByTask.get(task.id)?.rawSeconds ?? 0) / 60),
       latestOutcome: latestOutcomeByTask.get(task.id)?.outcome ?? null
     })),
-    plannedTasks, closedTasks, rawFocusMinutes: Math.round(rawFocusSeconds / 60), effectiveFocusMinutes: focusMinutes, satisfaction,
-    radar, stateTone: focusMinutes >= 60 && closedTasks > 0 ? "bright" as const : focusMinutes > 0 || closedTasks > 0 ? "steady" as const : "quiet" as const,
-    tree: { kind: treeKind, points: focusMinutes + closedTasks * 20 + completeCount * 20, growthPercent: Math.min(100, Math.round(focusMinutes / 90 * 100)), quality }
+    plannedTasks, closedTasks, outcomeCount, completeCount,
+    rawFocusMinutes: Math.round(rawFocusSeconds / 60), effectiveFocusMinutes: focusMinutes, satisfaction,
+    radar, stateTone: stateTone(feedback),
+    tree: { kind: treeKind, points: focusMinutes + outcomePoints + satisfactionPoints + (hasReviewMessage ? 10 : 0), growthPercent: Math.min(100, Math.round(focusMinutes / 90 * 100)), quality }
   };
 }
 
@@ -88,6 +117,7 @@ export class DiaryService {
       const taskRows = await transaction.select().from(tasks).where(and(isNull(tasks.deletedAt), gte(tasks.localDate, start), lte(tasks.localDate, end)));
       const taskIds = taskRows.map((task) => task.id);
       const sessions = taskIds.length ? await transaction.select().from(focusSessions).where(inArray(focusSessions.taskId, taskIds)) : [];
+      const feedbackRows = taskIds.length ? await transaction.select().from(taskFeedback).where(inArray(taskFeedback.taskId, taskIds)) : [];
       const focusByTask = new Map<string, number>();
       for (const session of sessions) focusByTask.set(session.taskId, (focusByTask.get(session.taskId) ?? 0) + session.effectiveFocusSeconds);
       const messagesByReview = new Set(messageRows.map((message) => message.reviewSessionId));
@@ -99,11 +129,13 @@ export class DiaryService {
         const dayTasks = taskRows.filter((task) => task.localDate === localDate);
         const focusMinutes = Math.round(dayTasks.reduce((sum, task) => sum + (focusByTask.get(task.id) ?? 0), 0) / 60);
         const closedTasks = dayTasks.filter((task) => task.lifecycleStatus === "closed").length;
+        const dayTaskIds = new Set(dayTasks.map((task) => task.id));
+        const dayFeedback = feedbackRows.filter((item) => dayTaskIds.has(item.taskId));
         const review = reviewByDate.get(localDate);
         return {
           localDate, hasDiary: diariesByDate.has(localDate), hasReview: Boolean(review && messagesByReview.has(review.id)),
           hasConfirmedBrief: Boolean(review && briefsByReview.has(review.id)), taskCount: dayTasks.length, closedTasks, focusMinutes,
-          tone: focusMinutes >= 60 && closedTasks > 0 ? "bright" as const : focusMinutes > 0 || closedTasks > 0 ? "steady" as const : "quiet" as const
+          tone: stateTone(dayFeedback)
         };
       });
       return { month, days };

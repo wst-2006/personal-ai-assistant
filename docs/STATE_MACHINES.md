@@ -89,6 +89,15 @@ message. Normal-chat brief generation is a separate path that ends at
 `brief_ready` and cannot create a diary. A saved diary must reference both the
 review session and a confirmed brief.
 
+`diary_draft` contains editable title, body, and six-dimensional review data.
+Mainline progress, overall execution, and focus quality start from database-
+derived values but may be adjusted by the user. Energy state, wellbeing
+maintenance, and growth gained remain `null` until the user actively rates
+them. `diary_saved` persists these values inside the validated diary content;
+refresh and growth aggregation read the saved values rather than rebuilding
+manual ratings. Older diary rows without the optional radar object remain
+readable and receive current derived defaults until they are saved again.
+
 ## Health Reference
 
 Weekly plans use explicit durable states:

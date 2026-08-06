@@ -23,5 +23,10 @@ test("成长页使用真实 API 切换七日与月度统计，并在 390px 下�
   await expect(monthButton).toHaveAttribute("aria-pressed", "true");
   await expect(page.locator(".bar-chart.month-chart .bar-day")).toHaveCount(30);
   await expect(page.locator(".state-grid.month-state-grid .state-cell")).toHaveCount(30);
+  await expect(page.locator(".radar-list > div")).toHaveCount(6);
+  for (const label of ["主线推进", "总体执行", "专注质量", "精力状态", "身心维护", "成长获得"]) {
+    await expect(page.getByText(label, { exact: true })).toBeVisible();
+  }
+  await expect(page.getByText(/绿色偏满意/)).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });

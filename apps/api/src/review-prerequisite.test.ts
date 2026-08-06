@@ -48,11 +48,11 @@ describe("review user-message prerequisites", () => {
     const month = await new DiaryService(connection.db).listMonth("2099-09");
     expect(month.days.find((day) => day.localDate === localDate)?.hasReview).toBe(false);
     const growth = await new GrowthService(connection.db).getSummary(localDate, 7);
-    expect(growth.radar.find((metric) => metric.key === "review")?.value).toBe(0);
+    expect(growth.reviewedDays).toBe(0);
 
     await connection.db.insert(reviewMessages).values({ id: randomUUID(), reviewSessionId: reviewId, source: "app", content: "用户主动留下的复盘" });
     expect((await new DiaryService(connection.db).getByLocalDate(localDate)).hasReviewMessage).toBe(true);
     const afterUserMessage = await new GrowthService(connection.db).getSummary(localDate, 7);
-    expect(afterUserMessage.radar.find((metric) => metric.key === "review")?.value).toBeGreaterThan(0);
+    expect(afterUserMessage.reviewedDays).toBe(1);
   });
 });
