@@ -216,6 +216,33 @@ describe("AI task parsing", () => {
     expect(aiStore.tasks).toHaveLength(0);
     await aiApp.close();
   });
+
+  it("returns a recoverable provider error without writing a task", async () => {
+    const parser: TaskParser = {
+      async parse() {
+        throw new Error("provider unavailable");
+      }
+    };
+    const aiStore = new MemoryTaskStore();
+    const aiApp = buildApp({ taskService: new TaskService(aiStore), taskParser: parser });
+    const response = await aiApp.inject({
+      method: "POST",
+      url: "/api/v1/ai/tasks/parse",
+      payload: {
+        text: "明天上午九点学习线性代数",
+        referenceDate: "2026-08-07",
+        timeZone: "Asia/Shanghai"
+      }
+    });
+
+    expect(response.statusCode).toBe(502);
+    expect(response.json()).toMatchObject({
+      error: "ai_unavailable",
+      message: "AI 暂时无法整理这条内容，原始输入没有丢失。"
+    });
+    expect(aiStore.tasks).toHaveLength(0);
+    await aiApp.close();
+  });
 });
 
 describe("AI plan-change consultation", () => {

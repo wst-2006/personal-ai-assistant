@@ -222,6 +222,7 @@ export function App() {
   const [aiOpen, setAiOpen] = useState(false);
   const [aiInput, setAiInput] = useState("");
   const [aiLoading, setAiLoading] = useState(false);
+  const [aiParseError, setAiParseError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [aiCandidate, setAiCandidate] = useState<CandidateDraft | null>(null);
@@ -343,6 +344,7 @@ export function App() {
 
   function openHealthQuestion(prompt: string) {
     setAiCandidate(null);
+    setAiParseError(null);
     setPlanChange(null);
     setAiInput(prompt);
     setAiOpen(true);
@@ -376,12 +378,12 @@ export function App() {
   async function parseWithAi() {
     const text = aiInput.trim();
     if (!text) return;
-    setAiLoading(true); setError(null);
+    setAiLoading(true); setError(null); setAiParseError(null);
     try {
       const result = await requestJson<{ candidate: NaturalLanguageTaskCandidate }>("/api/v1/ai/tasks/parse", "POST", { text, referenceDate: today, timeZone: "Asia/Shanghai" });
       setAiCandidate(candidateDraftFrom(result.candidate));
     } catch {
-      setError("AI 暂时无法整理这条内容，原始输入仍保留在侧边层。");
+      setAiParseError("AI 暂时无法整理这条内容。原始输入仍保留，且没有创建任务、想法或问题；你可以直接重新整理。");
     } finally {
       setAiLoading(false);
     }
@@ -464,7 +466,7 @@ export function App() {
       } else if (taskPayload) {
         await requestWithConflictConfirmation("/api/v1/tasks", "POST", taskPayload);
       }
-      setAiInput(""); setAiCandidate(null); setAiOpen(false);
+      setAiInput(""); setAiCandidate(null); setAiParseError(null); setAiOpen(false);
       setTodayRefreshToken((value) => value + 1);
     } catch (requestError) {
       if (requestError instanceof ApiError && requestError.body.error === "task_schedule_window_unavailable") {
@@ -577,10 +579,11 @@ export function App() {
           {conversationMessages.length === 0 && !conversationLoading ? <p className="conversation-empty">从这里开始的一句话，会被保存在今天的本机对话里。</p> : conversationMessages.map((message) => <article key={message.id} className={`conversation-message ${message.role}`}><span>{message.role === "user" ? "我" : "AI"}</span><p>{message.content}</p></article>)}
           {conversationMessages.at(-1)?.role === "user" && <button className="text-button conversation-retry" type="button" disabled={conversationSending} onClick={() => void retryConversationReply()}>{conversationSending ? <LoaderCircle className="spin" /> : <RefreshCw />}{conversationSending ? "正在重试" : "重试 AI 回复"}</button>}
         </section>
-        <textarea aria-label="AI 输入内容" value={aiInput} onChange={(event) => setAiInput(event.target.value)} placeholder="例如：明天上午九点用六十分钟学习线性代数" rows={7} maxLength={4000} />
+        <textarea aria-label="AI 输入内容" value={aiInput} onChange={(event) => { setAiInput(event.target.value); setAiParseError(null); }} placeholder="例如：明天上午九点用六十分钟学习线性代数" rows={7} maxLength={4000} />
+        {aiParseError && <div className="ai-parse-recovery" role="alert"><RefreshCw /><div><strong>这次没有生成候选</strong><p>{aiParseError}</p></div></div>}
         <div className="drawer-actions">
           <button className="primary-button full-width" type="button" disabled={conversationLoading || conversationSending || !conversation || !aiInput.trim()} onClick={() => void sendConversationMessage()}>{conversationSending ? <LoaderCircle className="spin" /> : <Send />}{conversationSending ? "正在发送" : "发送"}</button>
-          <button className="quiet-button full-width" type="button" disabled={aiLoading || saving || conversationSending || !aiInput.trim()} onClick={() => void parseWithAi()}>{aiLoading ? <LoaderCircle className="spin" /> : <Sparkles />}{aiLoading ? "正在整理" : "整理成候选"}</button>
+          <button className="quiet-button full-width" type="button" disabled={aiLoading || saving || conversationSending || !aiInput.trim()} onClick={() => void parseWithAi()}>{aiLoading ? <LoaderCircle className="spin" /> : aiParseError ? <RefreshCw /> : <Sparkles />}{aiLoading ? "正在整理" : aiParseError ? "重新整理" : "整理成候选"}</button>
           <button className="quiet-button full-width" type="button" disabled={aiLoading || saving || conversationSending || !aiInput.trim()} onClick={() => void generateStandaloneBrief()}>{saving ? <LoaderCircle className="spin" /> : <NotebookPen />}{saving ? "正在生成" : "生成独立简报"}</button>
         </div>
         <p className="standalone-note">独立简报不创建复盘，也不会生成赛博日记。</p>

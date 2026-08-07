@@ -160,6 +160,87 @@ test("AI 任务候选在确认前不写入，编辑后通过真实任务 API 持
   }
 });
 
+test("AI 服务失败时保留原句且不写入，明确重试后才允许确认落库", async ({ page, request }) => {
+  test.setTimeout(60_000);
+  const suffix = Date.now().toString(36);
+  const originalText = `明天整理 E2E 恢复任务 ${suffix}`;
+  const title = `E2E AI 恢复任务 ${suffix}`;
+  const localDate = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit"
+  }).format(new Date());
+  let parseAttempts = 0;
+  let taskWrites = 0;
+  let inboxWrites = 0;
+  let taskId: string | null = null;
+
+  await page.route("**/api/v1/ai/tasks/parse", async (route) => {
+    parseAttempts += 1;
+    if (parseAttempts === 1) {
+      await route.fulfill({
+        status: 502,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "ai_unavailable", message: "AI 暂时无法整理这条内容，原始输入没有丢失。" })
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        candidate: {
+          title, entryType: "task", date: localDate, startAt: null, endAt: null,
+          schedulePrecision: null, notes: "来自恢复后的候选", missingFields: []
+        }
+      })
+    });
+  });
+  page.on("request", (browserRequest) => {
+    if (browserRequest.method() !== "POST") return;
+    if (browserRequest.url() === `${apiBase}/api/v1/tasks`) taskWrites += 1;
+    if (browserRequest.url() === `${apiBase}/api/v1/inbox-entries`) inboxWrites += 1;
+  });
+
+  try {
+    await page.goto("/");
+    await page.getByRole("button", { name: "与 AI 一起整理", exact: true }).click();
+    await page.getByLabel("AI 输入内容").fill(originalText);
+    await page.getByRole("button", { name: "整理成候选", exact: true }).click();
+
+    await expect(page.getByRole("alert")).toContainText("这次没有生成候选");
+    await expect(page.getByRole("alert")).toContainText("没有创建任务、想法或问题");
+    await expect(page.getByLabel("AI 输入内容")).toHaveValue(originalText);
+    await expect(page.getByRole("heading", { name: "逐项确认后再保存", exact: true })).toHaveCount(0);
+    expect(taskWrites).toBe(0);
+    expect(inboxWrites).toBe(0);
+
+    await page.getByRole("button", { name: "重新整理", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "逐项确认后再保存", exact: true })).toBeVisible();
+    await expect(page.getByLabel("候选标题")).toHaveValue(title);
+    expect(parseAttempts).toBe(2);
+    expect(taskWrites).toBe(0);
+    expect(inboxWrites).toBe(0);
+
+    const created = page.waitForResponse((response) => response.url() === `${apiBase}/api/v1/tasks`
+      && response.request().method() === "POST");
+    await page.getByRole("button", { name: "确认并保存任务", exact: true }).click();
+    const response = await created;
+    expect(response.status()).toBe(201);
+    const task = (await response.json()).task as { id: string; title: string; localDate: string | null; scheduleKind: string };
+    taskId = task.id;
+    expect(task).toMatchObject({ title, localDate, scheduleKind: "none" });
+    expect(taskWrites).toBe(1);
+    expect(inboxWrites).toBe(0);
+
+    await page.reload();
+    await expect(page.getByRole("button", { name: `未排期 ${title}`, exact: true })).toBeVisible();
+    const persisted = await request.get(`${apiBase}/api/v1/tasks/${task.id}`);
+    expect(persisted.status()).toBe(200);
+    expect((await persisted.json()).task).toMatchObject({ id: task.id, title, localDate, scheduleKind: "none" });
+  } finally {
+    if (taskId) await softDeleteTask(request, taskId);
+  }
+});
+
 test("AI 想法候选不显示任务排期字段，并只写入独立 inbox", async ({ page }) => {
   test.setTimeout(60_000);
   const suffix = Date.now().toString(36);
