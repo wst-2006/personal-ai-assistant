@@ -13,6 +13,7 @@ test("赛博日记读取真实日数据、持久保存、刷新恢复并导出",
   previousMonthDate.setUTCMonth(previousMonthDate.getUTCMonth() - 1);
   const previousMonth = previousMonthDate.toISOString().slice(0, 7);
   const ids = { review: randomUUID(), message: randomUUID(), brief: randomUUID(), task: randomUUID(), focus: randomUUID(), outcome: randomUUID(), feedback: randomUUID() };
+  const briefContent = { title: `${localDate} 的每日简报`, reflection: `E2E 复盘 ${suffix}`, taskSummary: "完成了一项深度任务。", sections: [], location: { name: "上海", latitude: 31.23, longitude: 121.47, timeZone: "Asia/Shanghai" }, weather: { temperatureCelsius: 26, apparentTemperatureCelsius: 27, weatherCode: 1, observedAt: `${localDate}T10:00:00+08:00` } };
   let diaryId: string | null = null;
   const { client, db } = await connectVerifiedDatabase(loadDatabaseConfig());
   try {
@@ -21,7 +22,7 @@ test("赛博日记读取真实日数据、持久保存、刷新恢复并导出",
       await transaction.insert(reviewMessages).values({ id: ids.message, reviewSessionId: ids.review, source: "app", content: `E2E 复盘 ${suffix}` });
       await transaction.insert(dailyBriefs).values({
         id: ids.brief, localDate, reviewSessionId: ids.review, state: "confirmed",
-        content: { title: `${localDate} 的每日简报`, reflection: `E2E 复盘 ${suffix}`, taskSummary: "完成了一项深度任务。", sections: [], location: { name: "上海", latitude: 31.23, longitude: 121.47, timeZone: "Asia/Shanghai" }, weather: { temperatureCelsius: 26, apparentTemperatureCelsius: 27, weatherCode: 1, observedAt: `${localDate}T10:00:00+08:00` } },
+        content: briefContent,
         sources: [{ kind: "personal_record", label: "E2E 隔离数据" }]
       });
       await transaction.insert(tasks).values({ id: ids.task, title: `E2E 日记任务 ${suffix}`, lifecycleStatus: "closed", currentOutcome: "complete", scheduleKind: "none", localDate });
@@ -53,13 +54,45 @@ test("赛博日记读取真实日数据、持久保存、刷新恢复并导出",
     await page.getByRole("button", { name: "确认并保存赛博日记", exact: true }).click();
     diaryId = ((await (await saved).json()) as { diary: { id: string } }).diary.id;
     const storedDiary = (await db.select({ content: cyberDiaries.content }).from(cyberDiaries).where(eq(cyberDiaries.id, diaryId)))[0];
-    expect((storedDiary?.content as { radar?: { energyState?: number; overallExecution?: number } }).radar).toMatchObject({ energyState: 80, overallExecution: 85 });
+    const storedContent = storedDiary?.content as {
+      radar?: { energyState?: number; overallExecution?: number };
+      snapshot?: { version: number; capturedAt: string; dayData: { effectiveFocusMinutes: number; tasks: Array<{ title: string }> }; brief: { content: { location?: { name: string } } }; reviewMessages: unknown[]; taskFeedback: unknown[] };
+    };
+    expect(storedContent.radar).toMatchObject({ energyState: 80, overallExecution: 85 });
+    expect(storedContent.snapshot).toMatchObject({ version: 1, dayData: { effectiveFocusMinutes: 60, tasks: [expect.objectContaining({ title: `E2E 日记任务 ${suffix}` })] }, brief: { content: { location: { name: "上海" } } } });
+    expect(new Date(storedContent.snapshot!.capturedAt).toString()).not.toBe("Invalid Date");
+    const initialSnapshotCapturedAt = storedContent.snapshot!.capturedAt;
+    expect(storedContent.snapshot?.reviewMessages).toHaveLength(1);
+    expect(storedContent.snapshot?.taskFeedback).toHaveLength(1);
+
+    await db.transaction(async (transaction) => {
+      await transaction.update(tasks).set({ title: `后续改动的任务 ${suffix}` }).where(eq(tasks.id, ids.task));
+      await transaction.update(focusSessions).set({ rawActiveSeconds: 180, effectiveFocusSeconds: 120 }).where(eq(focusSessions.id, ids.focus));
+      await transaction.update(dailyBriefs).set({
+        content: { ...briefContent, location: { ...briefContent.location, name: "后续改动的城市" }, weather: { ...briefContent.weather, temperatureCelsius: 99 } },
+        updatedAt: new Date()
+      }).where(eq(dailyBriefs.id, ids.brief));
+    });
     await page.reload();
     await page.locator(".app-rail").getByRole("button", { name: "日记", exact: true }).click();
     await expect(page.getByLabel("日记正文", { exact: true })).toHaveValue(`E2E 持久正文 ${suffix}`);
     await expect(page.getByLabel("精力状态评分", { exact: true })).toHaveValue("80");
     await expect(page.getByLabel("总体执行评分", { exact: true })).toHaveValue("85");
-    await expect(page.getByRole("button", { name: `查看 ${localDate} 日记`, exact: true })).toHaveClass(/has-diary/);
+    await expect(page.getByRole("region", { name: "今日真实数据" })).toContainText("60m");
+    await expect(page.getByText(`E2E 日记任务 ${suffix}`, { exact: true })).toBeVisible();
+    await expect(page.getByText(`后续改动的任务 ${suffix}`, { exact: true })).toHaveCount(0);
+    await expect(page.getByText("上海", { exact: true })).toBeVisible();
+    await expect(page.getByText("后续改动的城市", { exact: true })).toHaveCount(0);
+    await page.getByLabel("日记正文", { exact: true }).fill(`E2E 二次编辑正文 ${suffix}`);
+    const edited = page.waitForResponse((response) => response.url().endsWith(`/api/v1/diaries/${localDate}`) && response.request().method() === "PUT" && response.status() === 200);
+    await page.getByRole("button", { name: "确认并保存赛博日记", exact: true }).click();
+    await edited;
+    const editedStoredDiary = (await db.select({ content: cyberDiaries.content }).from(cyberDiaries).where(eq(cyberDiaries.id, diaryId)))[0];
+    const editedSnapshot = (editedStoredDiary?.content as { snapshot?: { capturedAt: string; dayData: { effectiveFocusMinutes: number }; brief: { content: { location?: { name: string } } } } }).snapshot;
+    expect(editedSnapshot).toMatchObject({ capturedAt: initialSnapshotCapturedAt, dayData: { effectiveFocusMinutes: 60 }, brief: { content: { location: { name: "上海" } } } });
+    const savedDayButton = page.getByRole("button", { name: `查看 ${localDate} 日记`, exact: true });
+    await expect(savedDayButton).toHaveClass(/has-diary/);
+    await expect(savedDayButton).toContainText("60m");
     const download = page.waitForEvent("download");
     await page.getByRole("button", { name: "导出日记", exact: true }).click();
     const exported = await download;
@@ -70,6 +103,8 @@ test("赛博日记读取真实日数据、持久保存、刷新恢复并导出",
     expect(exportedText).toContain("六维回看");
     expect(exportedText).toContain("精力状态：80");
     expect(exportedText).toContain("有效专注：60 分钟");
+    expect(exportedText).toContain("地点：上海");
+    expect(exportedText).not.toContain("后续改动的城市");
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload();
     await page.locator(".mobile-nav").getByRole("button", { name: "日记", exact: true }).click();
