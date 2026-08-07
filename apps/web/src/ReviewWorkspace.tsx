@@ -40,7 +40,7 @@ type BriefContent = {
   location?: { name:string; latitude:number; longitude:number; timeZone:string } | null;
   weather?: { temperatureCelsius:number; apparentTemperatureCelsius:number; weatherCode:number; observedAt:string|null } | null;
 };
-type Brief = { id:string; state:"draft"|"confirmed"; content:BriefContent; sources:Array<{kind:string;label:string;url?:string;provider?:string}> };
+type Brief = { id:string; state:"draft"|"confirmed"; content:BriefContent; sources:Array<{kind:string;label:string;url?:string;provider?:string;retrievedAt?:string}> };
 const API = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:3000";
 const localDate = () =>
   new Intl.DateTimeFormat("en-CA", {
@@ -198,7 +198,11 @@ export function ReviewWorkspace() {
       setBriefEditing(false);
       if (result.brief.content.location?.name) setLocationName(result.brief.content.location.name);
     }
-    catch { setError("至少保存一条复盘后，才能生成今日简报。"); }
+    catch (requestError) {
+      setError(requestError instanceof Error && requestError.message === "brief_generation_unavailable"
+        ? "搜索资料已读取，但 AI 没有生成合格的简报，因此没有保存不完整结果。请稍后重试。"
+        : "至少保存一条由你写下的复盘后，才能生成今日简报。");
+    }
     finally { setSaving(false); }
   }
   async function confirmBrief() {
@@ -332,7 +336,36 @@ export function ReviewWorkspace() {
         <div><p className="section-kicker">软件内对话</p><h2 id="review-software-conversations-title">今天与 AI 商量过的内容</h2><small>它与复盘正文分开保存，不会替代你在复盘页留下的一句话。</small></div>
         {context?.conversationMessages.length ? <div className="review-software-conversation-list">{context.conversationMessages.slice(-4).map((message) => <article key={message.id} className={message.role}><span>{message.role === "user" ? "我" : "AI"}</span><p>{message.content}</p></article>)}</div> : <p className="review-software-conversation-empty">今天还没有软件内对话。需要时可从右上角的 AI 侧层主动发起。</p>}
       </section>
-      {brief && <section className="review-brief-editor"><div><p className="section-kicker">每日简报{brief.state === "confirmed" ? " · 已确认" : "草稿"}</p><h2>{brief.content.title}</h2><div className="brief-toolbar"><button className="quiet-button" type="button" disabled={saving} onClick={()=>void generateBrief()}><RefreshCw />重新生成</button><button className="quiet-icon" type="button" aria-label="导出简报" onClick={exportBrief}><Download /></button></div></div><label>复盘摘要<textarea aria-label="简报复盘摘要" disabled={brief.state==="confirmed"&&!briefEditing} value={brief.content.reflection} onChange={event=>setBrief({...brief,content:{...brief.content,reflection:event.target.value}})} rows={5}/></label><label>任务摘要<textarea aria-label="简报任务摘要" disabled={brief.state==="confirmed"&&!briefEditing} value={brief.content.taskSummary} onChange={event=>setBrief({...brief,content:{...brief.content,taskSummary:event.target.value}})} rows={3}/></label><div className="brief-sections">{brief.content.sections.map((section,index)=><label key={`${section.title}-${index}`}>{section.title}<textarea aria-label={`${section.title}简报内容`} disabled={brief.state==="confirmed"&&!briefEditing} value={section.body} onChange={event=>setBrief({...brief,content:{...brief.content,sections:brief.content.sections.map((item,itemIndex)=>itemIndex===index?{...item,body:event.target.value}:item)}})} rows={3}/></label>)}</div><p className="brief-source-note">来源：{brief.sources.map(source=>source.label).join("；")}</p>{brief.state==="confirmed"&&!briefEditing?<button className="quiet-button" type="button" onClick={()=>setBriefEditing(true)}>编辑简报</button>:<button className="primary-button" disabled={saving} onClick={()=>void (brief.state==="draft"?confirmBrief():saveBriefEdits())}><Check />{brief.state==="draft"?"确认简报":"保存修改"}</button>}</section>}
+      {brief && <section className="review-brief-editor">
+        <div>
+          <p className="section-kicker">每日简报{brief.state === "confirmed" ? " · 已确认" : "草稿"}</p>
+          {briefEditing
+            ? <input className="brief-title-input" aria-label="简报标题" value={brief.content.title} maxLength={200} onChange={(event)=>setBrief({...brief,content:{...brief.content,title:event.target.value}})} />
+            : <h2>{brief.content.title}</h2>}
+          <div className="brief-toolbar">
+            <button className="quiet-button" type="button" disabled={saving} onClick={()=>void generateBrief()}><RefreshCw />重新生成</button>
+            <button className="quiet-icon" type="button" aria-label="导出简报" onClick={exportBrief}><Download /></button>
+          </div>
+        </div>
+        <label>复盘摘要<textarea aria-label="简报复盘摘要" disabled={brief.state==="confirmed"&&!briefEditing} value={brief.content.reflection} onChange={event=>setBrief({...brief,content:{...brief.content,reflection:event.target.value}})} rows={5}/></label>
+        <label>任务摘要<textarea aria-label="简报任务摘要" disabled={brief.state==="confirmed"&&!briefEditing} value={brief.content.taskSummary} onChange={event=>setBrief({...brief,content:{...brief.content,taskSummary:event.target.value}})} rows={3}/></label>
+        <div className="brief-sections">{brief.content.sections.map((section,index)=><label key={`${index}-${section.title}`}>
+          {briefEditing
+            ? <input className="brief-section-title-input" aria-label={`第 ${index + 1} 个简报板块标题`} value={section.title} maxLength={100} onChange={event=>setBrief({...brief,content:{...brief.content,sections:brief.content.sections.map((item,itemIndex)=>itemIndex===index?{...item,title:event.target.value}:item)}})} />
+            : section.title}
+          <textarea aria-label={`${section.title}简报内容`} disabled={brief.state==="confirmed"&&!briefEditing} value={section.body} onChange={event=>setBrief({...brief,content:{...brief.content,sections:brief.content.sections.map((item,itemIndex)=>itemIndex===index?{...item,body:event.target.value}:item)}})} rows={3}/>
+        </label>)}</div>
+        <div className="brief-source-list" aria-label="简报来源">
+          <strong>可追溯来源</strong>
+          {brief.sources.map((source,index)=><div className="brief-source-item" key={`${source.kind}-${source.url ?? source.label}-${index}`}>
+            {source.url ? <a href={source.url} target="_blank" rel="noreferrer">{source.label}</a> : <span>{source.label}</span>}
+            {source.provider && <small>{source.provider}</small>}
+          </div>)}
+        </div>
+        {brief.state==="confirmed"&&!briefEditing
+          ? <button className="quiet-button" type="button" onClick={()=>setBriefEditing(true)}>编辑简报</button>
+          : <button className="primary-button" disabled={saving||!brief.content.title.trim()||brief.content.sections.some(section=>!section.title.trim()||!section.body.trim())} onClick={()=>void (brief.state==="draft"?confirmBrief():saveBriefEdits())}><Check />{brief.state==="draft"?"确认简报":"保存修改"}</button>}
+      </section>}
       {error && (
         <div className="focus-error" role="alert">
           {error}

@@ -3,14 +3,37 @@ import { and, asc, desc, eq, isNull } from "drizzle-orm";
 import type { AppDatabase } from "@personal-ai/db/client";
 import { dailyBriefs, reviewMessages, reviewSessions, tasks } from "@personal-ai/db/schema";
 import { BriefProviders, type BriefSection, type BriefSource, searchSection } from "./brief-providers.js";
+import type { BriefSectionKey, BriefWriter } from "./ai/brief-writer.js";
 
 type BriefContent = { title:string; reflection:string; taskSummary:string; sections:BriefSection[]; location?: Awaited<ReturnType<BriefProviders["weather"]>>["location"]; weather?: Awaited<ReturnType<BriefProviders["weather"]>>["weather"] };
 
 export class BriefNotFoundError extends Error {}
 export class BriefReviewRequiredError extends Error {}
+export class BriefGenerationUnavailableError extends Error {}
+
+const sectionDefinitions: Array<{ key: Exclude<BriefSectionKey, "encouragement">; title: string }> = [
+  { key: "finance", title: "金融" },
+  { key: "ai", title: "AI" },
+  { key: "technology", title: "大数据与科技" },
+  { key: "taskExpansion", title: "任务相关拓展" },
+  { key: "humanities", title: "历史／人文／社会" }
+];
+
+const sectionTitles: Record<BriefSectionKey, string> = {
+  finance: "金融",
+  ai: "AI",
+  technology: "大数据与科技",
+  taskExpansion: "任务相关拓展",
+  humanities: "历史／人文／社会",
+  encouragement: "给今天的一句话"
+};
 
 export class BriefService {
-  constructor(private readonly db: AppDatabase, private readonly providers = new BriefProviders()) {}
+  constructor(
+    private readonly db: AppDatabase,
+    private readonly providers = new BriefProviders(),
+    private readonly writer?: BriefWriter
+  ) {}
 
   async generateFromReview(reviewSessionId: string, locationName?: string) {
     const [review] = await this.db.select().from(reviewSessions).where(eq(reviewSessions.id, reviewSessionId)).limit(1);
@@ -60,11 +83,45 @@ export class BriefService {
       this.providers.search("金融 市场 今日 要闻"), this.providers.search("人工智能 今日 要闻"), this.providers.search("大数据 科技 今日 要闻"), this.providers.search("历史 人文 社会 今日"),
       input.taskQuery ? this.providers.search(input.taskQuery) : Promise.resolve({ results: [], source: null }), this.providers.weather(input.locationName)
     ]);
-    const sections = [searchSection("金融", finance), searchSection("AI", ai), searchSection("大数据与科技", technology), searchSection("任务相关拓展", taskExpansion), searchSection("历史／人文／社会", humanities)];
+    const searchResults = { finance, ai, technology, taskExpansion, humanities };
+    const searchedSections = sectionDefinitions.map((definition) => ({
+      ...definition,
+      result: searchResults[definition.key],
+      fallback: searchSection(definition.title, searchResults[definition.key])
+    }));
+    let generated: Awaited<ReturnType<BriefWriter["write"]>> | null = null;
+    if (this.writer) {
+      try {
+        generated = await this.writer.write({
+          localDate: input.localDate,
+          titleHint: input.title ?? `${input.localDate} 的每日简报`,
+          reflection: input.reflection,
+          taskSummary: input.taskSummary,
+          searches: searchedSections.map((item) => ({ key: item.key, title: item.title, results: item.result.results }))
+        });
+      } catch {
+        throw new BriefGenerationUnavailableError();
+      }
+    }
+    const editorialSections: BriefSection[] = generated
+      ? generated.sections.map((section) => ({ title: sectionTitles[section.key], body: section.body }))
+      : [
+          ...searchedSections.map((item) => item.fallback.section),
+          { title: sectionTitles.encouragement, body: "今天留下的记录已经足够成为下一步的起点，按自己的节奏继续。" }
+        ];
     const content: BriefContent = {
-      title: input.title ?? `${input.localDate} 的每日简报`, reflection: input.reflection, taskSummary: input.taskSummary, sections: [...sections.map((item) => item.section), weather.section], location: weather.location, weather: weather.weather
+      title: generated?.title ?? input.title ?? `${input.localDate} 的每日简报`,
+      reflection: generated?.reflection ?? input.reflection,
+      taskSummary: generated?.taskSummary ?? input.taskSummary,
+      sections: [...editorialSections, weather.section],
+      location: weather.location,
+      weather: weather.weather
     };
-    const sources: BriefSource[] = [{ kind: "personal_record", label: input.sourceLabel, provider: "personal_ai", retrievedAt: new Date().toISOString() }, ...sections.flatMap((item) => item.sources), ...(weather.source ? [weather.source] : [])];
+    const sources: BriefSource[] = [
+      { kind: "personal_record", label: input.sourceLabel, provider: "personal_ai", retrievedAt: new Date().toISOString() },
+      ...searchedSections.flatMap((item) => item.fallback.sources),
+      ...(weather.source ? [weather.source] : [])
+    ];
     return { content, sources };
   }
 

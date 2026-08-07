@@ -66,6 +66,14 @@ creates search-backed daily briefs when explicitly requested.
   prerequisites; a client cannot submit a forged AI review message.
 - A normal conversation may generate a brief only when explicitly requested;
   it never generates a cyber diary by itself.
+- Daily-brief generation is server-side and uses the configured DeepSeek model
+  to edit bounded review/task context together with retrieved search results.
+  The fixed sections are finance, AI, big-data/technology, task-related
+  expansion, history/humanities/society, and a short encouragement, followed
+  by optional location/weather data. Search URLs and provider metadata remain
+  attached to the saved brief. If the model cannot return valid structured
+  content, the API returns a recoverable error and does not persist an
+  incomplete brief as if generation succeeded.
 - A cyber diary uses the six confirmed dimensions: mainline progress, overall
   execution, focus quality, energy state, wellbeing maintenance, and growth
   gained. The first three are prefilled from persisted task/outcome/focus/

@@ -8,7 +8,7 @@ const configSchema = z.object({
   BRAVE_SEARCH_API_KEY: z.string().trim().optional()
 });
 type ProviderConfig = z.infer<typeof configSchema>;
-type SearchResult = { title: string; description: string; url: string };
+export type SearchResult = { title: string; description: string; url: string };
 type GdeltArticle = { title?: string; url?: string; seendate?: string; domain?: string };
 export type BriefLocation = { name: string; latitude: number; longitude: number; timeZone: string };
 export type BriefWeather = { temperatureCelsius: number; apparentTemperatureCelsius: number; weatherCode: number; observedAt: string | null };

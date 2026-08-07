@@ -13,6 +13,8 @@ import { FocusStructureService } from "./focus-structure-service.js";
 import { ReviewService } from "./review-service.js";
 import { DeepSeekReviewResponder } from "./ai/review-responder.js";
 import { BriefService } from "./brief-service.js";
+import { BriefProviders } from "./brief-providers.js";
+import { DeepSeekBriefWriter } from "./ai/brief-writer.js";
 import { DiaryService } from "./diary-service.js";
 import { GrowthService } from "./growth-service.js";
 import { FeishuWebhookService, loadFeishuWebhookConfig } from "./feishu-webhook.js";
@@ -60,7 +62,7 @@ const app = buildApp({
   focusStructurePlanner: new DeepSeekFocusStructurePlanner(deepSeekConfig, userProfileService),
   reviewService: new ReviewService(database.db),
   reviewResponder: new DeepSeekReviewResponder(deepSeekConfig, userProfileService),
-  briefService: new BriefService(database.db),
+  briefService: new BriefService(database.db, new BriefProviders(), new DeepSeekBriefWriter(deepSeekConfig, userProfileService)),
   diaryService: new DiaryService(database.db),
   growthService: new GrowthService(database.db),
   backupService: new BackupService(database.db),

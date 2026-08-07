@@ -78,9 +78,10 @@ test("复盘消息与每日简报通过真实 API 持久保存、编辑、刷新
 
     const briefCreated = page.waitForResponse((response) => response.url().endsWith(`/api/v1/reviews/${ids.review}/briefs`) && response.request().method() === "POST" && response.status() === 201);
     await page.getByRole("button", { name: "结束今日复盘并生成简报", exact: true }).click();
-    const createdBrief = (await (await briefCreated).json()) as { brief: { id: string; state: string } };
+    const createdBrief = (await (await briefCreated).json()) as { brief: { id: string; state: string; content: { sections: Array<{ title: string }> } } };
     briefId = createdBrief.brief.id;
     expect(createdBrief.brief.state).toBe("draft");
+    expect(createdBrief.brief.content.sections.some((section) => section.title === "给今天的一句话")).toBe(true);
     await expect(page.getByText("每日简报草稿", { exact: true })).toBeVisible();
 
     const confirmResponse = page.waitForResponse((response) => response.url().endsWith(`/api/v1/briefs/${briefId}`) && response.request().method() === "PATCH");
@@ -88,7 +89,11 @@ test("复盘消息与每日简报通过真实 API 持久保存、编辑、刷新
     await confirmResponse;
     await expect(page.getByText("每日简报 · 已确认", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "编辑简报", exact: true }).click();
+    const editedTitle = `E2E 已编辑简报 ${suffix}`;
+    const editedSectionTitle = `E2E 金融板块 ${suffix}`;
     const editedSummary = `E2E 已编辑任务摘要 ${suffix}`;
+    await page.getByLabel("简报标题", { exact: true }).fill(editedTitle);
+    await page.getByLabel("第 1 个简报板块标题", { exact: true }).fill(editedSectionTitle);
     await page.getByLabel("简报任务摘要", { exact: true }).fill(editedSummary);
     const briefSaved = page.waitForResponse((response) => response.url().endsWith(`/api/v1/briefs/${briefId}`) && response.request().method() === "PATCH" && response.status() === 200);
     await page.getByRole("button", { name: "保存修改", exact: true }).click();
@@ -99,8 +104,10 @@ test("复盘消息与每日简报通过真实 API 持久保存、编辑、刷新
     await page.locator(".app-rail").getByRole("button", { name: "复盘", exact: true }).click();
     await expect(page.locator(".review-stream").getByText(message, { exact: true })).toBeVisible();
     await expect(page.getByText("每日简报 · 已确认", { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: editedTitle, exact: true })).toBeVisible();
     await expect(page.getByLabel("简报任务摘要", { exact: true })).toBeDisabled();
     await expect(page.getByLabel("简报任务摘要", { exact: true })).toHaveValue(editedSummary);
+    await expect(page.getByLabel("简报来源", { exact: true })).toContainText("复盘正文与本项目任务数据");
 
     const download = page.waitForEvent("download");
     await page.getByRole("button", { name: "导出简报", exact: true }).click();
@@ -111,7 +118,10 @@ test("复盘消息与每日简报通过真实 API 持久保存、编辑、刷新
     expect(persistedMessage).toHaveLength(1);
     expect(persistedBrief).toHaveLength(1);
     expect(persistedBrief[0]?.state).toBe("confirmed");
-    expect((persistedBrief[0]?.content as { taskSummary: string }).taskSummary).toBe(editedSummary);
+    const persistedContent = persistedBrief[0]?.content as { title: string; taskSummary: string; sections: Array<{ title: string }> };
+    expect(persistedContent).toMatchObject({ title: editedTitle, taskSummary: editedSummary });
+    expect(persistedContent.sections[0]?.title).toBe(editedSectionTitle);
+    expect(persistedContent.sections.some((section) => section.title === "给今天的一句话")).toBe(true);
 
     await page.setViewportSize({ width: 390, height: 844 });
     await page.reload();

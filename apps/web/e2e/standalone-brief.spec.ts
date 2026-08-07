@@ -21,15 +21,17 @@ test("普通对话显式生成独立简报，刷新后保留且不创建复盘�
     await input.fill(`E2E 独立简报内容 ${suffix}：整理今天读到的研究想法。`);
     const create = page.waitForResponse((response) => response.url().endsWith("/api/v1/briefs/standalone") && response.request().method() === "POST" && response.status() === 201);
     await page.getByRole("button", { name: "生成独立简报", exact: true }).click();
-    const created = (await (await create).json()) as { brief: { id: string; reviewSessionId: string | null; state: string; sources: Array<{ provider?: string }> } };
+    const created = (await (await create).json()) as { brief: { id: string; reviewSessionId: string | null; state: string; content: { sections: Array<{ title: string }> }; sources: Array<{ provider?: string }> } };
     briefId = created.brief.id;
     expect(created.brief.reviewSessionId).toBeNull();
     expect(created.brief.state).toBe("confirmed");
+    expect(created.brief.content.sections.some((section) => section.title === "给今天的一句话")).toBe(true);
     if (process.env.TAVILY_SEARCH_API_KEY?.trim()) {
       expect(created.brief.sources.some((source) => source.provider === "tavily_search")).toBe(true);
     }
     await expect(page.getByText("独立简报 · 已保存", { exact: true })).toBeVisible();
     await expect(page.getByText(`E2E 独立简报内容 ${suffix}`, { exact: false })).toBeVisible();
+    await expect(page.getByLabel("独立简报来源", { exact: true })).toBeVisible();
 
     await page.reload();
     await page.getByRole("button", { name: "与 AI 一起整理", exact: true }).click();
