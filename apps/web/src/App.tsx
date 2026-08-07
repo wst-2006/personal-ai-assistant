@@ -487,9 +487,11 @@ export function App() {
       setSelectedStandaloneBriefId(result.brief.id);
       setAiInput("");
     } catch (requestError) {
-      setError(requestError instanceof Error && requestError.message === "brief_generation_unavailable"
-        ? "搜索资料已读取，但 AI 没有生成合格的独立简报；没有保存不完整结果，原始内容仍保留在侧边层。"
-        : "独立简报没有生成，请检查网络后重试。原始内容仍保留在侧边层。");
+      setError(requestError instanceof Error && requestError.message === "brief_sources_unavailable"
+        ? "网页搜索服务暂时不可用；没有保存缺少来源支撑的独立简报，原始内容仍保留在侧边层。"
+        : requestError instanceof Error && requestError.message === "brief_generation_unavailable"
+          ? "搜索资料已读取，但 AI 没有生成合格的独立简报；没有保存不完整结果，原始内容仍保留在侧边层。"
+          : "独立简报没有生成，请检查网络后重试。原始内容仍保留在侧边层。");
     } finally {
       setSaving(false);
     }

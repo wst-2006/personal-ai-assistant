@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { generateDailyBriefSchema, generateStandaloneBriefSchema, updateDailyBriefSchema } from "@personal-ai/domain/brief";
 import { reviewDateSchema } from "@personal-ai/domain/review";
 import { z } from "zod";
-import { BriefGenerationUnavailableError, BriefNotFoundError, BriefReviewRequiredError, BriefService } from "./brief-service.js";
+import { BriefGenerationUnavailableError, BriefNotFoundError, BriefReviewRequiredError, BriefService, BriefSourcesUnavailableError } from "./brief-service.js";
 
 const idParams = z.object({ id: z.string().uuid() });
 const standaloneQuery = z.object({ date: reviewDateSchema });
@@ -16,6 +16,7 @@ export async function briefRoutes(app: FastifyInstance, options: { briefService:
     catch (error) {
       if (error instanceof BriefReviewRequiredError) return reply.status(409).send({ error: "review_message_required" });
       if (error instanceof BriefNotFoundError) return reply.status(404).send({ error: "review_session_not_found" });
+      if (error instanceof BriefSourcesUnavailableError) return reply.status(503).send({ error: "brief_sources_unavailable" });
       if (error instanceof BriefGenerationUnavailableError) return reply.status(503).send({ error: "brief_generation_unavailable" });
       throw error;
     }
@@ -27,6 +28,7 @@ export async function briefRoutes(app: FastifyInstance, options: { briefService:
       const brief = await options.briefService.generateFromConversation(input.data.conversation, input.data.localDate, input.data.locationName);
       return reply.status(201).send({ brief });
     } catch (error) {
+      if (error instanceof BriefSourcesUnavailableError) return reply.status(503).send({ error: "brief_sources_unavailable" });
       if (error instanceof BriefGenerationUnavailableError) return reply.status(503).send({ error: "brief_generation_unavailable" });
       throw error;
     }

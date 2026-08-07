@@ -199,9 +199,11 @@ export function ReviewWorkspace() {
       if (result.brief.content.location?.name) setLocationName(result.brief.content.location.name);
     }
     catch (requestError) {
-      setError(requestError instanceof Error && requestError.message === "brief_generation_unavailable"
-        ? "搜索资料已读取，但 AI 没有生成合格的简报，因此没有保存不完整结果。请稍后重试。"
-        : "至少保存一条由你写下的复盘后，才能生成今日简报。");
+      setError(requestError instanceof Error && requestError.message === "brief_sources_unavailable"
+        ? "网页搜索服务暂时不可用，因此没有生成或保存缺少来源支撑的简报。请稍后重试。"
+        : requestError instanceof Error && requestError.message === "brief_generation_unavailable"
+          ? "搜索资料已读取，但 AI 没有生成合格的简报，因此没有保存不完整结果。请稍后重试。"
+          : "至少保存一条由你写下的复盘后，才能生成今日简报。");
     }
     finally { setSaving(false); }
   }

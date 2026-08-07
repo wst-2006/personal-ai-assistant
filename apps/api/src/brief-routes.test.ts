@@ -1,6 +1,6 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { buildApp } from "./app.js";
-import { BriefGenerationUnavailableError } from "./brief-service.js";
+import { BriefGenerationUnavailableError, BriefSourcesUnavailableError } from "./brief-service.js";
 import type { BriefService } from "./brief-service.js";
 
 const persistedBrief = {
@@ -20,8 +20,11 @@ const app = buildApp({ briefService });
 const unavailableApp = buildApp({ briefService: {
   async generateFromConversation() { throw new BriefGenerationUnavailableError(); }
 } as unknown as BriefService });
+const sourcesUnavailableApp = buildApp({ briefService: {
+  async generateFromConversation() { throw new BriefSourcesUnavailableError(); }
+} as unknown as BriefService });
 
-afterAll(async () => { await app.close(); await unavailableApp.close(); });
+afterAll(async () => { await app.close(); await unavailableApp.close(); await sourcesUnavailableApp.close(); });
 
 describe("standalone brief routes", () => {
   it("persists only an explicitly requested standalone brief contract", async () => {
@@ -43,5 +46,11 @@ describe("standalone brief routes", () => {
     const response = await unavailableApp.inject({ method: "POST", url: "/api/v1/briefs/standalone", payload: { conversation: "请生成简报", localDate: "2026-07-30" } });
     expect(response.statusCode).toBe(503);
     expect(response.json()).toEqual({ error: "brief_generation_unavailable" });
+  });
+
+  it("does not report a source-backed brief when every search provider call fails", async () => {
+    const response = await sourcesUnavailableApp.inject({ method: "POST", url: "/api/v1/briefs/standalone", payload: { conversation: "请生成简报", localDate: "2026-07-30" } });
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({ error: "brief_sources_unavailable" });
   });
 });

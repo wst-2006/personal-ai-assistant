@@ -19,9 +19,11 @@ test("普通对话显式生成独立简报，刷新后保留且不创建复盘�
     const input = page.getByLabel("AI 输入内容", { exact: true });
     await expect(input).toBeVisible();
     await input.fill(`E2E 独立简报内容 ${suffix}：整理今天读到的研究想法。`);
-    const create = page.waitForResponse((response) => response.url().endsWith("/api/v1/briefs/standalone") && response.request().method() === "POST" && response.status() === 201);
+    const create = page.waitForResponse((response) => response.url().endsWith("/api/v1/briefs/standalone") && response.request().method() === "POST");
     await page.getByRole("button", { name: "生成独立简报", exact: true }).click();
-    const created = (await (await create).json()) as { brief: { id: string; reviewSessionId: string | null; state: string; content: { sections: Array<{ title: string }> }; sources: Array<{ provider?: string }> } };
+    const createResponse = await create;
+    const created = (await createResponse.json()) as { error?: string; brief: { id: string; reviewSessionId: string | null; state: string; content: { sections: Array<{ title: string }> }; sources: Array<{ provider?: string }> } };
+    expect(createResponse.status(), JSON.stringify(created)).toBe(201);
     briefId = created.brief.id;
     expect(created.brief.reviewSessionId).toBeNull();
     expect(created.brief.state).toBe("confirmed");
@@ -52,4 +54,22 @@ test("普通对话显式生成独立简报，刷新后保留且不创建复盘�
     if (briefId) await db.delete(dailyBriefs).where(eq(dailyBriefs.id, briefId));
     await client.end();
   }
+});
+
+test("网页搜索全部失败时保留原始输入并明确拒绝伪装成已生成简报", async ({ page }) => {
+  await page.route("**/api/v1/briefs/standalone", async (route) => {
+    if (route.request().method() === "POST") {
+      await route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ error: "brief_sources_unavailable" }) });
+      return;
+    }
+    await route.continue();
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "与 AI 一起整理", exact: true }).click();
+  const input = page.getByLabel("AI 输入内容", { exact: true });
+  await input.fill("这段原始输入必须保留，不能伪装成来源完整的简报。");
+  await page.getByRole("button", { name: "生成独立简报", exact: true }).click();
+
+  await expect(page.getByText("网页搜索服务暂时不可用；没有保存缺少来源支撑的独立简报，原始内容仍保留在侧边层。", { exact: true })).toBeVisible();
+  await expect(input).toHaveValue("这段原始输入必须保留，不能伪装成来源完整的简报。");
 });

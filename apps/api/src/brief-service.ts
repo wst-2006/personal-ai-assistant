@@ -10,6 +10,7 @@ type BriefContent = { title:string; reflection:string; taskSummary:string; secti
 export class BriefNotFoundError extends Error {}
 export class BriefReviewRequiredError extends Error {}
 export class BriefGenerationUnavailableError extends Error {}
+export class BriefSourcesUnavailableError extends Error {}
 
 const sectionDefinitions: Array<{ key: Exclude<BriefSectionKey, "encouragement">; title: string }> = [
   { key: "finance", title: "金融" },
@@ -81,9 +82,13 @@ export class BriefService {
   private async generateContent(input: { localDate: string; reflection: string; taskSummary: string; taskQuery: string; locationName?: string; sourceLabel: string; title?: string }) {
     const [finance, ai, technology, humanities, taskExpansion, weather] = await Promise.all([
       this.providers.search("金融 市场 今日 要闻"), this.providers.search("人工智能 今日 要闻"), this.providers.search("大数据 科技 今日 要闻"), this.providers.search("历史 人文 社会 今日"),
-      input.taskQuery ? this.providers.search(input.taskQuery) : Promise.resolve({ results: [], source: null }), this.providers.weather(input.locationName)
+      input.taskQuery ? this.providers.search(input.taskQuery) : Promise.resolve({ results: [], source: null, status: "empty" as const, provider: "none" }), this.providers.weather(input.locationName)
     ]);
     const searchResults = { finance, ai, technology, taskExpansion, humanities };
+    const attemptedSearches = Object.values(searchResults).filter((result) => result.provider !== "none");
+    if (attemptedSearches.length > 0 && attemptedSearches.every((result) => result.status === "unavailable")) {
+      throw new BriefSourcesUnavailableError();
+    }
     const searchedSections = sectionDefinitions.map((definition) => ({
       ...definition,
       result: searchResults[definition.key],
@@ -104,7 +109,12 @@ export class BriefService {
       }
     }
     const editorialSections: BriefSection[] = generated
-      ? generated.sections.map((section) => ({ title: sectionTitles[section.key], body: section.body }))
+      ? generated.sections.map((section) => {
+          const searched = searchedSections.find((item) => item.key === section.key);
+          return searched && searched.result.status !== "ok"
+            ? searched.fallback.section
+            : { title: sectionTitles[section.key], body: section.body };
+        })
       : [
           ...searchedSections.map((item) => item.fallback.section),
           { title: sectionTitles.encouragement, body: "今天留下的记录已经足够成为下一步的起点，按自己的节奏继续。" }

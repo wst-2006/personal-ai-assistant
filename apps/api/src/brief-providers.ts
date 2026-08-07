@@ -9,6 +9,8 @@ const configSchema = z.object({
 });
 type ProviderConfig = z.infer<typeof configSchema>;
 export type SearchResult = { title: string; description: string; url: string };
+export type SearchStatus = "ok" | "empty" | "unavailable";
+export type SearchResponse = { results: SearchResult[]; source: BriefSource | null; status: SearchStatus; provider: string };
 type GdeltArticle = { title?: string; url?: string; seendate?: string; domain?: string };
 export type BriefLocation = { name: string; latitude: number; longitude: number; timeZone: string };
 export type BriefWeather = { temperatureCelsius: number; apparentTemperatureCelsius: number; weatherCode: number; observedAt: string | null };
@@ -18,10 +20,10 @@ export class BriefProviders {
   private readonly config: ProviderConfig;
   private gdeltQueue: Promise<void> = Promise.resolve();
   private lastGdeltRequestAt = 0;
-  private readonly cache = new Map<string, { expiresAt: number; value: { results: SearchResult[]; source: BriefSource | null } }>();
+  private readonly cache = new Map<string, { expiresAt: number; value: SearchResponse }>();
   constructor(config = configSchema.parse(process.env), private readonly fetcher: typeof fetch = fetch) { this.config = config; }
 
-  async search(query: string): Promise<{ results: SearchResult[]; source: BriefSource | null }> {
+  async search(query: string): Promise<SearchResponse> {
     const cached = this.cache.get(query);
     if (cached && cached.expiresAt > Date.now()) return cached.value;
     const value = this.config.TAVILY_SEARCH_API_KEY
@@ -29,21 +31,22 @@ export class BriefProviders {
       : this.config.BRAVE_SEARCH_API_KEY
         ? await this.searchBrave(query, this.config.BRAVE_SEARCH_API_KEY)
         : await this.searchGdelt(query);
-    this.cache.set(query, { expiresAt: Date.now() + 60 * 60 * 1000, value });
+    // A transient provider/network failure must not poison every retry for an hour.
+    if (value.status !== "unavailable") this.cache.set(query, { expiresAt: Date.now() + 60 * 60 * 1000, value });
     return value;
   }
 
-  private async searchBrave(query: string, apiKey: string): Promise<{ results: SearchResult[]; source: BriefSource | null }> {
+  private async searchBrave(query: string, apiKey: string): Promise<SearchResponse> {
     try {
       const response = await this.fetcher(`https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=3`, { headers: { Accept: "application/json", "X-Subscription-Token": apiKey }, signal: AbortSignal.timeout(8_000) });
-      if (!response.ok) return { results: [], source: null };
+      if (!response.ok) return unavailableSearch("brave_search");
       const data = await response.json() as { web?: { results?: SearchResult[] } };
       const results = (data.web?.results ?? []).map(({ title, description, url }) => ({ title, description, url })).filter((item) => item.title && item.url);
-      return { results, source: { kind: "search", label: `Brave Search：${query}`, provider: "brave_search", retrievedAt: new Date().toISOString() } };
-    } catch { return { results: [], source: null }; }
+      return availableSearch(results, { kind: "search", label: `Brave Search：${query}`, provider: "brave_search", retrievedAt: new Date().toISOString() }, "brave_search");
+    } catch { return unavailableSearch("brave_search"); }
   }
 
-  private async searchTavily(query: string, apiKey: string): Promise<{ results: SearchResult[]; source: BriefSource | null }> {
+  private async searchTavily(query: string, apiKey: string): Promise<SearchResponse> {
     try {
       const response = await this.fetcher("https://api.tavily.com/search", {
         method: "POST",
@@ -51,14 +54,14 @@ export class BriefProviders {
         body: JSON.stringify({ api_key: apiKey, query, search_depth: "basic", max_results: 3, include_answer: false, include_raw_content: false }),
         signal: AbortSignal.timeout(10_000)
       });
-      if (!response.ok) return { results: [], source: null };
+      if (!response.ok) return unavailableSearch("tavily_search");
       const data = await response.json() as { results?: Array<{ title?: string; content?: string; url?: string }> };
       const results = (data.results ?? []).flatMap((item) => item.title && item.url ? [{ title: item.title, description: item.content ?? "", url: item.url }] : []);
-      return { results, source: { kind: "search", label: `Tavily Search：${query}`, provider: "tavily_search", retrievedAt: new Date().toISOString() } };
-    } catch { return { results: [], source: null }; }
+      return availableSearch(results, { kind: "search", label: `Tavily Search：${query}`, provider: "tavily_search", retrievedAt: new Date().toISOString() }, "tavily_search");
+    } catch { return unavailableSearch("tavily_search"); }
   }
 
-  private async searchGdelt(query: string): Promise<{ results: SearchResult[]; source: BriefSource | null }> {
+  private async searchGdelt(query: string): Promise<SearchResponse> {
     let release!: () => void;
     const previous = this.gdeltQueue;
     this.gdeltQueue = new Promise<void>((resolve) => { release = resolve; });
@@ -68,11 +71,11 @@ export class BriefProviders {
       if (wait) await new Promise((resolve) => setTimeout(resolve, wait));
       const response = await this.fetcher(`https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(query)}&mode=artlist&format=json&maxrecords=3&sort=hybridrel`, { signal: AbortSignal.timeout(12_000) });
       this.lastGdeltRequestAt = Date.now();
-      if (!response.ok) return { results: [], source: null };
+      if (!response.ok) return unavailableSearch("gdelt");
       const data = await response.json() as { articles?: GdeltArticle[] };
       const results = (data.articles ?? []).flatMap((article) => article.title && article.url ? [{ title: article.title, description: `${article.domain ?? "新闻来源"}${article.seendate ? ` · ${article.seendate}` : ""}`, url: article.url }] : []);
-      return { results, source: { kind: "search", label: `GDELT 新闻索引：${query}`, provider: "gdelt", retrievedAt: new Date().toISOString() } };
-    } catch { return { results: [], source: null }; }
+      return availableSearch(results, { kind: "search", label: `GDELT 新闻索引：${query}`, provider: "gdelt", retrievedAt: new Date().toISOString() }, "gdelt");
+    } catch { return unavailableSearch("gdelt"); }
     finally { release(); }
   }
 
@@ -121,8 +124,17 @@ function withOffset(localDateTime: string, timeZone: string): string | null {
   } catch { return null; }
 }
 
-export function searchSection(title: string, result: { results: SearchResult[]; source: BriefSource | null }): { section: BriefSection; sources: BriefSource[] } {
-  if (result.results.length === 0) return { section: { title, body: result.source ? "当前没有可用的可靠搜索结果。" : "未配置搜索服务，因此没有生成外部资讯。" }, sources: [] };
+export function searchSection(title: string, result: SearchResponse): { section: BriefSection; sources: BriefSource[] } {
+  if (result.status === "unavailable") return { section: { title, body: "搜索服务暂时不可用；本板块没有写入未经来源支持的内容。" }, sources: [] };
+  if (result.results.length === 0) return { section: { title, body: "当前没有可用的可靠搜索结果。" }, sources: [] };
   const body = result.results.map((item) => `${item.title}：${item.description}`).join("\n\n").slice(0, 4000).trim();
   return { section: { title, body }, sources: result.results.map((item) => ({ kind: "search", label: item.title, url: item.url, provider: result.source?.provider, retrievedAt: result.source?.retrievedAt })) };
+}
+
+function availableSearch(results: SearchResult[], source: BriefSource, provider: string): SearchResponse {
+  return { results, source, status: results.length ? "ok" : "empty", provider };
+}
+
+function unavailableSearch(provider: string): SearchResponse {
+  return { results: [], source: null, status: "unavailable", provider };
 }

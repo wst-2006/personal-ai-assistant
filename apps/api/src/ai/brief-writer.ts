@@ -38,12 +38,15 @@ class BriefProviderError extends Error {
   }
 }
 
+class BriefMalformedOutputError extends Error {}
+
 function endpoint(baseUrl: string) {
   return `${baseUrl.replace(/\/$/, "")}/chat/completions`;
 }
 
 function isRetryable(error: unknown) {
   if (error instanceof BriefProviderError) return error.status === 408 || error.status === 429 || error.status >= 500;
+  if (error instanceof BriefMalformedOutputError) return true;
   return error instanceof TypeError || (error instanceof Error && error.name === "TimeoutError");
 }
 
@@ -57,7 +60,11 @@ function boundedResults(results: SearchResult[]) {
 function parseContent<T>(content: string | Array<{ text?: string }>, schema: z.ZodType<T>) {
   const text = Array.isArray(content) ? content.map((part) => part.text ?? "").join("") : content;
   const normalized = text.trim().replace(/^```json\s*/i, "").replace(/\s*```$/, "");
-  return schema.parse(JSON.parse(normalized));
+  try {
+    return schema.parse(JSON.parse(normalized));
+  } catch {
+    throw new BriefMalformedOutputError("DeepSeek returned malformed daily brief content.");
+  }
 }
 
 export interface BriefWriter {
@@ -140,7 +147,7 @@ export class DeepSeekBriefWriter implements BriefWriter {
     if (!response.ok) throw new BriefProviderError(response.status);
     const payload = await response.json() as ChatCompletionResponse;
     const content = payload.choices?.[0]?.message?.content;
-    if (!content) throw new Error("DeepSeek returned no daily brief content.");
+    if (!content) throw new BriefMalformedOutputError("DeepSeek returned no daily brief content.");
     return parseContent(content, schema);
   }
 }

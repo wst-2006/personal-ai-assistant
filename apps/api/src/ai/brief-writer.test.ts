@@ -80,4 +80,24 @@ describe("DeepSeekBriefWriter", () => {
       searches: []
     })).rejects.toThrow();
   });
+
+  it("retries one malformed structured response before giving up", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: "not-json" } }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+        title: "恢复后的简报", reflection: "复盘摘要", taskSummary: "任务摘要", encouragement: "继续。"
+      }) } }] }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await new DeepSeekBriefWriter({ ...config, DEEPSEEK_MAX_RETRIES: 1 }).write({
+      localDate: "2026-08-07",
+      titleHint: "每日简报",
+      reflection: "复盘",
+      taskSummary: "任务",
+      searches: []
+    });
+
+    expect(result.title).toBe("恢复后的简报");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });

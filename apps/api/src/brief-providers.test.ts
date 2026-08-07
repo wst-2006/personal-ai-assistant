@@ -46,6 +46,8 @@ describe("brief search provider", () => {
   it("keeps generated search sections within the daily brief contract", () => {
     const result = searchSection("AI", {
       source: { kind: "search", label: "test", provider: "test" },
+      status: "ok",
+      provider: "test",
       results: [{ title: "Long result", description: "x".repeat(10_000), url: "https://example.com" }]
     });
     expect(result.section.body.length).toBeLessThanOrEqual(4000);
@@ -62,5 +64,23 @@ describe("brief search provider", () => {
     expect(JSON.parse(String(fetcher.mock.calls[0]?.[1] && (fetcher.mock.calls[0]?.[1] as RequestInit).body))).toMatchObject({ api_key: "test-key", query: "人工智能 今日要闻", max_results: 3 });
     expect(result.results[0]).toEqual({ title: "Tavily result", description: "A concise result", url: "https://example.com/tavily" });
     expect(result.source?.provider).toBe("tavily_search");
+    expect(result.status).toBe("ok");
+  });
+
+  it("does not cache a transient provider failure and labels it honestly", async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response("temporarily unavailable", { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        results: [{ title: "Recovered", content: "Source-backed result", url: "https://example.com/recovered" }]
+      }), { status: 200, headers: { "content-type": "application/json" } }));
+    const providers = new BriefProviders({ TAVILY_SEARCH_API_KEY: "test-key" }, fetcher);
+
+    const failed = await providers.search("恢复测试");
+    const recovered = await providers.search("恢复测试");
+
+    expect(failed).toMatchObject({ status: "unavailable", provider: "tavily_search", results: [] });
+    expect(searchSection("AI", failed).section.body).toContain("暂时不可用");
+    expect(recovered).toMatchObject({ status: "ok", provider: "tavily_search" });
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 });
