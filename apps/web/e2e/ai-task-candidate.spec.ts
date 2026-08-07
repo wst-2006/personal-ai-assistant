@@ -241,6 +241,80 @@ test("AI 服务失败时保留原句且不写入，明确重试后才允许确�
   }
 });
 
+test("AI 候选遇到冲突时返回调整不写入也不误报失败，修改时间后可正常保存", async ({ page, request }) => {
+  test.setTimeout(60_000);
+  const suffix = Date.now().toString(36);
+  const date = await findAvailableExactDate(request);
+  const existingTitle = `E2E AI 冲突基准 ${suffix}`;
+  const candidateTitle = `E2E AI 冲突候选 ${suffix}`;
+  const ids: string[] = [];
+  let taskWrites = 0;
+
+  const existingResponse = await request.post(`${apiBase}/api/v1/tasks`, {
+    data: {
+      title: existingTitle,
+      scheduleKind: "exact",
+      startAt: `${date}T06:00:00.000Z`,
+      endAt: `${date}T07:00:00.000Z`,
+      timeZone: "Asia/Shanghai"
+    }
+  });
+  expect(existingResponse.status()).toBe(201);
+  ids.push(((await existingResponse.json()).task as { id: string }).id);
+
+  await mockCandidateParser(page, {
+    title: candidateTitle,
+    entryType: "task",
+    date,
+    startAt: `${date}T06:00:00.000Z`,
+    endAt: `${date}T07:00:00.000Z`,
+    schedulePrecision: "exact",
+    notes: "冲突候选仍需用户决定",
+    missingFields: []
+  });
+  page.on("request", (browserRequest) => {
+    if (browserRequest.method() === "POST" && browserRequest.url() === `${apiBase}/api/v1/tasks`) taskWrites += 1;
+  });
+
+  try {
+    await openCandidate(page, "安排一项与现有任务重叠的候选");
+    await page.getByRole("button", { name: "确认并保存任务", exact: true }).click();
+    const conflictDialog = page.getByRole("alertdialog", { name: "这项候选与现有任务重叠" });
+    await expect(conflictDialog).toBeVisible();
+    await expect(conflictDialog).toContainText(existingTitle);
+    await expect(conflictDialog).toContainText("14:00–15:00");
+    await conflictDialog.getByRole("button", { name: "返回调整", exact: true }).click();
+
+    await expect(conflictDialog).toBeHidden();
+    await expect(page.getByRole("heading", { name: "逐项确认后再保存", exact: true })).toBeVisible();
+    await expect(page.getByLabel("候选标题")).toHaveValue(candidateTitle);
+    await expect(page.getByLabel("候选开始时间")).toHaveValue("14:00");
+    await expect(page.getByLabel("候选结束时间")).toHaveValue("15:00");
+    await expect(page.getByText("确认保存失败，候选内容仍保留在 AI 侧边层。")).toHaveCount(0);
+    expect(taskWrites).toBe(1);
+
+    const beforeRetry = await request.get(`${apiBase}/api/v1/tasks?date=${date}`);
+    const beforeTasks = (await beforeRetry.json()).tasks as Array<{ id: string; title: string }>;
+    expect(beforeTasks.map((task) => task.title)).not.toContain(candidateTitle);
+
+    await page.getByLabel("候选开始时间").fill("15:00");
+    await page.getByLabel("候选结束时间").fill("16:00");
+    const created = page.waitForResponse((response) => response.url() === `${apiBase}/api/v1/tasks`
+      && response.request().method() === "POST" && response.status() === 201);
+    await page.getByRole("button", { name: "确认并保存任务", exact: true }).click();
+    const task = (await (await created).json()).task as { id: string; startAt: string; endAt: string };
+    ids.push(task.id);
+    expect(taskWrites).toBe(2);
+    expect(task.startAt).toBe(`${date}T07:00:00.000Z`);
+    expect(task.endAt).toBe(`${date}T08:00:00.000Z`);
+
+    await page.getByLabel("时间轴日期").fill(date);
+    await expect(page.locator(`[data-task-id="${task.id}"]`)).toContainText(candidateTitle);
+  } finally {
+    for (const id of ids.reverse()) await softDeleteTask(request, id);
+  }
+});
+
 test("AI 想法候选不显示任务排期字段，并只写入独立 inbox", async ({ page }) => {
   test.setTimeout(60_000);
   const suffix = Date.now().toString(36);

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { BarChart3, Bot, BrainCircuit, CalendarDays, Check, CircleHelp, Download, HardDriveDownload, HeartPulse, LoaderCircle, Map, NotebookPen, RefreshCw, Send, Settings2, Sparkles, Target, X } from "lucide-react";
+import { AlertTriangle, BarChart3, Bot, BrainCircuit, CalendarDays, Check, CircleHelp, Download, HardDriveDownload, HeartPulse, LoaderCircle, Map, NotebookPen, RefreshCw, Send, Settings2, Sparkles, Target, X } from "lucide-react";
 import { DiaryWorkspace } from "./DiaryWorkspace";
 import { FocusWorkspace } from "./FocusWorkspace";
 import { GrowthWorkspace } from "./GrowthWorkspace";
@@ -34,7 +34,9 @@ type CandidateDraft = {
   end: string;
   notes: string;
 };
-type ApiErrorBody = { error?: string; conflictSetFingerprint?: string; earliestStartAt?: string };
+type CandidateConflictDetail = { taskId: string; title: string; startAt: string; endAt: string; lifecycleStatus: "open" | "active" | "awaiting_outcome" | "closed"; scheduleRevision: number; accepted: boolean };
+type CandidateConflictPrompt = { conflicts: CandidateConflictDetail[]; fingerprint: string; resolve: (decision: "keep" | "return") => void };
+type ApiErrorBody = { error?: string; conflictSetFingerprint?: string; earliestStartAt?: string; conflicts?: CandidateConflictDetail[] };
 type StandaloneBrief = {
   id: string;
   localDate: string;
@@ -70,6 +72,7 @@ class ApiError extends Error {
     super(body.error ?? `HTTP ${status}`);
   }
 }
+class CandidateConflictCancelledError extends Error {}
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:3000";
 const entryLabels: Record<EntryType, string> = { task: "任务", idea: "想法", question: "问题" };
@@ -197,7 +200,7 @@ async function requestJson<T>(path: string, method: string, payload?: Record<str
   return body as T;
 }
 
-async function requestWithConflictConfirmation<T>(path: string, method: string, payload: Record<string, unknown>): Promise<T> {
+async function requestWithConflictConfirmation<T>(path: string, method: string, payload: Record<string, unknown>, decide: (conflicts: CandidateConflictDetail[], fingerprint: string) => Promise<"keep" | "return">): Promise<T> {
   let currentPayload = payload;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
@@ -206,7 +209,8 @@ async function requestWithConflictConfirmation<T>(path: string, method: string, 
       if (!(requestError instanceof ApiError)
         || !["task_time_conflict", "conflict_set_changed"].includes(requestError.body.error ?? "")
         || !requestError.body.conflictSetFingerprint) throw requestError;
-      if (!window.confirm("该时段与现有任务重叠。是否明确保留当前全部冲突？")) throw requestError;
+      const decision = await decide(requestError.body.conflicts ?? [], requestError.body.conflictSetFingerprint);
+      if (decision !== "keep") throw new CandidateConflictCancelledError();
       currentPayload = { ...payload, conflictDecision: "keep", expectedConflictFingerprint: requestError.body.conflictSetFingerprint };
     }
   }
@@ -226,6 +230,7 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [aiCandidate, setAiCandidate] = useState<CandidateDraft | null>(null);
+  const [candidateConflictPrompt, setCandidateConflictPrompt] = useState<CandidateConflictPrompt | null>(null);
   const [planChange, setPlanChange] = useState<PlanChangeContext | null>(null);
   const [standaloneBriefs, setStandaloneBriefs] = useState<StandaloneBrief[]>([]);
   const [selectedStandaloneBriefId, setSelectedStandaloneBriefId] = useState<string | null>(null);
@@ -375,6 +380,16 @@ export function App() {
     setTodayRefreshToken((value) => value + 1);
   }
 
+  function requestCandidateConflictDecision(conflicts: CandidateConflictDetail[], fingerprint: string): Promise<"keep" | "return"> {
+    return new Promise((resolve) => setCandidateConflictPrompt({ conflicts, fingerprint, resolve }));
+  }
+
+  function resolveCandidateConflictPrompt(decision: "keep" | "return") {
+    const prompt = candidateConflictPrompt;
+    setCandidateConflictPrompt(null);
+    prompt?.resolve(decision);
+  }
+
   async function parseWithAi() {
     const text = aiInput.trim();
     if (!text) return;
@@ -464,12 +479,14 @@ export function App() {
           ...(candidate.notes.trim() ? { notes: candidate.notes.trim() } : {})
         });
       } else if (taskPayload) {
-        await requestWithConflictConfirmation("/api/v1/tasks", "POST", taskPayload);
+        await requestWithConflictConfirmation("/api/v1/tasks", "POST", taskPayload, requestCandidateConflictDecision);
       }
       setAiInput(""); setAiCandidate(null); setAiParseError(null); setAiOpen(false);
       setTodayRefreshToken((value) => value + 1);
     } catch (requestError) {
-      if (requestError instanceof ApiError && requestError.body.error === "task_schedule_window_unavailable") {
+      if (requestError instanceof CandidateConflictCancelledError) {
+        return;
+      } else if (requestError instanceof ApiError && requestError.body.error === "task_schedule_window_unavailable") {
         setError("这个精确时间段已经不可用，请调整候选排期后再确认。");
       } else {
         setError("确认保存失败，候选内容仍保留在 AI 侧边层。");
@@ -596,6 +613,7 @@ export function App() {
         </section>
       </div> : <div className="candidate-view"><p className="section-kicker">待你确认</p><div className="candidate-title"><span>{entryLabels[aiCandidate.entryType]}</span><h2>逐项确认后再保存</h2><small>AI 只提供候选，任何内容都不会在此之前写入你的计划。</small></div><form className="candidate-form" onSubmit={saveAiCandidate}><label className="candidate-wide"><span>候选类型</span><select aria-label="候选类型" value={aiCandidate.entryType} onChange={(event) => setAiCandidate((current) => current ? { ...current, entryType: event.target.value as EntryType, scheduleKind: event.target.value === "task" ? current.scheduleKind : "none" } : current)}><option value="task">任务</option><option value="idea">想法</option><option value="question">问题</option></select></label><label className="candidate-wide"><span>{aiCandidate.entryType === "task" ? "任务标题" : aiCandidate.entryType === "idea" ? "想法内容" : "问题内容"}</span><input aria-label="候选标题" required maxLength={200} value={aiCandidate.title} onChange={(event) => setAiCandidate((current) => current ? { ...current, title: event.target.value } : current)} /></label>{aiCandidate.entryType === "task" && <><label><span>排期方式</span><select aria-label="候选排期方式" value={aiCandidate.scheduleKind} onChange={(event) => setAiCandidate((current) => current ? { ...current, scheduleKind: event.target.value as ScheduleKind, localDate: current.localDate || shanghaiDate() } : current)}><option value="none">未排期</option><option value="daypart">时间段</option><option value="exact">精确时间</option></select></label><label><span>日期{aiCandidate.scheduleKind === "none" ? "（可选）" : ""}</span><input aria-label="候选日期" type="date" required={aiCandidate.scheduleKind !== "none"} value={aiCandidate.localDate} onChange={(event) => setAiCandidate((current) => current ? { ...current, localDate: event.target.value } : current)} /></label>{aiCandidate.scheduleKind === "daypart" && <label className="candidate-wide"><span>时间段</span><select aria-label="候选时间段" value={aiCandidate.daypart} onChange={(event) => setAiCandidate((current) => current ? { ...current, daypart: event.target.value as Daypart } : current)}><option value="morning">上午</option><option value="afternoon">下午</option><option value="evening">晚上</option></select></label>}{aiCandidate.scheduleKind === "exact" && <><label><span>开始时间</span><input aria-label="候选开始时间" type="time" step="1800" min={aiCandidate.localDate === today ? timeFromMinute(nextAvailableMinuteForToday(aiCandidate.localDate)) : "00:00"} required value={aiCandidate.start} onChange={(event) => setAiCandidate((current) => current ? { ...current, start: event.target.value } : current)} /></label><label><span>结束时间</span><input aria-label="候选结束时间" type="time" step="1800" max="23:30" required value={aiCandidate.end} onChange={(event) => setAiCandidate((current) => current ? { ...current, end: event.target.value } : current)} /></label></>}</>}<label className="candidate-wide"><span>备注（可选）</span><textarea aria-label="候选备注" rows={3} maxLength={4000} value={aiCandidate.notes} onChange={(event) => setAiCandidate((current) => current ? { ...current, notes: event.target.value } : current)} /></label>{candidateMissingFields(aiCandidate).length > 0 && <p className="candidate-note candidate-wide">仍待补充：{candidateMissingFields(aiCandidate).join("、")}</p>}<footer className="candidate-wide"><button className="primary-button full-width" type="submit" disabled={saving}>{saving ? <LoaderCircle className="spin" /> : <Check />}{candidateSaveLabel(aiCandidate)}</button><button className="text-button centered" type="button" disabled={saving} onClick={() => setAiCandidate(null)}>返回修改原句</button></footer></form></div>}
     </aside>
+    {candidateConflictPrompt && <div className="task-dialog-backdrop conflict-dialog-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) resolveCandidateConflictPrompt("return"); }}><section className="conflict-dialog" role="alertdialog" aria-modal="true" aria-labelledby="candidate-conflict-title" aria-describedby="candidate-conflict-description"><header><div><p className="section-kicker">候选排期冲突</p><h2 id="candidate-conflict-title">这项候选与现有任务重叠</h2></div><button type="button" aria-label="返回调整候选排期" onClick={() => resolveCandidateConflictPrompt("return")}><X /></button></header><p id="candidate-conflict-description">系统不会自动移动任何任务。返回后候选内容会完整保留；只有明确确认，才会保留以下全部当前冲突。</p><ul aria-label="候选当前冲突任务">{candidateConflictPrompt.conflicts.map((item) => <li key={`${item.taskId}:${item.scheduleRevision}`}><span>{localTimeFromIso(item.startAt)}–{localTimeFromIso(item.endAt)}</span><strong>{item.title}</strong><small>{item.lifecycleStatus === "active" ? "正在专注" : item.lifecycleStatus === "awaiting_outcome" ? "等待结果" : item.lifecycleStatus === "closed" ? "历史重叠" : "待办任务"}</small></li>)}</ul><footer><button type="button" className="text-button" onClick={() => resolveCandidateConflictPrompt("return")}>返回调整</button><button type="button" className="primary-button" onClick={() => resolveCandidateConflictPrompt("keep")}><AlertTriangle />明确保留全部冲突</button></footer></section></div>}
     {aiOpen && <button className="drawer-scrim" type="button" aria-label="关闭 AI 助手" onClick={closeAiDrawer} />}
     <UserProfileSettings open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     <nav className="mobile-nav" aria-label="移动端主要导航">{navItems.map(({ id, label, icon: Icon }) => <button className={view === id ? "active" : ""} type="button" key={id} onClick={() => setView(id)}><Icon /><span>{label}</span></button>)}</nav>
