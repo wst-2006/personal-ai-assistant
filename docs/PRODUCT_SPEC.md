@@ -19,6 +19,11 @@ creates search-backed daily briefs when explicitly requested.
 - Tasks, ideas, and questions are distinct entry types.
 - AI may advise on conflicts and changes but never changes a confirmed plan
   without an explicit user decision.
+- A plan-change consultation may return transient schedule candidates only for
+  existing `open` tasks. Each candidate is bound to the task `version` and
+  `scheduleRevision`; selecting it merely opens the normal editable task form.
+  A stale candidate is rejected, and only the user's final save through the
+  versioned task/conflict API changes the database.
 - The application database is the authoritative task and schedule source.
   External calendars may remind, synchronize, or import but do not override it.
 - Exact overlapping tasks are reported and never moved automatically. The user

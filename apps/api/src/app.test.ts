@@ -256,8 +256,21 @@ describe("AI plan-change consultation", () => {
           feasibility: "risky",
           affectedTaskIds: [request.task.id, "00000000-0000-4000-8000-000000000000"],
           options: [
-            { title: "保持原计划", detail: "先处理临时安排，之后回到原来的时间块。" },
-            { title: "手动调整", detail: "回到时间轴选择一个可接受的时间，再明确确认冲突。" }
+            { title: "保持原计划", detail: "先处理临时安排，之后回到原来的时间块。", adjustments: [] },
+            {
+              title: "下午再处理",
+              detail: "先打开确认表单，检查后再决定是否保存。",
+              adjustments: [{
+                taskId: request.task.id,
+                scheduleKind: "exact",
+                localDate: null,
+                daypart: null,
+                startAt: "2090-03-16T15:00:00+08:00",
+                endAt: "2090-03-16T16:00:00+08:00",
+                timeZone: "Asia/Shanghai",
+                reason: "用户说明下午才有空。"
+              }]
+            }
           ],
           warnings: ["这只是建议，尚未修改任何任务。"]
         };
@@ -293,10 +306,19 @@ describe("AI plan-change consultation", () => {
       });
       expect(receivedRequest?.dayTasks.some((candidate) => candidate.id === task.id)).toBe(true);
       expect(response.json().advisory).toMatchObject({
+        referenceDate: "2090-03-16",
         taskId: task.id,
         taskVersion: task.version,
         taskScheduleRevision: task.scheduleRevision,
-        affectedTasks: [{ id: task.id, title: "完成阶段报告" }]
+        affectedTasks: [{ id: task.id, title: "完成阶段报告", lifecycleStatus: "open", canReschedule: true }],
+        options: [{ adjustments: [] }, { adjustments: [{
+          taskId: task.id,
+          taskTitle: "完成阶段报告",
+          expectedVersion: task.version,
+          expectedScheduleRevision: task.scheduleRevision,
+          startAt: "2090-03-16T15:00:00+08:00",
+          endAt: "2090-03-16T16:00:00+08:00"
+        }] }]
       });
       expect(response.json().advisory.affectedTasks).toHaveLength(1);
       expect(consultationStore.tasks).toEqual(before);

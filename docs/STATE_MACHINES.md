@@ -36,6 +36,13 @@ task has not started yet, or directly to `preparing` when the task interval is
 already in progress. "Other arrangement" ends that reminder interaction and
 opens a plan-change conversation without changing the stored task.
 
+Plan-change advice is not a task state. A structured schedule candidate may
+target only an `open` task and remains transient. It carries the task version
+and schedule revision observed during consultation. Choosing it opens the
+normal editable form; no transition or schedule mutation occurs until the user
+saves successfully through the existing version/conflict checks. A changed or
+locked task invalidates the candidate instead of being overwritten.
+
 Preparation lasts one minute and then starts timing automatically. The user
 may explicitly skip the remaining preparation countdown and start immediately.
 There is no pause or manual restart in the current API, UI, or state machine.

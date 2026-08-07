@@ -313,11 +313,14 @@ test("390px 移动端可恢复真实专注会话并结束计时", async ({ page,
   }
 });
 
-test("另有安排会打开只读协商，不会自动修改任务或日程", async ({ page, request }) => {
+test("另有安排只生成候选，用户确认表单后才修改排期", async ({ page, request }) => {
   test.setTimeout(120_000);
   const date = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const candidateDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(Date.now() + 24 * 60 * 60 * 1000));
   const title = `E2E 另有安排 ${Date.now().toString(36)}`;
   let taskId = "";
+  let taskVersion = 0;
+  let taskScheduleRevision = 0;
   let taskWrites = 0;
   let receivedPayload: { taskId: string; message: string } | null = null;
   page.on("request", (outgoing) => {
@@ -329,15 +332,33 @@ test("另有安排会打开只读协商，不会自动修改任务或日程", as
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({ advisory: {
+        referenceDate: date,
         taskId,
-        taskVersion: 1,
-        taskScheduleRevision: 1,
+        taskVersion,
+        taskScheduleRevision,
         summary: "下午仍有空间，但请由你决定是否移动当前任务。",
         feasibility: "risky",
-        affectedTasks: [{ id: taskId, title, startAt: null, endAt: null }],
+        affectedTasks: [{ id: taskId, title, lifecycleStatus: "open", scheduleKind: "none", localDate: date, daypart: null, startAt: null, endAt: null, timeZone: "Asia/Shanghai", version: taskVersion, scheduleRevision: taskScheduleRevision, canReschedule: true }],
         options: [
-          { title: "保持原计划", detail: "先处理临时安排，稍后回到原任务。" },
-          { title: "回到时间轴再调整", detail: "仅在你明确保存后才会改变排期。" }
+          { title: "保持原计划", detail: "先处理临时安排，稍后回到原任务。", adjustments: [] },
+          { title: "明天上午处理", detail: "先检查候选时间，再由你明确保存。", adjustments: [{
+            taskId,
+            taskTitle: title,
+            scheduleKind: "exact",
+            localDate: null,
+            daypart: null,
+            startAt: `${candidateDate}T09:00:00+08:00`,
+            endAt: `${candidateDate}T10:00:00+08:00`,
+            timeZone: "Asia/Shanghai",
+            reason: "今天临时有事，候选调整到明天上午。",
+            currentScheduleKind: "none",
+            currentLocalDate: date,
+            currentDaypart: null,
+            currentStartAt: null,
+            currentEndAt: null,
+            expectedVersion: taskVersion,
+            expectedScheduleRevision: taskScheduleRevision
+          }] }
         ],
         warnings: ["当前建议没有修改任何任务。"]
       } })
@@ -346,8 +367,10 @@ test("另有安排会打开只读协商，不会自动修改任务或日程", as
   try {
     const created = await request.post(`${apiBase}/api/v1/tasks`, { data: { title, scheduleKind: "none", localDate: date, timeZone: "Asia/Shanghai" } });
     expect(created.status()).toBe(201);
-    const task = (await created.json()).task as { id: string; version: number };
+    const task = (await created.json()).task as { id: string; version: number; scheduleRevision: number };
     taskId = task.id;
+    taskVersion = task.version;
+    taskScheduleRevision = task.scheduleRevision;
     const reminder = await request.post(`${apiBase}/api/v1/focus-sessions`, { data: { taskId, expectedTaskVersion: task.version, mode: "remind" } });
     expect(reminder.status()).toBe(201);
 
@@ -374,11 +397,99 @@ test("另有安排会打开只读协商，不会自动修改任务或日程", as
     const current = await request.get(`${apiBase}/api/v1/focus-sessions/current`);
     expect((await current.json()).session).toBeNull();
 
-    await page.getByRole("button", { name: /回到时间轴，自己决定调整/ }).click();
+    await page.getByRole("button", { name: "打开确认表单", exact: true }).click();
     await expect(page.getByRole("heading", { name: "把今天放回时间里。", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "检查清楚，再决定是否保存", exact: true })).toBeVisible();
+    const dialog = page.getByRole("dialog", { name: "检查清楚，再决定是否保存" });
+    await expect(dialog.getByText("尚未修改任务", { exact: true })).toBeVisible();
+    await expect(dialog.locator('input[type="date"]')).toHaveValue(candidateDate);
+    await expect(dialog.locator('input[type="time"]').nth(0)).toHaveValue("09:00");
+    await expect(dialog.locator('input[type="time"]').nth(1)).toHaveValue("10:00");
+    expect(taskWrites).toBe(0);
+
+    const saved = page.waitForResponse((response) => response.url().endsWith(`/api/v1/tasks/${taskId}`) && response.request().method() === "PATCH" && response.status() === 200);
+    await dialog.getByRole("button", { name: "确认并保存调整", exact: true }).click();
+    await saved;
+    expect(taskWrites).toBe(1);
+
     await page.reload();
     const afterRefresh = await request.get(`${apiBase}/api/v1/tasks/${taskId}`);
-    expect((await afterRefresh.json()).task).toMatchObject({ lifecycleStatus: "open", version: task.version, scheduleRevision: 1 });
+    expect((await afterRefresh.json()).task).toMatchObject({ lifecycleStatus: "open", version: task.version + 1, scheduleRevision: task.scheduleRevision + 1, scheduleKind: "exact" });
+    await page.getByLabel("时间轴日期").fill(candidateDate);
+    await expect(page.locator(`[data-task-id="${taskId}"]`)).toContainText("09:00–10:00");
+  } finally {
+    if (taskId) await cleanup(request, taskId);
+  }
+});
+
+test("协商后任务版本变化会拒绝过期排期候选", async ({ page, request }) => {
+  test.setTimeout(120_000);
+  const date = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const candidateDate = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(Date.now() + 24 * 60 * 60 * 1000));
+  const title = `E2E 过期协商 ${Date.now().toString(36)}`;
+  let taskId = "";
+  let taskVersion = 0;
+  let taskScheduleRevision = 0;
+  await page.route("**/api/v1/ai/plan-change-advisories", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ advisory: {
+        referenceDate: date,
+        taskId,
+        taskVersion,
+        taskScheduleRevision,
+        summary: "这是绑定当前版本的候选。",
+        feasibility: "feasible",
+        affectedTasks: [{ id: taskId, title, lifecycleStatus: "open", scheduleKind: "none", localDate: date, daypart: null, startAt: null, endAt: null, timeZone: "Asia/Shanghai", version: taskVersion, scheduleRevision: taskScheduleRevision, canReschedule: true }],
+        options: [{ title: "明天处理", detail: "打开表单后仍需确认。", adjustments: [{
+          taskId,
+          taskTitle: title,
+          scheduleKind: "exact",
+          localDate: null,
+          daypart: null,
+          startAt: `${candidateDate}T09:00:00+08:00`,
+          endAt: `${candidateDate}T10:00:00+08:00`,
+          timeZone: "Asia/Shanghai",
+          reason: "候选排期。",
+          currentScheduleKind: "none",
+          currentLocalDate: date,
+          currentDaypart: null,
+          currentStartAt: null,
+          currentEndAt: null,
+          expectedVersion: taskVersion,
+          expectedScheduleRevision: taskScheduleRevision
+        }] }],
+        warnings: []
+      } })
+    });
+  });
+  try {
+    const created = await request.post(`${apiBase}/api/v1/tasks`, { data: { title, scheduleKind: "none", localDate: date, timeZone: "Asia/Shanghai" } });
+    expect(created.status()).toBe(201);
+    const task = (await created.json()).task as { id: string; version: number; scheduleRevision: number };
+    taskId = task.id;
+    taskVersion = task.version;
+    taskScheduleRevision = task.scheduleRevision;
+    const reminder = await request.post(`${apiBase}/api/v1/focus-sessions`, { data: { taskId, expectedTaskVersion: task.version, mode: "remind" } });
+    expect(reminder.status()).toBe(201);
+
+    await page.goto("/");
+    await page.locator(".app-rail").getByRole("button", { name: "专注", exact: true }).click();
+    await expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "另有安排", exact: true }).click();
+    await page.getByLabel("变更说明").fill("改到明天。 ");
+    await page.getByRole("button", { name: "查看协商建议", exact: true }).click();
+    await expect(page.getByRole("button", { name: "打开确认表单", exact: true })).toBeVisible();
+
+    const changed = await request.patch(`${apiBase}/api/v1/tasks/${taskId}`, { data: { expectedVersion: task.version, title: `${title} 已更新` } });
+    expect(changed.status()).toBe(200);
+    await page.getByRole("button", { name: "打开确认表单", exact: true }).click();
+
+    await expect(page.getByText("这条协商候选已经过期：任务在协商后发生了变化。请重新打开任务发起协商。", { exact: true })).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "检查清楚，再决定是否保存" })).toHaveCount(0);
+    const detail = await request.get(`${apiBase}/api/v1/tasks/${taskId}`);
+    expect((await detail.json()).task).toMatchObject({ title: `${title} 已更新`, scheduleKind: "none", version: task.version + 1, scheduleRevision: task.scheduleRevision });
   } finally {
     if (taskId) await cleanup(request, taskId);
   }
@@ -394,13 +505,14 @@ test("390px 下另有安排协商可用且不发生横向溢出", async ({ page,
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({ advisory: {
+        referenceDate: date,
         taskId,
         taskVersion: 1,
         taskScheduleRevision: 1,
         summary: "请先决定是否回到时间轴修改。",
         feasibility: "needs_clarification",
         affectedTasks: [],
-        options: [{ title: "暂时保留", detail: "任务仍在原安排中。" }],
+        options: [{ title: "暂时保留", detail: "任务仍在原安排中。", adjustments: [] }],
         warnings: ["这只是建议。"]
       } })
     });

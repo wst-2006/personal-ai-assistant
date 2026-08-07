@@ -342,3 +342,19 @@ textarea, input, select { width: 100%; min-width: 0; border: 1px solid #ccd8d0; 
 .review-software-conversation-list article.user p { border: 1px solid #d3e5da; color: #235c49; background: #eaf5ee; }
 .review-software-conversation-empty { margin: 0; align-self: center; color: var(--ink-500); font-size: 12px; line-height: 1.6; }
 @media (max-width: 760px) { .review-software-conversations { grid-template-columns: 1fr; gap: 15px; padding: 19px; } }
+
+.plan-change-affected li > div { display: grid; min-width: 0; gap: 2px; }
+.plan-change-affected li > div small { color: #708079; font-size: 9px; }
+.plan-change-affected li > span { flex: 0 0 auto; color: var(--ink-500); font-size: 10px; }
+.plan-change-adjustments { display: grid; gap: 8px; margin-top: 10px; }
+.plan-change-adjustments section { display: grid; gap: 7px; padding: 10px; border: 1px solid #c9ddd4; border-radius: 7px; background: #f4f9f6; }
+.plan-change-adjustments section > div { display: grid; gap: 3px; }
+.plan-change-adjustments small { color: #276956; font-size: 11px; font-weight: 750; }
+.plan-change-adjustments section span { color: var(--ink-600); font-size: 10px; line-height: 1.45; }
+.plan-change-adjustments section p { margin: 0; font-size: 11px; }
+.plan-change-adjustments button { width: 100%; min-height: 34px; }
+.plan-change-adjustments button svg { width: 14px; }
+.plan-change-form-note { padding: 11px 12px; border: 1px solid #c9ddd4; border-left: 3px solid #3d8b74; border-radius: 6px; background: #f2f8f5; }
+.plan-change-form-note strong { color: #276956; font-size: 12px; }
+.plan-change-form-note p { margin: 5px 0; color: var(--ink-700); font-size: 12px; line-height: 1.55; }
+.plan-change-form-note small { color: var(--ink-500); font-size: 10px; line-height: 1.5; }

@@ -75,21 +75,53 @@ export const aiRoutes: FastifyPluginAsync<AiRoutesOptions> = async (app, options
       const advice = await options.planChangeAdvisor!.advise({
         message: parsed.data.message,
         referenceDate,
+        currentTime: new Date().toISOString(),
         task,
         dayTasks
       });
       const knownTasks = new Map(dayTasks.map((candidate) => [candidate.id, candidate]));
-      const filtered = filterAdviceToKnownTasks(advice, new Set(knownTasks.keys()));
+      const filtered = filterAdviceToKnownTasks(advice, knownTasks);
       return {
         advisory: {
           ...filtered,
+          referenceDate,
           taskId: task.id,
           taskVersion: task.version,
           taskScheduleRevision: task.scheduleRevision,
           affectedTasks: filtered.affectedTaskIds.map((id) => {
             const affected = knownTasks.get(id)!;
-            return { id: affected.id, title: affected.title, startAt: affected.startAt, endAt: affected.endAt };
-          })
+            return {
+              id: affected.id,
+              title: affected.title,
+              lifecycleStatus: affected.lifecycleStatus,
+              scheduleKind: affected.scheduleKind,
+              localDate: affected.localDate,
+              daypart: affected.daypart,
+              startAt: affected.startAt,
+              endAt: affected.endAt,
+              timeZone: affected.timeZone,
+              version: affected.version,
+              scheduleRevision: affected.scheduleRevision,
+              canReschedule: affected.lifecycleStatus === "open"
+            };
+          }),
+          options: filtered.options.map((option) => ({
+            ...option,
+            adjustments: option.adjustments.map((adjustment) => {
+              const affected = knownTasks.get(adjustment.taskId)!;
+              return {
+                ...adjustment,
+                taskTitle: affected.title,
+                currentScheduleKind: affected.scheduleKind,
+                currentLocalDate: affected.localDate,
+                currentDaypart: affected.daypart,
+                currentStartAt: affected.startAt,
+                currentEndAt: affected.endAt,
+                expectedVersion: affected.version,
+                expectedScheduleRevision: affected.scheduleRevision
+              };
+            })
+          }))
         }
       };
     } catch (error) {

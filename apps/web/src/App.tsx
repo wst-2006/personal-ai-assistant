@@ -5,9 +5,9 @@ import { FocusWorkspace } from "./FocusWorkspace";
 import { GrowthWorkspace } from "./GrowthWorkspace";
 import { HealthWorkspace } from "./HealthWorkspace";
 import { LongRangePlansWorkspace } from "./LongRangePlansWorkspace";
-import { PlanChangeDrawer } from "./PlanChangeDrawer";
+import { PlanChangeDrawer, type PlanChangeAdjustmentReview } from "./PlanChangeDrawer";
 import { ReviewWorkspace } from "./ReviewWorkspace";
-import { TodayWorkspace } from "./TodayWorkspace";
+import { TodayWorkspace, type PlanChangeTaskEditRequest } from "./TodayWorkspace";
 import { UserProfileSettings } from "./UserProfileSettings";
 
 type EntryType = "task" | "idea" | "question";
@@ -232,6 +232,7 @@ export function App() {
   const [aiCandidate, setAiCandidate] = useState<CandidateDraft | null>(null);
   const [candidateConflictPrompt, setCandidateConflictPrompt] = useState<CandidateConflictPrompt | null>(null);
   const [planChange, setPlanChange] = useState<PlanChangeContext | null>(null);
+  const [planChangeTaskEditRequest, setPlanChangeTaskEditRequest] = useState<PlanChangeTaskEditRequest | null>(null);
   const [standaloneBriefs, setStandaloneBriefs] = useState<StandaloneBrief[]>([]);
   const [selectedStandaloneBriefId, setSelectedStandaloneBriefId] = useState<string | null>(null);
   const [standaloneLoading, setStandaloneLoading] = useState(false);
@@ -373,6 +374,27 @@ export function App() {
   }
 
   function returnToTimelineFromPlanChange() {
+    setAiOpen(false);
+    setPlanChange(null);
+    setSelectedTaskId(null);
+    setView("today");
+    setTodayRefreshToken((value) => value + 1);
+  }
+
+  function reviewPlanChangeAdjustment(adjustment: PlanChangeAdjustmentReview) {
+    setPlanChangeTaskEditRequest({
+      requestId: crypto.randomUUID(),
+      taskId: adjustment.taskId,
+      expectedVersion: adjustment.expectedVersion,
+      expectedScheduleRevision: adjustment.expectedScheduleRevision,
+      scheduleKind: adjustment.scheduleKind,
+      localDate: adjustment.localDate,
+      daypart: adjustment.daypart,
+      startAt: adjustment.startAt,
+      endAt: adjustment.endAt,
+      timeZone: adjustment.timeZone,
+      reason: adjustment.reason
+    });
     setAiOpen(false);
     setPlanChange(null);
     setSelectedTaskId(null);
@@ -577,6 +599,8 @@ export function App() {
         refreshToken={todayRefreshToken}
         healthTaskDraft={healthTaskDraft}
         onHealthTaskDraftConsumed={() => setHealthTaskDraft(null)}
+        planChangeTaskEditRequest={planChangeTaskEditRequest}
+        onPlanChangeTaskEditRequestConsumed={() => setPlanChangeTaskEditRequest(null)}
         onOpenHealth={() => setView("health")}
         onFocus={(id) => { setSelectedTaskId(id); setView("focus"); }}
       />}
@@ -589,7 +613,7 @@ export function App() {
     </section>
     <aside className={`ai-drawer ${aiOpen ? "open" : ""}`} aria-label={planChange ? "计划变更协商" : "AI 助手"} aria-hidden={!aiOpen}>
       <div className="drawer-header"><div><span className="bot-orb"><Bot /></span><div><p>{planChange ? "计划变更协商" : "AI 整理助手"}</p><strong>{planChange ? "建议可见，决定仍在你手上" : "把一句话变得清楚"}</strong></div></div><button className="quiet-icon" type="button" aria-label="关闭 AI 助手" onClick={closeAiDrawer}><X /></button></div>
-      {planChange ? <PlanChangeDrawer taskId={planChange.taskId} taskTitle={planChange.taskTitle} onBackToTimeline={returnToTimelineFromPlanChange} /> : !aiCandidate ? <div className="drawer-entry">
+      {planChange ? <PlanChangeDrawer taskId={planChange.taskId} taskTitle={planChange.taskTitle} onReviewAdjustment={reviewPlanChangeAdjustment} onBackToTimeline={returnToTimelineFromPlanChange} /> : !aiCandidate ? <div className="drawer-entry">
         <div className="drawer-prompt"><p>说说你想记下什么。</p><small>对话会保存在本机；整理候选和生成独立简报均须由你明确选择。</small></div>
         <section className="conversation-thread" aria-live="polite" aria-label="今天的软件内对话">
           <div className="conversation-heading"><p className="section-kicker">软件内对话</p>{conversationLoading && <LoaderCircle className="spin" aria-label="正在读取软件内对话" />}</div>
