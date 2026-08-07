@@ -9,7 +9,7 @@ const backupService: BackupExporter = {
       formatVersion: logicalBackupFormatVersion,
       exportedAt: "2026-08-02T12:34:56.789Z",
       data: {
-        inboxEntries: [], feishuIntakeCandidates: [], healthProfiles: [], healthWeekPlans: [], healthDailyReferences: [], healthSleepAnalyses: [], tasks: [], taskLegacyMetadata: [], taskOutcomes: [], taskFeedback: [], taskLifecycleEvents: [], taskConflictAcceptances: [], reminderJobs: [], desktopCommandRequests: [], focusStructures: [], focusStructureSegments: [], focusSessions: [], focusSessionSegmentRuns: [], focusTimerJobs: [], reviewSessions: [], reviewMessages: [], appConversations: [], appConversationMessages: [], dailyBriefs: [], cyberDiaries: []
+        inboxEntries: [], feishuIntakeCandidates: [], healthProfiles: [], healthWeekPlans: [], healthDailyReferences: [], healthSleepAnalyses: [], tasks: [], taskLegacyMetadata: [], taskOutcomes: [], taskFeedback: [], taskLifecycleEvents: [], taskConflictAcceptances: [], reminderJobs: [], desktopCommandRequests: [], focusStructures: [], focusStructureSegments: [], focusSessions: [], focusSessionSegmentRuns: [], focusTimerJobs: [], longRangePlans: [], longRangePlanMilestones: [], longRangePlanTaskTreeCandidates: [], userProfiles: [], reviewSessions: [], reviewMessages: [], appConversations: [], appConversationMessages: [], dailyBriefs: [], cyberDiaries: []
       }
     };
   }
@@ -27,7 +27,11 @@ describe("logical backup export route", () => {
     expect(response.headers["content-type"]).toContain("application/json");
     expect(response.headers["cache-control"]).toBe("no-store");
     expect(response.headers["content-disposition"]).toMatch(/attachment; filename="personal-ai-assistant-backup-20260802T123456789Z\.json"/);
-    expect(response.json()).toMatchObject({ format: logicalBackupFormat, formatVersion: logicalBackupFormatVersion, data: { tasks: [], appConversations: [], appConversationMessages: [], cyberDiaries: [] } });
+    expect(response.json()).toMatchObject({
+      format: logicalBackupFormat,
+      formatVersion: logicalBackupFormatVersion,
+      data: { tasks: [], longRangePlans: [], longRangePlanMilestones: [], longRangePlanTaskTreeCandidates: [], userProfiles: [], appConversations: [], appConversationMessages: [], cyberDiaries: [] }
+    });
     expect(response.json()).not.toHaveProperty("databaseUrl");
     expect(response.json()).not.toHaveProperty("apiKey");
   });

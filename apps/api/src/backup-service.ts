@@ -17,6 +17,9 @@ import {
   healthSleepAnalyses,
   healthWeekPlans,
   inboxEntries,
+  longRangePlanMilestones,
+  longRangePlanTaskTreeCandidates,
+  longRangePlans,
   reminderJobs,
   reviewMessages,
   reviewSessions,
@@ -25,11 +28,12 @@ import {
   taskLegacyMetadata,
   taskLifecycleEvents,
   taskOutcomes,
-  tasks
+  tasks,
+  userProfiles
 } from "@personal-ai/db/schema";
 
 export const logicalBackupFormat = "personal-ai-assistant.backup" as const;
-export const logicalBackupFormatVersion = 4 as const;
+export const logicalBackupFormatVersion = 5 as const;
 
 export type LogicalBackup = {
   format: typeof logicalBackupFormat;
@@ -55,6 +59,10 @@ export type LogicalBackup = {
     focusSessions: Array<typeof focusSessions.$inferSelect>;
     focusSessionSegmentRuns: Array<typeof focusSessionSegmentRuns.$inferSelect>;
     focusTimerJobs: Array<typeof focusTimerJobs.$inferSelect>;
+    longRangePlans: Array<typeof longRangePlans.$inferSelect>;
+    longRangePlanMilestones: Array<typeof longRangePlanMilestones.$inferSelect>;
+    longRangePlanTaskTreeCandidates: Array<typeof longRangePlanTaskTreeCandidates.$inferSelect>;
+    userProfiles: Array<typeof userProfiles.$inferSelect>;
     reviewSessions: Array<typeof reviewSessions.$inferSelect>;
     reviewMessages: Array<typeof reviewMessages.$inferSelect>;
     appConversations: Array<typeof appConversations.$inferSelect>;
@@ -99,6 +107,10 @@ export class BackupService implements BackupExporter {
       const focusSessionRows = await transaction.select().from(focusSessions).orderBy(asc(focusSessions.createdAt), asc(focusSessions.id));
       const segmentRunRows = await transaction.select().from(focusSessionSegmentRuns).orderBy(asc(focusSessionSegmentRuns.focusSessionId), asc(focusSessionSegmentRuns.position));
       const timerJobRows = await transaction.select().from(focusTimerJobs).orderBy(asc(focusTimerJobs.createdAt), asc(focusTimerJobs.id));
+      const longRangePlanRows = await transaction.select().from(longRangePlans).orderBy(asc(longRangePlans.periodStart), asc(longRangePlans.createdAt), asc(longRangePlans.id));
+      const longRangeMilestoneRows = await transaction.select().from(longRangePlanMilestones).orderBy(asc(longRangePlanMilestones.longRangePlanId), asc(longRangePlanMilestones.position));
+      const taskTreeCandidateRows = await transaction.select().from(longRangePlanTaskTreeCandidates).orderBy(asc(longRangePlanTaskTreeCandidates.createdAt), asc(longRangePlanTaskTreeCandidates.id));
+      const userProfileRows = await transaction.select().from(userProfiles).orderBy(asc(userProfiles.createdAt), asc(userProfiles.id));
       const reviewSessionRows = await transaction.select().from(reviewSessions).orderBy(asc(reviewSessions.localDate));
       const reviewMessageRows = await transaction.select().from(reviewMessages).orderBy(asc(reviewMessages.createdAt), asc(reviewMessages.id));
       const conversationRows = await transaction.select().from(appConversations).orderBy(asc(appConversations.localDate));
@@ -130,6 +142,10 @@ export class BackupService implements BackupExporter {
           focusSessions: focusSessionRows,
           focusSessionSegmentRuns: segmentRunRows,
           focusTimerJobs: timerJobRows,
+          longRangePlans: longRangePlanRows,
+          longRangePlanMilestones: longRangeMilestoneRows,
+          longRangePlanTaskTreeCandidates: taskTreeCandidateRows,
+          userProfiles: userProfileRows,
           reviewSessions: reviewSessionRows,
           reviewMessages: reviewMessageRows,
           appConversations: conversationRows,
