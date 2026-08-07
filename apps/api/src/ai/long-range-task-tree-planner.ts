@@ -41,6 +41,7 @@ export class DeepSeekLongRangeTaskTreePlanner implements LongRangeTaskTreePlanne
         model: this.config.DEEPSEEK_MODEL,
         temperature: 0,
         max_tokens: this.config.DEEPSEEK_MAX_OUTPUT_TOKENS,
+        thinking: { type: "disabled" },
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: [

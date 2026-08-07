@@ -10,6 +10,7 @@ export class TaskTreePlanNotFoundError extends Error {}
 export class TaskTreeVersionConflictError extends Error { constructor(readonly plan: typeof longRangePlans.$inferSelect) { super("Long-range plan version does not match."); } }
 export class TaskTreeCandidateNotFoundError extends Error {}
 export class TaskTreeCandidateConflictError extends Error {}
+export class TaskTreeGenerationUnavailableError extends Error {}
 
 export class LongRangeTaskTreeService {
   constructor(private readonly db: AppDatabase) {}
@@ -28,7 +29,14 @@ export class LongRangeTaskTreeService {
     if (plan.status !== "active") throw new TaskTreeCandidateConflictError("Only active plans can be decomposed.");
     if (plan.version !== parsed.expectedPlanVersion) throw new TaskTreeVersionConflictError(plan);
     const milestones = await this.db.select({ title: longRangePlanMilestones.title, targetDate: longRangePlanMilestones.targetDate, notes: longRangePlanMilestones.notes }).from(longRangePlanMilestones).where(eq(longRangePlanMilestones.longRangePlanId, plan.id));
-    const proposal = await planner.plan({ title: plan.title, periodStart: plan.periodStart, periodEnd: plan.periodEnd, description: plan.description, milestones, instructions: parsed.instructions ?? null });
+    let proposal: TaskTreeProposal;
+    try {
+      proposal = await planner.plan({ title: plan.title, periodStart: plan.periodStart, periodEnd: plan.periodEnd, description: plan.description, milestones, instructions: parsed.instructions ?? null });
+    } catch {
+      // AI generation happens before the write transaction. A provider failure
+      // must never create a partial candidate or make the plan look changed.
+      throw new TaskTreeGenerationUnavailableError();
+    }
     const valid = taskTreeProposalSchema.safeParse(proposal);
     if (!valid.success) throw new TaskTreeCandidateConflictError("AI returned an invalid task-tree proposal.");
     return this.db.transaction(async (transaction) => {

@@ -4,7 +4,7 @@ import { connectVerifiedDatabase } from "@personal-ai/db/client";
 import { loadDatabaseConfig } from "@personal-ai/db/config";
 import { longRangePlanTaskTreeCandidates, longRangePlans, longRangePlanMilestones, taskLifecycleEvents, tasks } from "@personal-ai/db/schema";
 import { LongRangePlanService } from "./long-range-plan-service.js";
-import { LongRangeTaskTreeService } from "./long-range-task-tree-service.js";
+import { LongRangeTaskTreeService, TaskTreeGenerationUnavailableError } from "./long-range-task-tree-service.js";
 
 const connection = await connectVerifiedDatabase(loadDatabaseConfig());
 const plans = new LongRangePlanService(connection.db);
@@ -38,6 +38,32 @@ describe("long-range task-tree candidates", () => {
         await transaction.delete(longRangePlanMilestones).where(eq(longRangePlanMilestones.longRangePlanId, plan.id));
         await transaction.delete(longRangePlans).where(eq(longRangePlans.id, plan.id));
       });
+    }
+  });
+
+  it("keeps the plan and candidate table unchanged when AI generation fails", async () => {
+    const plan = await plans.create({
+      scope: "month",
+      title: "2099 unavailable task tree",
+      periodStart: "2099-07-01",
+      periodEnd: "2099-07-31",
+      description: null,
+      milestones: []
+    });
+    try {
+      await expect(trees.createAiCandidate(plan.id, {
+        expectedPlanVersion: plan.version,
+        instructions: null
+      }, { plan: async () => { throw new Error("provider unavailable"); } }))
+        .rejects.toBeInstanceOf(TaskTreeGenerationUnavailableError);
+
+      expect(await connection.db.select().from(longRangePlanTaskTreeCandidates)
+        .where(eq(longRangePlanTaskTreeCandidates.longRangePlanId, plan.id))).toHaveLength(0);
+      expect((await plans.get(plan.id)).version).toBe(plan.version);
+    } finally {
+      await connection.db.delete(longRangePlanTaskTreeCandidates).where(eq(longRangePlanTaskTreeCandidates.longRangePlanId, plan.id));
+      await connection.db.delete(longRangePlanMilestones).where(eq(longRangePlanMilestones.longRangePlanId, plan.id));
+      await connection.db.delete(longRangePlans).where(eq(longRangePlans.id, plan.id));
     }
   });
 });
