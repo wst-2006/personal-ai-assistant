@@ -145,6 +145,61 @@ test.describe("真实今日时间轴",()=>{
     }finally{await cleanup(request,ids);}
   });
 
+  test("三个重叠任务使用稳定可读车道，移动端在时间轴内部横向查看并保持可编辑",async({page,request})=>{
+    const ids:string[]=[];const suffix=Date.now().toString(36);const testDate=await isolatedDate(request);
+    const titles=[`E2E 三车道 A ${suffix}`,`E2E 三车道 B ${suffix}`,`E2E 三车道 C ${suffix}`];
+    try{
+      await page.goto("/");
+      await page.getByLabel("时间轴日期").fill(testDate);
+      const first=await createExactTask(page,titles[0]!,"13:00","14:00");ids.push(first.id);
+      const second=await createExactTask(page,titles[1]!,"13:00","14:00",async(dialog)=>{
+        await expect(dialog).toContainText(titles[0]!);
+        await dialog.getByRole("button",{name:"明确保留全部冲突"}).click();
+      });ids.push(second.id);
+      const third=await createExactTask(page,titles[2]!,"13:00","14:00",async(dialog)=>{
+        await expect(dialog.locator("li")).toHaveCount(2);
+        await expect(dialog).toContainText(titles[0]!);
+        await expect(dialog).toContainText(titles[1]!);
+        await dialog.getByRole("button",{name:"明确保留全部冲突"}).click();
+      });ids.push(third.id);
+
+      const blocks=ids.map(id=>page.locator(`[data-task-id="${id}"]`));
+      const initialLanes=new Map<string,string>();
+      for(let index=0;index<blocks.length;index+=1){
+        await expect(blocks[index]!).toHaveAttribute("data-lane-count","3");
+        const lane=await blocks[index]!.getAttribute("data-lane-index");
+        expect(lane).not.toBeNull();
+        initialLanes.set(ids[index]!,lane!);
+        await expect(blocks[index]!).toContainText(`冲突车道 ${lane}/3`);
+      }
+      expect(new Set(initialLanes.values())).toEqual(new Set(["1","2","3"]));
+      const boxes=await Promise.all(blocks.map(block=>block.boundingBox()));
+      expect(boxes.every(Boolean)).toBe(true);
+      const sortedBoxes=boxes.filter((box):box is NonNullable<typeof box>=>box!==null).sort((left,right)=>left.x-right.x);
+      expect(sortedBoxes[0]!.x+sortedBoxes[0]!.width).toBeLessThanOrEqual(sortedBoxes[1]!.x+1);
+      expect(sortedBoxes[1]!.x+sortedBoxes[1]!.width).toBeLessThanOrEqual(sortedBoxes[2]!.x+1);
+
+      await page.reload();
+      await page.getByLabel("时间轴日期").fill(testDate);
+      for(let index=0;index<ids.length;index+=1){
+        await expect(page.locator(`[data-task-id="${ids[index]}"]`)).toHaveAttribute("data-lane-index",initialLanes.get(ids[index]!)!);
+      }
+
+      await page.setViewportSize({width:390,height:844});
+      await page.reload();
+      await page.getByLabel("时间轴日期").fill(testDate);
+      const scrollMetrics=await page.locator(".day-scroll").evaluate(element=>({scrollWidth:element.scrollWidth,clientWidth:element.clientWidth}));
+      expect(scrollMetrics.scrollWidth).toBeGreaterThan(scrollMetrics.clientWidth);
+      expect(await page.evaluate(()=>document.documentElement.scrollWidth<=document.documentElement.clientWidth)).toBe(true);
+      const thirdBlock=page.locator(`[data-task-id="${third.id}"]`);
+      await thirdBlock.scrollIntoViewIfNeeded();
+      await thirdBlock.getByRole("button",{name:`打开 ${titles[2]} 的任务操作`}).click();
+      await thirdBlock.getByRole("button",{name:"编辑任务",exact:true}).click();
+      await expect(page.getByRole("dialog",{name:"让这项安排足够清楚"})).toBeVisible();
+      await expect(page.getByLabel("任务标题")).toHaveValue(titles[2]!);
+    }finally{await cleanup(request,ids);}
+  });
+
   test("点击空白时间以 30 分钟默认块创建并持久化",async({page,request})=>{
     const ids:string[]=[];const title=`E2E 空白创建 ${Date.now().toString(36)}`;const testDate=await isolatedDate(request);
     try{
