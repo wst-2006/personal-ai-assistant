@@ -41,6 +41,11 @@ describe("GrowthService", () => {
       expect(summary.radar.find((metric) => metric.key === "mainlineProgress")).toMatchObject({ value: 90, sampleDays: 1, source: "system" });
       expect(summary.radar.find((metric) => metric.key === "energyState")).toMatchObject({ value: 80, sampleDays: 1, source: "user" });
       expect(summary.garden.quality).toBe(70);
+      const annual = await new GrowthService(connection.db).getSummary(localDate, 365);
+      expect(annual.days).toHaveLength(365);
+      expect(annual.focusTrend.granularity).toBe("month");
+      expect(annual.focusTrend.points.length).toBeGreaterThanOrEqual(12);
+      expect(annual.focusTrend.points.length).toBeLessThanOrEqual(13);
     } finally {
       await connection.db.delete(taskFeedback).where(eq(taskFeedback.id, ids.feedback));
       await connection.db.delete(taskOutcomes).where(eq(taskOutcomes.id, ids.outcome));

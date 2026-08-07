@@ -294,18 +294,27 @@ textarea, input, select { width: 100%; min-width: 0; border: 1px solid #ccd8d0; 
 .health-manual-editor { display: grid; gap: 14px; margin-top: 18px; padding: 20px; border: 1px solid #c8d9d0; border-radius: var(--radius-md); background: #f4faf6; }.health-manual-editor > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }.health-manual-editor h2 { margin: 3px 0 6px; color: var(--ink-900); font-size: 22px; }.health-manual-editor small { display: block; max-width: 620px; color: var(--ink-500); line-height: 1.55; }.health-manual-editor > label, .health-manual-day-fields > label { display: grid; gap: 6px; color: var(--ink-700); font-size: 11px; font-weight: 700; }.health-manual-editor textarea, .health-manual-editor input, .health-manual-editor select { width: 100%; padding: 9px 10px; border: 1px solid #cbd9cf; border-radius: 5px; color: var(--ink-900); background: #fff; font: inherit; }.health-manual-editor textarea { resize: vertical; line-height: 1.5; }.health-manual-days { display: grid; grid-template-columns: repeat(7,minmax(0,1fr)); gap: 7px; }.health-manual-days button { display: grid; min-height: 54px; align-content: center; gap: 3px; border: 1px solid var(--line); border-radius: 5px; color: var(--ink-500); background: rgba(255,255,255,.72); }.health-manual-days button.active { border-color: #397760; color: #155b45; background: #e4f2e8; }.health-manual-days span { font-size: 10px; }.health-manual-days strong { font-size: 14px; }.health-manual-day-fields { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }.health-manual-day-fields .wide { grid-column: 1/-1; }.health-manual-day-fields .health-checkbox { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 8px 10px; border: 1px solid #cbd9cf; border-radius: 5px; background: #fff; cursor: pointer; }.health-manual-day-fields .health-checkbox input { width: 15px; height: 15px; margin: 0; accent-color: #397760; }.health-manual-editor footer { display: flex; justify-content: flex-end; }.health-manual-editor footer button { min-width: 174px; }
 @media (max-width: 600px) { .health-manual-editor { padding: 17px; }.health-manual-editor > header { flex-direction: column; }.health-manual-editor > header .quiet-button, .health-manual-editor footer .primary-button { width: 100%; }.health-manual-days { gap: 4px; }.health-manual-days button { min-height: 50px; }.health-manual-day-fields { grid-template-columns: 1fr; }.health-manual-day-fields .wide { grid-column: auto; }.health-manual-editor footer { justify-content: stretch; } }
 
-.growth-range-switch { display: inline-grid; grid-template-columns: repeat(2, auto); gap: 3px; padding: 3px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.55); }
+.growth-range-switch { display: inline-grid; grid-template-columns: repeat(4, auto); gap: 3px; padding: 3px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.55); }
 .growth-range-switch button { min-height: 32px; padding: 0 10px; border: 0; border-radius: 5px; color: var(--ink-500); background: transparent; font-size: 11px; }
 .growth-range-switch button[aria-pressed="true"] { color: #f4fff9; background: var(--ink-800); }
-.bar-chart.month-chart { grid-template-columns: repeat(15,minmax(0,1fr)); gap: 3px; }
-.bar-chart.month-chart .bar-day { font-size: 8px; }
-.bar-chart.month-chart .bar-day strong { font-size: 8px; }
-.bar-chart.month-chart .bar-track { padding: 2px; border-radius: 3px; }
+.focus-line-chart { display: grid; gap: 8px; margin-top: 16px; }
+.focus-line-chart svg { display: block; width: 100%; min-height: 180px; overflow: visible; }
+.focus-line-grid line { stroke: #dbe5dd; stroke-width: 1; }
+.focus-line-grid text { fill: var(--ink-500); font-size: 10px; text-anchor: end; }
+.focus-line-path { fill: none; stroke: var(--mint-500); stroke-linecap: round; stroke-linejoin: round; stroke-width: 4; }
+.focus-line-point circle { fill: #f7faf6; stroke: var(--mint-700); stroke-width: 3; }
+.focus-line-label { fill: var(--ink-500); font-size: 10px; text-anchor: middle; }
+.focus-line-chart > p { margin: 0; color: var(--ink-500); font-size: 10px; line-height: 1.5; }
 .state-grid.month-state-grid { grid-template-columns: repeat(10,minmax(0,1fr)); gap: 5px; margin-top: 28px; }
 .state-grid.month-state-grid .state-cell { min-height: 58px; padding: 5px; font-size: 9px; }
 .state-grid.month-state-grid .state-cell strong { font-size: 9px; }
 .state-grid.month-state-grid .state-cell small { font-size: 8px; }
-@media (max-width: 760px) { .growth-range-switch { width: 100%; }.growth-range-switch button { flex: 1; }.bar-chart.month-chart { grid-template-columns: repeat(15,minmax(0,1fr)); gap: 2px; }.state-grid.month-state-grid { grid-template-columns: repeat(7,minmax(0,1fr)); gap: 4px; }.state-grid.month-state-grid .state-cell { min-height: 54px; } }
+.state-heatmap-scroll { max-width: 100%; margin-top: 18px; overflow-x: auto; padding: 2px 0 8px; scrollbar-color: #aac7b7 transparent; }
+.state-grid.compact-state-grid { display: grid; width: max-content; min-width: 100%; grid-template-rows: repeat(7,12px); grid-auto-flow: column; grid-auto-columns: 12px; gap: 4px; margin: 0; }
+.compact-state-grid .state-cell, .compact-state-grid .state-cell-placeholder { display: block; width: 12px; min-height: 12px; padding: 0; border-radius: 3px; }
+.compact-state-grid .state-cell { outline: 1px solid rgba(50,75,63,.04); }
+.compact-state-grid .state-cell-placeholder { visibility: hidden; }
+@media (max-width: 760px) { .growth-range-switch { width: 100%; grid-template-columns: repeat(2,minmax(0,1fr)); }.growth-range-switch button { width: 100%; padding-inline: 7px; }.focus-line-chart svg { min-height: 150px; }.focus-line-label { font-size: 9px; }.state-grid.month-state-grid { grid-template-columns: repeat(7,minmax(0,1fr)); gap: 4px; }.state-grid.month-state-grid .state-cell { min-height: 54px; }.state-grid.compact-state-grid { grid-template-rows: repeat(7,10px); grid-auto-columns: 10px; gap: 3px; }.compact-state-grid .state-cell, .compact-state-grid .state-cell-placeholder { width: 10px; min-height: 10px; border-radius: 2px; } }
 
 .conversation-thread { display: grid; gap: 8px; max-height: min(38vh,320px); margin-top: 20px; overflow-y: auto; padding: 12px; border: 1px solid #cfdfd6; border-radius: var(--radius-sm); background: #f5faf7; scrollbar-color: #a9cabb transparent; }
 .conversation-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; }

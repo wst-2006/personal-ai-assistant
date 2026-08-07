@@ -5,6 +5,7 @@ import { cyberDiaries, focusSessions, reviewMessages, reviewSessions, taskFeedba
 import { buildDiaryDayData, type DailyStateTone } from "./diary-service.js";
 
 type RadarKey = "mainlineProgress" | "overallExecution" | "focusQuality" | "energyState" | "wellbeing" | "growthGain";
+export type GrowthWindowDays = 7 | 30 | 90 | 365;
 type Day = {
   localDate: string;
   focusMinutes: number;
@@ -31,10 +32,33 @@ function average(values: number[]) {
   return values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : null;
 }
 
+function weekKey(localDate: string) {
+  const date = new Date(`${localDate}T00:00:00.000Z`);
+  const day = date.getUTCDay();
+  date.setUTCDate(date.getUTCDate() - (day === 0 ? 6 : day - 1));
+  return date.toISOString().slice(0, 10);
+}
+
+function buildFocusTrend(days: Day[], dayCount: GrowthWindowDays) {
+  const granularity = dayCount === 365 ? "month" : dayCount === 90 ? "week" : "day";
+  const buckets = new Map<string, { startDate: string; endDate: string; focusMinutes: number }>();
+  for (const day of days) {
+    const key = granularity === "month" ? day.localDate.slice(0, 7) : granularity === "week" ? weekKey(day.localDate) : day.localDate;
+    const bucket = buckets.get(key);
+    if (bucket) {
+      bucket.endDate = day.localDate;
+      bucket.focusMinutes += day.focusMinutes;
+    } else {
+      buckets.set(key, { startDate: day.localDate, endDate: day.localDate, focusMinutes: day.focusMinutes });
+    }
+  }
+  return { granularity, points: [...buckets.values()] };
+}
+
 export class GrowthService {
   constructor(private readonly db: AppDatabase) {}
 
-  async getSummary(endLocalDate: string, dayCount: 7 | 30 = 7) {
+  async getSummary(endLocalDate: string, dayCount: GrowthWindowDays = 7) {
     const dates = datesEndingAt(endLocalDate, dayCount);
     const start = dates[0]!;
     const taskRows = await this.db.select().from(tasks).where(and(isNull(tasks.deletedAt), gte(tasks.localDate, start), lte(tasks.localDate, endLocalDate)));
@@ -110,6 +134,7 @@ export class GrowthService {
     return {
       range: { start, end: endLocalDate },
       days: days.map(({ radar: _radar, points: _points, hasData: _hasData, ...day }) => day),
+      focusTrend: buildFocusTrend(days, dayCount),
       focusMinutes,
       plannedTasks,
       closedTasks,
