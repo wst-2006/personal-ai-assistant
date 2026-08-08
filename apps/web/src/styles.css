@@ -359,3 +359,10 @@ textarea, input, select { width: 100%; min-width: 0; border: 1px solid #ccd8d0; 
 .plan-change-form-note strong { color: #276956; font-size: 12px; }
 .plan-change-form-note p { margin: 5px 0; color: var(--ink-700); font-size: 12px; line-height: 1.55; }
 .plan-change-form-note small { color: var(--ink-500); font-size: 10px; line-height: 1.5; }
+
+.sleep-dropzone { padding: 14px 16px; cursor: text; }
+.sleep-dropzone > span { flex: 1 1 auto; }
+.sleep-file-picker { flex: 0 0 auto; padding: 7px 9px; border: 1px solid #c6dacf; border-radius: 4px; color: #2f6d43; background: #f5faf6; font-size: 11px; cursor: pointer; }
+.sleep-file-picker:hover, .sleep-file-picker:focus-visible { border-color: #2f7a4b; background: #e4f0e7; outline: none; }
+.sleep-file-picker:disabled, .sleep-dropzone[aria-disabled="true"] { cursor: not-allowed; opacity: .55; }
+@media (max-width: 600px) { .sleep-dropzone { align-items: flex-start; flex-wrap: wrap; }.sleep-file-picker { margin-left: 34px; } }
