@@ -42,8 +42,11 @@ copies are out of the current implementation scope.
 
 ## External Integrations
 
-DeepSeek is called only by the API. Search results and weather responses are
-normalized and stored with source metadata before a brief is composed. Feishu
+DeepSeek text models are called only by the API. Image analysis uses a separate
+OpenAI-compatible vision adapter with its own server-only endpoint, model and
+credential; screenshot extraction never receives the user's personal profile.
+Search results and weather responses are normalized and stored with source
+metadata before a brief is composed. Feishu
 uses its official long connection for local inbound text/card events and
 outbound reminders; an encrypted HTTP callback remains an explicit fallback
 for card actions only. Inbound text is first stored as a deduplicated candidate

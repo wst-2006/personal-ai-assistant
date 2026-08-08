@@ -21,7 +21,8 @@ import { FeishuWebhookService, loadFeishuWebhookConfig } from "./feishu-webhook.
 import { BackupService } from "./backup-service.js";
 import { HealthService } from "./health-service.js";
 import { DeepSeekHealthPlanner } from "./ai/health-planner.js";
-import { DeepSeekSleepImageAnalyzer } from "./ai/sleep-image-analyzer.js";
+import { OpenAiCompatibleSleepImageAnalyzer } from "./ai/sleep-image-analyzer.js";
+import { loadVisionConfig } from "./ai/vision-config.js";
 import { LongRangePlanService } from "./long-range-plan-service.js";
 import { LongRangeTaskTreeService } from "./long-range-task-tree-service.js";
 import { DeepSeekLongRangeTaskTreePlanner } from "./ai/long-range-task-tree-planner.js";
@@ -46,6 +47,7 @@ const feishuIntakeConfig = loadFeishuIntakeConfig(process.env);
 const feishuWebhookConfig = loadFeishuWebhookConfig(process.env);
 const feishuLongConnectionConfig = loadFeishuLongConnectionConfig(process.env);
 const deepSeekConfig = loadDeepSeekConfig();
+const visionConfig = loadVisionConfig();
 const feishuIntake = feishuIntakeConfig
   ? new FeishuIntakeService(feishuIntakeConfig, database.db, taskService, new DeepSeekTaskParser(deepSeekConfig, userProfileService))
   : null;
@@ -68,8 +70,8 @@ const app = buildApp({
   backupService: new BackupService(database.db),
   healthService: new HealthService(database.db),
   healthPlanner: new DeepSeekHealthPlanner(deepSeekConfig, userProfileService),
-  sleepImageAnalyzer: deepSeekConfig.DEEPSEEK_VISION_MODEL
-    ? new DeepSeekSleepImageAnalyzer(deepSeekConfig, userProfileService)
+  sleepImageAnalyzer: visionConfig
+    ? new OpenAiCompatibleSleepImageAnalyzer(visionConfig)
     : undefined,
   longRangePlanService: new LongRangePlanService(database.db),
   longRangeTaskTreeService: new LongRangeTaskTreeService(database.db),

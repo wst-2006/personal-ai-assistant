@@ -6,7 +6,6 @@ const config: DeepSeekConfig = {
   DEEPSEEK_API_KEY: "test-key",
   DEEPSEEK_BASE_URL: "https://api.deepseek.com",
   DEEPSEEK_MODEL: "deepseek-v4-flash",
-  DEEPSEEK_VISION_MODEL: undefined,
   DEEPSEEK_TIMEOUT_MS: 30_000,
   DEEPSEEK_MAX_RETRIES: 0,
   DEEPSEEK_MAX_OUTPUT_TOKENS: 1_200,

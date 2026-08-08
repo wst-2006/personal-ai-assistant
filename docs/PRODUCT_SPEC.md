@@ -101,6 +101,9 @@ creates search-backed daily briefs when explicitly requested.
   active week, to that active plan ID/version. A stale candidate cannot replace
   newer profile or plan data. Sleep screenshot analysis is opt-in and reports
   an explicit unavailable state when no verified vision model is configured.
+  It uses an independent replaceable vision adapter and receives only the
+  user-selected date, file metadata and uploaded screenshot. Personal profile
+  and AI collaboration guidance are excluded from screenshot extraction.
 - The product does not monitor user behavior, mood, camera, microphone, or
   external AI history. It does not perform personality analysis.
 
