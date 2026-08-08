@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type FormEvent } from "react";
 import { Check, ChevronLeft, ChevronRight, ClipboardPenLine, HeartPulse, Leaf, LoaderCircle, MapPin, MessageCircleQuestion, Sparkles, Upload, X } from "lucide-react";
 
 type Profile = {
@@ -165,9 +165,11 @@ export function HealthWorkspace({ onAskHealth, onCreateTask }:{
   const [error, setError] = useState<string | null>(null);
   const [sleepAnalyses, setSleepAnalyses] = useState<SleepAnalysis[]>([]);
   const [sleepFile, setSleepFile] = useState<File | null>(null);
+  const [sleepDropActive, setSleepDropActive] = useState(false);
   const [manualDraft, setManualDraft] = useState<ManualPlanDraft | null>(null);
   const [sleepImageAnalysisAvailable, setSleepImageAnalysisAvailable] = useState<boolean | null>(null);
   const autoCandidateRequested = useRef<string | null>(null);
+  const sleepFileInputRef = useRef<HTMLInputElement | null>(null);
   const visiblePlan = candidate ?? active;
   const selectedReference = visiblePlan?.days[selectedDay] ?? null;
   const sleepDate = selectedReference?.localDate ?? shanghaiDate();
@@ -337,6 +339,46 @@ export function HealthWorkspace({ onAskHealth, onCreateTask }:{
       const code = requestError instanceof Error ? (requestError as ApiError).body?.error : undefined;
       setError(code === "sleep_image_analysis_unavailable" ? "视觉分析暂时不可用，原图和分析结果都没有保存。" : "这张截图无法读取，原图和分析结果都没有保存。");
     } finally { setBusy(false); }
+  }
+
+  function selectSleepFile(file: File | null) {
+    if (!file) return;
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || file.size > 6 * 1024 * 1024) {
+      setSleepFile(null);
+      setError("请选择不超过 6 MB 的 PNG、JPG 或 WebP 睡眠截图。");
+      return;
+    }
+    const extension = file.type === "image/jpeg" ? "jpg" : file.type.split("/")[1];
+    const namedFile = file.name.trim() ? file : new File([file], `sleep-${sleepDate}.${extension}`, { type: file.type, lastModified: file.lastModified });
+    setSleepFile(namedFile);
+    setError(null);
+  }
+
+  function transferredImage(files: FileList | File[]): File | null {
+    return Array.from(files).find((file) => ["image/png", "image/jpeg", "image/webp"].includes(file.type)) ?? null;
+  }
+
+  function handleSleepDrop(event: DragEvent<HTMLButtonElement>) {
+    event.preventDefault();
+    setSleepDropActive(false);
+    if (sleepImageAnalysisAvailable === false) return;
+    const file = transferredImage(event.dataTransfer.files);
+    if (!file) {
+      setError("拖入内容中没有可用的 PNG、JPG 或 WebP 图片。");
+      return;
+    }
+    selectSleepFile(file);
+  }
+
+  function handleSleepPaste(event: ClipboardEvent<HTMLButtonElement>) {
+    if (sleepImageAnalysisAvailable === false) return;
+    const file = transferredImage(event.clipboardData.files);
+    if (!file) {
+      setError("剪贴板中没有可用的 PNG、JPG 或 WebP 图片。");
+      return;
+    }
+    event.preventDefault();
+    selectSleepFile(file);
   }
 
   async function createSleepRevisionCandidate(record: SleepAnalysis) {
@@ -512,7 +554,7 @@ export function HealthWorkspace({ onAskHealth, onCreateTask }:{
         <section className="health-supplements"><p className="section-kicker">补充剂参考</p>{visiblePlan.supplements.map((item) => <p key={item}>{item}</p>)}</section>
       </section> : <div className="health-empty"><HeartPulse /><strong>健康资料已准备好后，会在这里生成一份待你确认的本周参考。</strong></div>}
       <section className="health-sleep-card">
-        <header><div><p className="section-kicker">睡眠截图</p><h2>只读取你主动上传的这一张。</h2><small>只分析截图中实际出现的时间、时长、阶段、设备评分和说明；原图不会保存，也不会自动修改健康资料或本周参考。</small>{sleepImageAnalysisAvailable === false && <p className="health-capability-note">当前未配置经过验证的视觉模型，因此截图分析暂不可用；健康资料、周参考和手动修订不受影响。</p>}</div><div className="health-sleep-actions"><label className={`sleep-upload-control ${sleepImageAnalysisAvailable === false ? "disabled" : ""}`}><Upload /><span>{sleepFile ? sleepFile.name : "选择截图"}</span><input aria-label="选择睡眠截图" disabled={sleepImageAnalysisAvailable === false} type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => setSleepFile(event.target.files?.[0] ?? null)} /></label><button className="primary-button" type="button" disabled={busy || !sleepFile || sleepImageAnalysisAvailable === false} onClick={() => void analyzeSleepScreenshot()}>{busy ? <LoaderCircle className="spin" /> : <Sparkles />}上传并分析</button></div></header>
+        <header><div><p className="section-kicker">睡眠截图</p><h2>只读取你主动上传的这一张。</h2><small>只分析截图中实际出现的时间、时长、阶段、设备评分和说明；原图不会保存，也不会自动修改健康资料或本周参考。</small>{sleepImageAnalysisAvailable === false && <p className="health-capability-note">当前未配置经过验证的视觉模型，因此截图分析暂不可用；健康资料、周参考和手动修订不受影响。</p>}</div><div className="health-sleep-actions"><input ref={sleepFileInputRef} className="sleep-file-input" aria-label="选择睡眠截图" disabled={sleepImageAnalysisAvailable === false} type="file" accept="image/png,image/jpeg,image/webp" onChange={(event) => { selectSleepFile(event.target.files?.[0] ?? null); event.currentTarget.value = ""; }} /><div className="sleep-drop-shell"><button data-testid="sleep-dropzone" className={`sleep-dropzone ${sleepDropActive ? "drag-active" : ""} ${sleepFile ? "has-file" : ""}`} type="button" disabled={sleepImageAnalysisAvailable === false} onClick={() => sleepFileInputRef.current?.click()} onDragEnter={(event) => { event.preventDefault(); setSleepDropActive(true); }} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; setSleepDropActive(true); }} onDragLeave={() => setSleepDropActive(false)} onDrop={handleSleepDrop} onPaste={handleSleepPaste}><Upload /><span><strong>{sleepFile ? sleepFile.name : "拖入或粘贴睡眠截图"}</strong><small>{sleepFile ? "已选择，点击可更换图片" : "点击选择，或聚焦此处后按 Ctrl+V"}</small></span></button>{sleepFile && <button className="sleep-file-clear" type="button" aria-label="移除已选择的睡眠截图" onClick={() => setSleepFile(null)}><X /></button>}</div><button className="primary-button" type="button" disabled={busy || !sleepFile || sleepImageAnalysisAvailable === false} onClick={() => void analyzeSleepScreenshot()}>{busy ? <LoaderCircle className="spin" /> : <Sparkles />}上传并分析</button></div></header>
         {sleepAnalyses.length === 0 ? <p className="health-sleep-empty">{sleepDate} 还没有已保存的截图分析。</p> : <div className="health-sleep-results">{sleepAnalyses.map((record) => <article key={record.id}><div className="health-sleep-result-head"><strong>{record.localDate}</strong><small>{record.originalFileName} · {new Date(record.createdAt).toLocaleString("zh-CN")}</small></div><div className="sleep-metrics">{sleepMetric("总睡眠", record.analysis.totalSleepMinutes, " 分钟")}{sleepMetric("深睡", record.analysis.deepSleepMinutes, " 分钟")}{sleepMetric("浅睡", record.analysis.lightSleepMinutes, " 分钟")}{sleepMetric("快速眼动", record.analysis.remSleepMinutes, " 分钟")}{sleepMetric("清醒次数", record.analysis.awakeCount)}{sleepMetric("设备评分", record.analysis.deviceScore, " / 100")}{sleepMetric("入睡", record.analysis.sleepStart)}{sleepMetric("起床", record.analysis.wakeTime)}</div>{record.analysis.deviceNotes && <p>{record.analysis.deviceNotes}</p>}<ul>{record.analysis.interpretation.map((item) => <li key={item}>{item}</li>)}</ul>{active && !candidate && <button className="quiet-button sleep-revision-button" type="button" disabled={busy} onClick={() => void createSleepRevisionCandidate(record)}><Sparkles />根据这次睡眠生成修订候选</button>}<small className="health-sleep-limitations">{record.analysis.limitations.join(" ")}</small></article>)}</div>}
       </section>
     </>}

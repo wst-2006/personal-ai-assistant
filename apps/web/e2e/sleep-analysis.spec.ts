@@ -28,7 +28,21 @@ test("用户主动上传睡眠截图后只显示结构化可见结果", async ({
   await page.goto("/");
   await page.getByRole("button", { name: "健康", exact: true }).click();
   await expect(page.getByText("睡眠截图", { exact: true })).toBeVisible();
-  await page.getByLabel("选择睡眠截图").setInputFiles({ name: "huawei-sleep.png", mimeType: "image/png", buffer: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]) });
+  await page.getByTestId("sleep-dropzone").evaluate((target) => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])], "dropped-sleep.png", { type: "image/png" }));
+    target.dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer: transfer }));
+  });
+  await expect(page.getByText("dropped-sleep.png", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "移除已选择的睡眠截图" }).click();
+  await page.getByTestId("sleep-dropzone").focus();
+  await page.getByTestId("sleep-dropzone").evaluate((target) => {
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])], "huawei-sleep.png", { type: "image/png" }));
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", { value: transfer });
+    target.dispatchEvent(event);
+  });
   await expect(page.getByText("huawei-sleep.png", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "上传并分析", exact: true }).click();
   await expect(page.getByText("总睡眠", { exact: true })).toBeVisible();
