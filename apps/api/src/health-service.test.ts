@@ -13,22 +13,30 @@ afterAll(async () => { await connection.client.end(); });
 describe("health reference persistence", () => {
   it("creates a read-only candidate, confirms it explicitly, and keeps seven independent daily references", async () => {
     const candidate = await service.createTemplateCandidate("2099-01-04", "本周有一次长途出行");
+    let replacementId: string | null = null;
     try {
       expect(candidate.plan.state).toBe("candidate");
       expect(candidate.plan.source).toBe("template");
       expect(candidate.days).toHaveLength(7);
       expect(candidate.days[0]?.content).toMatchObject({ proteinRangeGrams: { minimum: 90, maximum: 120 } });
 
-      const confirmed = await service.confirm(candidate.plan.id, candidate.plan.version);
+      const replacement = await service.createTemplateCandidate("2099-01-04", "改为最新的待确认参考");
+      replacementId = replacement.plan.id;
+      expect((await service.getWeek("2099-01-04")).candidate?.plan.id).toBe(replacement.plan.id);
+      const [cancelledOld] = await connection.db.select().from(healthWeekPlans).where(eq(healthWeekPlans.id, candidate.plan.id));
+      expect(cancelledOld?.state).toBe("cancelled");
+
+      const confirmed = await service.confirm(replacement.plan.id, replacement.plan.version);
       expect(confirmed.plan.state).toBe("active");
       const restored = await service.getWeek("2099-01-04");
-      expect(restored.active?.plan.id).toBe(candidate.plan.id);
+      expect(restored.active?.plan.id).toBe(replacement.plan.id);
       expect(restored.active?.days).toHaveLength(7);
       expect(restored.candidate).toBeNull();
     } finally {
       await connection.db.transaction(async (transaction) => {
-        await transaction.delete(healthDailyReferences).where(eq(healthDailyReferences.healthWeekPlanId, candidate.plan.id));
-        await transaction.delete(healthWeekPlans).where(eq(healthWeekPlans.id, candidate.plan.id));
+        const planIds = [candidate.plan.id, ...(replacementId ? [replacementId] : [])];
+        await transaction.delete(healthDailyReferences).where(inArray(healthDailyReferences.healthWeekPlanId, planIds));
+        await transaction.delete(healthWeekPlans).where(inArray(healthWeekPlans.id, planIds));
       });
     }
   });

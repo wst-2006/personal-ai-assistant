@@ -55,9 +55,23 @@ describe("focus structure persistence", () => {
       ["focus", 55], ["break", 5]
     ]);
 
-    const active = await service.confirm(candidate.structure.id, candidate.structure.version, task.version, task.scheduleRevision);
+    const replacement = await service.createCandidate({
+      taskId,
+      taskVersion: task.version,
+      taskScheduleRevision: task.scheduleRevision,
+      source: "manual",
+      mode: "continuous",
+      totalStartAt: task.startAt!.toISOString(),
+      totalEndAt: task.endAt!.toISOString(),
+      breakMinutes: 5
+    });
+    expect((await service.list(taskId)).find((item) => item.structure.id === candidate.structure.id)?.structure.state)
+      .toBe("cancelled");
+
+    const active = await service.confirm(replacement.structure.id, replacement.structure.version, task.version, task.scheduleRevision);
     expect(active.structure.state).toBe("active");
     expect(active.structure.version).toBe(2);
+    expect((await service.list(taskId)).filter((item) => item.structure.state === "candidate")).toHaveLength(0);
   });
 
   it("rejects a candidate when the task schedule revision changed", async () => {

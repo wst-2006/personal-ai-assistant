@@ -111,7 +111,7 @@ export class HealthService {
       solarTerm,
       specialContext,
       source: "template",
-      content: buildTemplateHealthPlan(profile, scheduledActivities, solarTerm, specialContext),
+      content: buildTemplateHealthPlan(profile, weekStart, scheduledActivities, solarTerm, specialContext),
       basedOnPlanId: basePlan?.plan.id,
       basedOnPlanVersion: basePlan?.plan.version,
       revisionReason: basePlan ? "基于当前生效版本生成基础修订候选；确认前，原本周参考保持不变。" : undefined
@@ -312,6 +312,9 @@ export class HealthService {
       const profile = await this.requireProfile(transaction);
       if (profile.version !== input.profileVersion) throw new HealthProfileVersionConflictError(profile);
       const now = new Date();
+      await transaction.update(healthWeekPlans).set({
+        state: "cancelled", cancelledAt: now, version: sql`${healthWeekPlans.version} + 1`, updatedAt: now
+      }).where(and(eq(healthWeekPlans.weekStart, input.weekStart), eq(healthWeekPlans.state, "candidate")));
       const [plan] = await transaction.insert(healthWeekPlans).values({
         id: randomUUID(), weekStart: input.weekStart, state: "candidate", source: input.source, profileVersion: input.profileVersion,
         city: input.city, solarTerm: input.solarTerm, specialContext: input.specialContext,
@@ -396,36 +399,79 @@ function decodeSleepImage(input: SleepImageAnalysisRequest): { bytes: Buffer } {
 
 function buildTemplateHealthPlan(
   profile: HealthProfile,
+  weekStart: string,
   activities: Array<{ localDate: string; title: string }>,
   solarTerm: string,
   specialContext: string | null
 ): HealthPlanContent {
-  const base = ["strength", "recovery", "volleyball", "rest", "cycling", "strength", "running"] as const;
-  const defaults: Record<typeof base[number], HealthPlanContent["days"][number]["movement"]> = {
+  type MovementKind = HealthPlanContent["days"][number]["movement"]["category"];
+  const fallbackRotation: MovementKind[] = ["strength", "recovery", "volleyball", "rest", "cycling", "strength", "running"];
+  const preferred = [...new Set(profile.activity.preferredActivities.map(activityKindForText).filter((kind): kind is MovementKind => Boolean(kind) && kind !== "rest" && kind !== "recovery"))];
+  const trainingKinds = preferred.length > 0 ? preferred : fallbackRotation.filter((kind) => kind !== "rest" && kind !== "recovery");
+  const targetSessions = Math.min(7, profile.activity.sessionsPerWeek);
+  let trainingIndex = 0;
+  const base = Array.from({ length: 7 }, (_, index): MovementKind => {
+    if (trainingIndex < targetSessions && ![1, 3].includes(index)) return trainingKinds[trainingIndex++ % trainingKinds.length]!;
+    return index === 3 || targetSessions === 0 ? "rest" : "recovery";
+  });
+  while (trainingIndex < targetSessions) {
+    const replacementIndex = base.findIndex((kind) => kind === "recovery" || kind === "rest");
+    if (replacementIndex < 0) break;
+    base[replacementIndex] = trainingKinds[trainingIndex++ % trainingKinds.length]!;
+  }
+  const considerations = profile.considerations.join("；");
+  const kneeSensitive = /膝|积液|半月板|髌/.test(considerations);
+  const neckSensitive = /颈|肩|肱骨|脊柱/.test(considerations);
+  const respiratorySensitive = /哮喘|呼吸|花粉|灰尘|过敏/.test(considerations);
+  const highRiskLimited = profile.activity.avoidHighRisk || kneeSensitive || respiratorySensitive;
+  const riskNotes = [
+    kneeSensitive ? "膝部有既往不适记录，跳跃、跑步或深屈膝动作只在舒适范围内进行。" : null,
+    neckSensitive ? "颈肩有既往不适记录，避免为了完成次数牺牲颈肩位置。" : null,
+    respiratorySensitive ? "有呼吸道或过敏相关记录，留意空气、花粉和灰尘环境；不适时停止。" : null
+  ].filter((note): note is string => Boolean(note)).join(" ");
+  const defaults: Record<MovementKind, HealthPlanContent["days"][number]["movement"]> = {
     strength: { category: "strength", durationMinutes: { minimum: 60, maximum: 90 }, intensity: "moderate", highIntensity: false, safetyReminder: "以动作稳定和舒适范围为先；颈肩或膝部不适时主动降低负荷。" },
     recovery: { category: "recovery", durationMinutes: { minimum: 20, maximum: 45 }, intensity: "low", highIntensity: false, safetyReminder: "以轻松活动和恢复为主，不把恢复日变成补课式训练。" },
-    volleyball: { category: "volleyball", durationMinutes: { minimum: 60, maximum: 120 }, intensity: "high", highIntensity: true, safetyReminder: "注意膝部反应和落地舒适度；不适时应停止并寻求专业建议。" },
+    volleyball: { category: "volleyball", durationMinutes: { minimum: 60, maximum: highRiskLimited ? 90 : 120 }, intensity: highRiskLimited ? "moderate" : "high", highIntensity: !highRiskLimited, safetyReminder: "注意膝部反应和落地舒适度；不适时应停止并寻求专业建议。" },
     rest: { category: "rest", durationMinutes: { minimum: 0, maximum: 0 }, intensity: "rest", highIntensity: false, safetyReminder: "休息日不需要补偿性训练，保持日常活动即可。" },
     cycling: { category: "cycling", durationMinutes: { minimum: 45, maximum: 90 }, intensity: "moderate", highIntensity: false, safetyReminder: "优先白天、熟悉且安全的路线；感觉膝部不适时缩短行程。" },
-    running: { category: "running", durationMinutes: { minimum: 30, maximum: 45 }, intensity: "moderate", highIntensity: false, safetyReminder: "以舒适、可对话的强度为参考；膝部不适时改为恢复活动。" }
+    running: { category: "running", durationMinutes: { minimum: 30, maximum: highRiskLimited ? 30 : 45 }, intensity: highRiskLimited ? "low" : "moderate", highIntensity: false, safetyReminder: "以舒适、可对话的强度为参考；膝部不适时改为恢复活动。" }
   };
   const vegetableSets = seasonalVegetableSets(solarTerm);
+  const dates = localDatesForHealthWeek(weekStart);
   const contextNote = specialContext ? ` 本周特别说明：${specialContext}` : "";
+  const locationCopy = profile.city ? `${profile.city}的` : "未设置城市，因此使用通用的";
+  const dislikedCopy = profile.food.dislikes.length > 0 ? ` 已避开偏好中不喜欢的${profile.food.dislikes.slice(0, 5).join("、")}。` : "";
+  const supplements = [
+    profile.supplements.current.length > 0
+      ? `当前已记录：${profile.supplements.current.slice(0, 5).join("、")}。先查看实际标签，避免重复成分。`
+      : "当前没有记录固定补充剂；本周参考不会自动添加。",
+    profile.supplements.considering.length > 0
+      ? `正在考虑的${profile.supplements.considering.slice(0, 5).join("、")}仍保持待讨论状态，不自动加入本周安排。`
+      : "没有待加入的补充剂；不因模板生成而新增。",
+    "未掌握产品含量、近期检查和药物情况时，不给出确定剂量；有疑问请咨询专业人士。"
+  ];
+  const commonFoodCopy = profile.food.commonFoods.length > 0
+    ? profile.food.commonFoods.slice(0, 5).join("、")
+    : "食堂或外卖中常见的肉、蛋、奶和豆制品";
   return {
-    overview: `本周以稳定增肌支持、恢复和不过度堆叠高强度为主。结合${profile.city ? ` ${profile.city}` : "当前城市未设置时的通用"}${solarTerm}时令与食堂或外卖场景，不需要称重或打卡；若有不适，请以安全和休息为先。${contextNote}`,
-    supplements: ["鱼油、多种维生素与维生素 D 仅作可选参考：先查看实际标签，避免重复成分。", "未掌握产品含量、近期检查和药物情况时，不给出确定剂量；有疑问请咨询专业人士。", "肌酸仍保持“未来可讨论”的状态，不自动加入本周安排。"],
+    overview: `本周参考围绕${profile.goals.join("、")}，按每周约 ${profile.activity.sessionsPerWeek} 次、单次 ${profile.activity.usualDurationMinutes.minimum}–${profile.activity.usualDurationMinutes.maximum} 分钟的个人习惯安排，并优先读取日程中已有运动任务。结合${locationCopy}${solarTerm}时令与“${profile.food.mealContext}”场景，不要求称重或打卡。${riskNotes ? ` ${riskNotes}` : ""}${contextNote}`,
+    supplements,
     days: base.map((kind, index) => {
-      const scheduled = activities.find((activity) => activity.localDate && includesActivity(activity.title, kind));
-      const movement = scheduled
-        ? { ...defaults[kind], safetyReminder: `${defaults[kind].safetyReminder} 已参考当天已有的“${scheduled.title}”安排。` }
-        : defaults[kind];
+      const scheduled = activities.find((activity) => activity.localDate === dates[index] && activityKindForText(activity.title));
+      const scheduledKind = scheduled ? activityKindForText(scheduled.title) : null;
+      const resolvedKind = scheduledKind ?? kind;
+      const movement = {
+        ...defaults[resolvedKind],
+        safetyReminder: `${defaults[resolvedKind].safetyReminder}${riskNotes ? ` ${riskNotes}` : ""}${scheduled ? ` 已参考当天已有的“${scheduled.title}”安排，不另行叠加同类训练。` : ""}`
+      };
       const highDay = movement.highIntensity;
       return {
         nutritionDirection: highDay
           ? "高强度日保持三餐餐盘完整，主食和主要蛋白质来源不要因忙碌而随意省略。"
           : "维持正常餐盘结构：每餐有主要蛋白质来源，午晚餐尽量搭配两类蔬菜。",
         proteinRangeGrams: { minimum: 90, maximum: 120 },
-        plateGuidance: ["早餐包含主食和一种蛋白质来源。", "午餐和晚餐优先一份主要蛋白质来源加两类蔬菜。", "不喜欢海鲜时，可从食堂常见肉、蛋、奶和豆制品中灵活选择。"],
+        plateGuidance: ["早餐包含主食和一种蛋白质来源。", "午餐和晚餐优先一份主要蛋白质来源加两类蔬菜。", `优先从${commonFoodCopy}中灵活选择。${dislikedCopy}`],
         seasonalVegetables: vegetableSets[index]!,
         movement
       };
@@ -433,12 +479,14 @@ function buildTemplateHealthPlan(
   };
 }
 
-function includesActivity(title: string, kind: string): boolean {
-  return (kind === "strength" && /力量|健身|训练/.test(title))
-    || (kind === "volleyball" && /排球/.test(title))
-    || (kind === "cycling" && /骑行/.test(title))
-    || (kind === "running" && /跑步|慢跑/.test(title))
-    || (kind === "recovery" && /恢复|拉伸|散步/.test(title));
+function activityKindForText(value: string): HealthPlanContent["days"][number]["movement"]["category"] | null {
+  if (/力量|健身|抗阻|器械/.test(value)) return "strength";
+  if (/排球/.test(value)) return "volleyball";
+  if (/骑行|自行车/.test(value)) return "cycling";
+  if (/跑步|慢跑/.test(value)) return "running";
+  if (/恢复|拉伸|散步|瑜伽/.test(value)) return "recovery";
+  if (/休息|休整/.test(value)) return "rest";
+  return null;
 }
 
 function seasonalVegetableSets(solarTerm: string): string[][] {

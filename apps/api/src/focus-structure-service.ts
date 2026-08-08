@@ -63,6 +63,18 @@ export class FocusStructureService {
           });
 
       const now = new Date();
+      // A task/schedule revision may have multiple still-visible candidates when
+      // the user asks for a new plan repeatedly. Keep the history, but make only
+      // the newest candidate actionable so a refresh cannot resurrect stale UI.
+      await transaction.update(focusStructures).set({
+        state: "cancelled",
+        version: sql`${focusStructures.version} + 1`,
+        updatedAt: now
+      }).where(and(
+        eq(focusStructures.taskId, task.id),
+        eq(focusStructures.taskScheduleRevision, task.scheduleRevision),
+        eq(focusStructures.state, "candidate")
+      ));
       const [structure] = await transaction.insert(focusStructures).values({
         id: randomUUID(),
         taskId: task.id,
@@ -168,6 +180,14 @@ export class FocusStructureService {
       await transaction.update(focusStructures).set({
         state: "superseded", supersededAt: now, version: sql`${focusStructures.version} + 1`, updatedAt: now
       }).where(and(eq(focusStructures.taskId, task.id), eq(focusStructures.state, "active"), ne(focusStructures.id, id)));
+      await transaction.update(focusStructures).set({
+        state: "cancelled", version: sql`${focusStructures.version} + 1`, updatedAt: now
+      }).where(and(
+        eq(focusStructures.taskId, task.id),
+        eq(focusStructures.taskScheduleRevision, task.scheduleRevision),
+        eq(focusStructures.state, "candidate"),
+        ne(focusStructures.id, id)
+      ));
       const [confirmed] = await transaction.update(focusStructures).set({
         state: "active", confirmedAt: now, version: current.structure.version + 1, updatedAt: now
       }).where(and(eq(focusStructures.id, id), eq(focusStructures.version, expectedVersion), eq(focusStructures.state, "candidate"))).returning();
