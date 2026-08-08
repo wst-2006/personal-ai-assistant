@@ -1,3 +1,5 @@
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
@@ -71,6 +73,12 @@ impl LocalRuntime {
                 user_env.display()
             ));
         }
+
+        // A previous release accidentally exposed the desktop process's console.
+        // If that console was closed, its API and worker children could survive and
+        // occupy the local API port. Reap only orphaned children from this exact
+        // bundled runtime; never touch a source-tree API or another application.
+        recover_orphaned_bundled_runtime(&node);
 
         if local_api_port_is_in_use()? {
             return Err(
@@ -292,12 +300,135 @@ fn configure_command(command: &mut Command) {
 #[cfg(not(windows))]
 fn configure_command(_command: &mut Command) {}
 
+#[cfg(windows)]
+fn recover_orphaned_bundled_runtime(node: &Path) {
+    let Ok(recovered) = reap_orphaned_bundled_nodes(node) else {
+        return;
+    };
+    if recovered == 0 {
+        return;
+    }
+
+    // Give Windows a brief moment to release port 3000 before the normal guard
+    // checks it. This only follows termination of this app's own orphaned nodes.
+    for _ in 0..10 {
+        if !local_api_port_is_in_use().unwrap_or(true) {
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
+#[cfg(not(windows))]
+fn recover_orphaned_bundled_runtime(_node: &Path) {}
+
+#[cfg(windows)]
+fn reap_orphaned_bundled_nodes(node: &Path) -> Result<usize, String> {
+    use std::mem::zeroed;
+    use windows_sys::Win32::{
+        Foundation::{CloseHandle, INVALID_HANDLE_VALUE},
+        System::{
+            Diagnostics::ToolHelp::{
+                CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+                TH32CS_SNAPPROCESS,
+            },
+            Threading::{
+                OpenProcess, QueryFullProcessImageNameW, TerminateProcess,
+                PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
+            },
+        },
+    };
+
+    let expected_node = fs::canonicalize(node)
+        .unwrap_or_else(|_| node.to_path_buf())
+        .to_string_lossy()
+        .to_string();
+    let snapshot = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) };
+    if snapshot == INVALID_HANDLE_VALUE {
+        return Err("failed to inspect local runtime processes".to_string());
+    }
+
+    let mut entries = Vec::new();
+    let mut entry: PROCESSENTRY32W = unsafe { zeroed() };
+    entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+    let mut has_entry = unsafe { Process32FirstW(snapshot, &mut entry) } != 0;
+    while has_entry {
+        entries.push((entry.th32ProcessID, entry.th32ParentProcessID));
+        entry = unsafe { zeroed() };
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        has_entry = unsafe { Process32NextW(snapshot, &mut entry) } != 0;
+    }
+    unsafe {
+        CloseHandle(snapshot);
+    }
+
+    let mut recovered = 0;
+    for (process_id, parent_process_id) in entries {
+        if process_id == 0 || process_exists(parent_process_id) {
+            continue;
+        }
+        let Some(path) = process_image_path(process_id) else {
+            continue;
+        };
+        if !path.eq_ignore_ascii_case(&expected_node) {
+            continue;
+        }
+
+        let process = unsafe { OpenProcess(PROCESS_TERMINATE, 0, process_id) };
+        if process.is_null() {
+            continue;
+        }
+        let stopped = unsafe { TerminateProcess(process, 0) } != 0;
+        unsafe {
+            CloseHandle(process);
+        }
+        if stopped {
+            recovered += 1;
+        }
+    }
+    fn process_exists(process_id: u32) -> bool {
+        if process_id == 0 {
+            return false;
+        }
+        let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id) };
+        if process.is_null() {
+            return false;
+        }
+        unsafe {
+            CloseHandle(process);
+        }
+        true
+    }
+
+    fn process_image_path(process_id: u32) -> Option<String> {
+        let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id) };
+        if process.is_null() {
+            return None;
+        }
+        let mut buffer = [0_u16; 32_768];
+        let mut length = buffer.len() as u32;
+        let queried =
+            unsafe { QueryFullProcessImageNameW(process, 0, buffer.as_mut_ptr(), &mut length) }
+                != 0;
+        unsafe {
+            CloseHandle(process);
+        }
+        queried.then(|| String::from_utf16_lossy(&buffer[..length as usize]))
+    }
+
+    Ok(recovered)
+}
+
 fn stop_process_tree(mut child: Child) {
     #[cfg(windows)]
     {
-        let _ = Command::new("taskkill")
+        let mut command = Command::new("taskkill");
+        command
             .args(["/PID", &child.id().to_string(), "/T", "/F"])
-            .status();
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        configure_command(&mut command);
+        let _ = command.status();
     }
     #[cfg(not(windows))]
     {
