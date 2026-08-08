@@ -1,6 +1,6 @@
 {
   "name": "@personal-ai/desktop",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "private": true,
   "scripts": {
     "dev": "tauri dev",
