@@ -24,8 +24,10 @@ describe("OpenAiCompatibleSleepImageAnalyzer", () => {
       deviceScore: 82,
       deviceNotes: "设备显示睡眠评分良好",
       visibleMetrics: ["总睡眠 7 小时 18 分钟", "深睡 1 小时 36 分钟"],
-      interpretation: ["截图显示的总睡眠时长为 438 分钟。"],
-      limitations: ["仅基于这张截图中可见的信息，不能替代专业医疗建议"]
+      interpretation: "截图显示的总睡眠时长为 438 分钟。",
+      limitations: "仅基于这张截图中可见的信息，不能替代专业医疗建议",
+      localDate: "2026-08-03",
+      fileName: "sleep.png"
     };
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       choices: [{ message: { content: `\`\`\`json\n${JSON.stringify(analysis)}\n\`\`\`` } }]
@@ -37,13 +39,27 @@ describe("OpenAiCompatibleSleepImageAnalyzer", () => {
         fileName: "sleep.png",
         mimeType: "image/png",
         dataUrl: "data:image/png;base64,iVBORw0KGgo="
-      })).resolves.toEqual(analysis);
+      })).resolves.toEqual({
+        totalSleepMinutes: 438,
+        deepSleepMinutes: 96,
+        lightSleepMinutes: 247,
+        remSleepMinutes: 95,
+        awakeCount: 2,
+        sleepStart: "23:18",
+        wakeTime: "06:36",
+        deviceScore: 82,
+        deviceNotes: "设备显示睡眠评分良好",
+        visibleMetrics: ["总睡眠 7 小时 18 分钟", "深睡 1 小时 36 分钟"],
+        interpretation: ["截图显示的总睡眠时长为 438 分钟。"],
+        limitations: ["仅基于这张截图中可见的信息，不能替代专业医疗建议"]
+      });
       expect(fetchMock).toHaveBeenCalledTimes(1);
       const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit];
       expect(url).toBe("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions");
       expect(options.headers).toMatchObject({ authorization: "Bearer vision-test-key" });
       const body = JSON.parse(String(options.body));
       expect(body.model).toBe("qwen3.7-flash");
+      expect(body.enable_thinking).toBe(false);
       expect(body).not.toHaveProperty("response_format");
       expect(body.messages[1].content[1]).toEqual({ type: "image_url", image_url: { url: "data:image/png;base64,iVBORw0KGgo=" } });
       expect(body.messages[0].content).not.toContain("个人背景");

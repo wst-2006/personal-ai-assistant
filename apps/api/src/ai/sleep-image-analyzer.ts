@@ -21,10 +21,52 @@ class VisionProviderError extends Error {
 
 class VisionMalformedOutputError extends Error {}
 
+const defaultLimitation = "仅基于这张截图中可见的信息，不能替代专业医疗建议";
+
 function isRetryable(error: unknown): boolean {
   if (error instanceof VisionProviderError) return error.status === 408 || error.status === 429 || error.status >= 500;
   if (error instanceof VisionMalformedOutputError) return true;
   return error instanceof TypeError || (error instanceof Error && error.name === "TimeoutError");
+}
+
+function nullableNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function nullableString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function stringArray(value: unknown): string[] {
+  const values = Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
+  return values
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeAnalysisPayload(value: unknown): SleepImageAnalysis {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new VisionMalformedOutputError("Vision provider returned a non-object sleep analysis.");
+  }
+  const raw = value as Record<string, unknown>;
+  const limitations = stringArray(raw.limitations);
+  return sleepImageAnalysisSchema.parse({
+    totalSleepMinutes: nullableNumber(raw.totalSleepMinutes),
+    deepSleepMinutes: nullableNumber(raw.deepSleepMinutes),
+    lightSleepMinutes: nullableNumber(raw.lightSleepMinutes),
+    remSleepMinutes: nullableNumber(raw.remSleepMinutes),
+    awakeCount: nullableNumber(raw.awakeCount),
+    sleepStart: nullableString(raw.sleepStart),
+    wakeTime: nullableString(raw.wakeTime),
+    deviceScore: nullableNumber(raw.deviceScore),
+    deviceNotes: nullableString(raw.deviceNotes),
+    visibleMetrics: stringArray(raw.visibleMetrics),
+    interpretation: stringArray(raw.interpretation),
+    limitations: limitations.length ? limitations : [defaultLimitation]
+  });
 }
 
 function parseAnalysisContent(content: string | Array<{ type?: string; text?: string }>): SleepImageAnalysis {
@@ -34,7 +76,7 @@ function parseAnalysisContent(content: string | Array<{ type?: string; text?: st
   const lastBrace = unfenced.lastIndexOf("}");
   const json = firstBrace >= 0 && lastBrace > firstBrace ? unfenced.slice(firstBrace, lastBrace + 1) : unfenced;
   try {
-    return sleepImageAnalysisSchema.parse(JSON.parse(json));
+    return normalizeAnalysisPayload(JSON.parse(json));
   } catch {
     throw new VisionMalformedOutputError("Vision provider returned malformed sleep analysis content.");
   }
@@ -66,6 +108,7 @@ export class OpenAiCompatibleSleepImageAnalyzer implements SleepImageAnalyzer {
       },
       body: JSON.stringify({
         model: this.config.VISION_MODEL,
+        enable_thinking: false,
         temperature: 0,
         max_tokens: this.config.VISION_MAX_OUTPUT_TOKENS,
         messages: [
@@ -76,6 +119,7 @@ export class OpenAiCompatibleSleepImageAnalyzer implements SleepImageAnalyzer {
               "只读取这张图片中清晰可见的数字、时间、设备评分和设备说明；图片没有显示的字段必须返回 null，不得根据常识补全。",
               "所有时长统一返回分钟整数；无法确定或单位不清楚时返回 null。",
               "visibleMetrics 只列出图片实际出现且成功读取的指标。interpretation 只能描述图中数据，不得给出治疗或确定医学结论。limitations 至少包含‘仅基于这张截图中可见的信息，不能替代专业医疗建议’。",
+              "输出只能包含 requiredKeys 指定的键，不得返回 localDate、fileName 或其他额外键。visibleMetrics、interpretation、limitations 必须始终是 JSON 字符串数组，即使只有一项。",
               "只返回一个 JSON 对象，不要 Markdown 或解释。"
             ].join("\n")
           },
