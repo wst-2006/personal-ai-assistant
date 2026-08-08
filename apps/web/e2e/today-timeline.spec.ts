@@ -228,6 +228,23 @@ test.describe("真实今日时间轴",()=>{
     }finally{await cleanup(request,ids);}
   });
 
+  test("拖动终点回到起点时取消空白创建",async({page,request})=>{
+    const title=`E2E 不应创建 ${Date.now().toString(36)}`;const testDate=await isolatedDate(request);let taskCreates=0;
+    page.on("request",(outgoing)=>{if(outgoing.url()===`${apiBase}/api/v1/tasks`&&outgoing.method()==="POST")taskCreates+=1;});
+    try{
+      await page.goto("/");
+      const dateLoaded=page.waitForResponse((response)=>response.url()===`${apiBase}/api/v1/tasks?date=${testDate}`&&response.request().method()==="GET"&&response.status()===200);
+      await page.getByLabel("时间轴日期").fill(testDate);await dateLoaded;
+      const scroll=page.locator(".day-scroll");await scroll.evaluate((element)=>{element.scrollTop=9*72-120;});
+      const box=await scroll.boundingBox();expect(box).not.toBeNull();
+      const x=box!.x+Math.min(180,box!.width-20);const startY=box!.y+120;const endY=startY+36;
+      await page.mouse.move(x,startY);await page.mouse.down();await page.mouse.move(x,endY);await expect(page.locator(".range-preview")).toContainText("09:00–09:30");
+      await page.mouse.move(x,startY);await expect(page.locator(".range-preview")).toHaveCount(0);await page.mouse.up();
+      await expect(page.getByRole("dialog")).toHaveCount(0);expect(taskCreates).toBe(0);
+      await expect(page.getByText(title,{exact:true})).toHaveCount(0);
+    }finally{}
+  });
+
   test("点击今天已过去时段可补录、记录结果并刷新恢复",async({page,request})=>{
     const ids:string[]=[];const title=`E2E 当天补录 ${Date.now().toString(36)}`;
     const currentDate=new Intl.DateTimeFormat("en-CA",{timeZone:"Asia/Shanghai",year:"numeric",month:"2-digit",day:"2-digit"}).format(new Date());
