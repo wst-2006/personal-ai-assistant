@@ -212,7 +212,8 @@ test.describe("真实今日时间轴",()=>{
       const box=await scroll.boundingBox();expect(box).not.toBeNull();
       const clickX=box!.x+Math.min(180,box!.width-20);const clickY=box!.y+120;
       await page.mouse.move(clickX,clickY);await page.mouse.down();
-      await expect(page.locator(".range-preview")).toContainText("09:00–09:30");
+      await expect(page.locator(".range-anchor")).toBeVisible();
+      await expect(page.locator(".range-preview")).toHaveCount(0);
       await page.mouse.up();
       await expect(page.getByRole("dialog")).toBeVisible();
       await expect(page.getByLabel("开始时间")).toHaveValue("09:00");
@@ -238,8 +239,11 @@ test.describe("真实今日时间轴",()=>{
       const scroll=page.locator(".day-scroll");await scroll.evaluate((element)=>{element.scrollTop=9*72-120;});
       const box=await scroll.boundingBox();expect(box).not.toBeNull();
       const x=box!.x+Math.min(180,box!.width-20);const startY=box!.y+120;const endY=startY+36;
-      await page.mouse.move(x,startY);await page.mouse.down();await page.mouse.move(x,endY);await expect(page.locator(".range-preview")).toContainText("09:00–09:30");
-      await page.mouse.move(x,startY);await expect(page.locator(".range-preview")).toHaveCount(0);await page.mouse.up();
+      await page.mouse.move(x,startY);await page.mouse.down();await expect(page.locator(".range-anchor")).toBeVisible();
+      await page.mouse.move(x,startY-36);await expect(page.locator(".range-preview")).toContainText("08:30–09:00");await expect(page.locator(".range-anchor")).toBeVisible();
+      await page.mouse.move(x,endY);await expect(page.locator(".range-preview")).toContainText("09:00–09:30");
+      await page.mouse.move(x,startY);await expect(page.locator(".range-preview")).toHaveCount(0);await expect(page.locator(".range-anchor")).toBeVisible();await page.mouse.up();
+      await expect(page.locator(".range-anchor")).toHaveCount(0);
       await expect(page.getByRole("dialog")).toHaveCount(0);expect(taskCreates).toBe(0);
       await expect(page.getByText(title,{exact:true})).toHaveCount(0);
     }finally{}
@@ -257,7 +261,8 @@ test.describe("真实今日时间轴",()=>{
       const box=await scroll.boundingBox();expect(box).not.toBeNull();
       const clickX=box!.x+Math.min(180,box!.width-20);const clickY=box!.y+8;
       await page.mouse.move(clickX,clickY);await page.mouse.down();
-      await expect(page.locator(".range-preview.backfill")).toContainText("00:00–00:30");
+      await expect(page.locator(".range-anchor")).toBeVisible();
+      await expect(page.locator(".range-preview.backfill")).toHaveCount(0);
       await page.mouse.up();
 
       const backfillDialog=page.getByRole("dialog",{name:"补上今天已经发生的事项"});
