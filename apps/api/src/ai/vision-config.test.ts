@@ -10,7 +10,7 @@ describe("vision provider configuration", () => {
     expect(loadVisionConfig({ VISION_API_KEY: "test-key" })).toEqual({
       VISION_API_KEY: "test-key",
       VISION_BASE_URL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-      VISION_MODEL: "qwen3-vl-flash",
+      VISION_MODEL: "qwen3.7-flash",
       VISION_TIMEOUT_MS: 30_000,
       VISION_MAX_RETRIES: 2,
       VISION_MAX_OUTPUT_TOKENS: 1_200

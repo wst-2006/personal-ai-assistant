@@ -34,7 +34,7 @@ export function loadVisionConfig(environment: NodeJS.ProcessEnv = process.env): 
   return {
     VISION_API_KEY: parsed.VISION_API_KEY,
     VISION_BASE_URL: parsed.VISION_BASE_URL ?? "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    VISION_MODEL: parsed.VISION_MODEL ?? "qwen3-vl-flash",
+    VISION_MODEL: parsed.VISION_MODEL ?? "qwen3.7-flash",
     VISION_TIMEOUT_MS: parsed.VISION_TIMEOUT_MS,
     VISION_MAX_RETRIES: parsed.VISION_MAX_RETRIES,
     VISION_MAX_OUTPUT_TOKENS: parsed.VISION_MAX_OUTPUT_TOKENS

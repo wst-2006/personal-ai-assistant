@@ -5,7 +5,7 @@ import type { VisionConfig } from "./vision-config.js";
 const config: VisionConfig = {
   VISION_API_KEY: "vision-test-key",
   VISION_BASE_URL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-  VISION_MODEL: "qwen3-vl-flash",
+  VISION_MODEL: "qwen3.7-flash",
   VISION_TIMEOUT_MS: 30_000,
   VISION_MAX_RETRIES: 2,
   VISION_MAX_OUTPUT_TOKENS: 1_200
@@ -43,7 +43,7 @@ describe("OpenAiCompatibleSleepImageAnalyzer", () => {
       expect(url).toBe("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions");
       expect(options.headers).toMatchObject({ authorization: "Bearer vision-test-key" });
       const body = JSON.parse(String(options.body));
-      expect(body.model).toBe("qwen3-vl-flash");
+      expect(body.model).toBe("qwen3.7-flash");
       expect(body).not.toHaveProperty("response_format");
       expect(body.messages[1].content[1]).toEqual({ type: "image_url", image_url: { url: "data:image/png;base64,iVBORw0KGgo=" } });
       expect(body.messages[0].content).not.toContain("个人背景");
