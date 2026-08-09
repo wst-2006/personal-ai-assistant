@@ -116,6 +116,24 @@ describe("TaskService lifecycle and revisions", () => {
     expect(recovered).toMatchObject({ lifecycleStatus: "awaiting_outcome", scheduleRevision: active.scheduleRevision });
     expect(repeated).toEqual(recovered);
   });
+
+  it("restores a soft-deleted task with a new schedule revision", async () => {
+    const store = new MemoryTaskStore();
+    const service = new TaskService(store);
+    const task = (await service.create(unscheduled("Restore me"))).task;
+    await service.softDelete(task.id, task.version);
+    const [deleted] = await service.listDeleted("2026-07-27");
+    expect(deleted?.deletedAt).toBeInstanceOf(Date);
+
+    const restored = (await service.restore(task.id, deleted!.version, "reject")).task;
+    expect(restored).toMatchObject({
+      id: task.id,
+      deletedAt: null,
+      version: deleted!.version + 1,
+      scheduleRevision: deleted!.scheduleRevision + 1
+    });
+    expect(await service.listDeleted("2026-07-27")).toHaveLength(0);
+  });
 });
 
 describe("TaskService reminder scheduling", () => {
@@ -140,12 +158,15 @@ describe("TaskService reminder scheduling", () => {
     });
     expect(followUp!.availableAt.toISOString()).toBe("2026-07-27T06:05:00.000Z");
 
+    startReminder!.status = "sent";
+
     const renamed = (await service.update(created.id, taskPatchSchema.parse({
       expectedVersion: created.version,
       title: "Read systems paper"
     }))).task;
     expect(renamed.scheduleRevision).toBe(created.scheduleRevision);
     expect(store.reminderJobs.every((job) => job.payload.title === "Read systems paper")).toBe(true);
+    expect(store.reminderJobs.find((job) => job.kind === "task_start")?.status).toBe("sent");
 
     const moved = (await service.update(created.id, taskPatchSchema.parse({
       expectedVersion: renamed.version,

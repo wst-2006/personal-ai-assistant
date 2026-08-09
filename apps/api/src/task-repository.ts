@@ -9,7 +9,7 @@ import {
   tasks
 } from "@personal-ai/db/schema";
 import type { TaskEventSource, TaskLifecycle, TaskOutcome, TaskSatisfaction, TaskScheduleKind } from "@personal-ai/domain/task";
-import { and, asc, desc, eq, gt, inArray, isNull, lt, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, ne, sql } from "drizzle-orm";
 import { syncTaskStartReminder } from "./reminder-scheduler.js";
 
 export type StoredTask = typeof tasks.$inferSelect;
@@ -81,6 +81,7 @@ export interface TaskStoreTransaction {
   insertTask(record: NewTaskRecord): Promise<StoredTask>;
   getTask(id: string, includeDeleted?: boolean): Promise<StoredTask | null>;
   updateTask(id: string, expectedVersion: number, changes: TaskUpdateRecord): Promise<StoredTask | null>;
+  restoreDeletedTask(id: string, expectedVersion: number, changes: TaskUpdateRecord): Promise<StoredTask | null>;
   listExactOverlaps(startAt: Date, endAt: Date, lifecycleStatuses: TaskLifecycle[], excludeTaskId?: string): Promise<StoredTask[]>;
   isConflictAccepted(record: ConflictAcceptanceRecord): Promise<boolean>;
   insertConflictAcceptances(records: ConflictAcceptanceRecord[]): Promise<void>;
@@ -95,6 +96,7 @@ export interface TaskStore {
   runSerializable<T>(operation: (transaction: TaskStoreTransaction) => Promise<T>): Promise<T>;
   getTask(id: string): Promise<StoredTask | null>;
   listTasks(localDate?: string): Promise<StoredTask[]>;
+  listDeletedTasks(localDate?: string): Promise<StoredTask[]>;
   listOutcomes(taskId: string): Promise<StoredTaskOutcome[]>;
   listExactOverlaps(startAt: Date, endAt: Date, lifecycleStatuses: TaskLifecycle[], excludeTaskId?: string): Promise<StoredTask[]>;
   isConflictAccepted(record: ConflictAcceptanceRecord): Promise<boolean>;
@@ -142,6 +144,15 @@ class PostgresTaskTransaction implements TaskStoreTransaction {
       .update(tasks)
       .set(changes)
       .where(and(eq(tasks.id, id), eq(tasks.version, expectedVersion), isNull(tasks.deletedAt)))
+      .returning();
+    return updated ?? null;
+  }
+
+  async restoreDeletedTask(id: string, expectedVersion: number, changes: TaskUpdateRecord): Promise<StoredTask | null> {
+    const [updated] = await this.db
+      .update(tasks)
+      .set(changes)
+      .where(and(eq(tasks.id, id), eq(tasks.version, expectedVersion), isNotNull(tasks.deletedAt)))
       .returning();
     return updated ?? null;
   }
@@ -249,6 +260,12 @@ export class PostgresTaskStore implements TaskStore {
     const conditions = [isNull(tasks.deletedAt)];
     if (localDate) conditions.push(eq(tasks.localDate, localDate));
     return this.db.select().from(tasks).where(and(...conditions)).orderBy(asc(tasks.startAt), asc(tasks.createdAt));
+  }
+
+  listDeletedTasks(localDate?: string): Promise<StoredTask[]> {
+    const conditions = [isNotNull(tasks.deletedAt)];
+    if (localDate) conditions.push(eq(tasks.localDate, localDate));
+    return this.db.select().from(tasks).where(and(...conditions)).orderBy(desc(tasks.deletedAt));
   }
 
   listOutcomes(taskId: string): Promise<StoredTaskOutcome[]> {

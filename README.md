@@ -30,15 +30,16 @@ Open the web app at `http://127.0.0.1:5173` and the API health check at
 
 For the Windows desktop shell during development, use `pnpm dev:desktop`.
 Tauri starts the same local API, web app, and worker before opening the native
-window. This is the desktop application development path; a distributable
-installer still needs a separate packaging step for the Node API and worker
-runtime.
+window. `pnpm build:desktop` prepares the bundled Node/API/Worker runtime,
+builds the Tauri application, rebuilds the NSIS package in safe in-place update
+mode, and verifies the installer before it is released.
 
-The Release executable built inside this repository also starts the local API
-and worker automatically when it can find the repository `.env` and
-`pnpm-workspace.yaml`. It stops the child process tree when the desktop app
-exits. A copied executable outside the repository will not have that runtime
-until the backend resources are bundled into a future installer.
+The installed application keeps the API and Worker alive while its main window
+is hidden in the tray, starts at Windows login, and stops its managed processes
+only when the user explicitly exits from the tray. Private configuration stays
+in `%APPDATA%\com.personalai.assistant\.env`; it is never bundled into the
+installer. Source-tree release launches remain available for development when
+the repository runtime is present.
 
 The current release is intentionally local-first. Do not create a cloud
 database, purchase a server, or copy the local PostgreSQL data directory.

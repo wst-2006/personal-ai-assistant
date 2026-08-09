@@ -6,6 +6,7 @@ import {
   mkdirSync,
   readdirSync,
   realpathSync,
+  renameSync,
   rmSync
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -13,16 +14,14 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const runtimeRoot = join(repositoryRoot, "apps", "desktop", "src-tauri", "runtime");
+const finalRuntimeRoot = join(repositoryRoot, "apps", "desktop", "src-tauri", "runtime");
 const envTemplateSource = join(repositoryRoot, ".env.example");
 const stagingRoot = join(tmpdir(), `personal-ai-assistant-runtime-${process.pid}`);
+const runtimeRoot = join(stagingRoot, "runtime");
 
 if (!existsSync(envTemplateSource)) {
   throw new Error("桌面独立发行版需要仓库根目录的 .env.example；未找到该文件，已停止打包。");
 }
-
-rmSync(runtimeRoot, { recursive: true, force: true });
-mkdirSync(runtimeRoot, { recursive: true });
 
 const pnpmCommand = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
 const pnpmEnvironment = { ...process.env, CI: "true" };
@@ -47,12 +46,14 @@ const deploy = (packageName, outputDirectory) => {
   runPnpm(["deploy", "--legacy", "--filter", packageName, "--prod", outputDirectory]);
 };
 
-deploy("@personal-ai/api", join(stagingRoot, "api"));
-deploy("@personal-ai/worker", join(stagingRoot, "worker"));
-
-// pnpm deploy temporarily changes the workspace install to production mode.
-// Restore the development workspace before returning so local commands remain usable.
-runPnpm(["install"]);
+try {
+  deploy("@personal-ai/api", join(stagingRoot, "api"));
+  deploy("@personal-ai/worker", join(stagingRoot, "worker"));
+} finally {
+  // pnpm deploy temporarily changes the workspace install to production mode.
+  // Always restore the development workspace, including after a failed deploy.
+  runPnpm(["install"]);
+}
 
 const copyTreeDereferenced = (source, destination, ancestors = new Set()) => {
   const stats = lstatSync(source);
@@ -118,7 +119,6 @@ const copyFlatService = (service) => {
 
 copyFlatService("api");
 copyFlatService("worker");
-rmSync(stagingRoot, { recursive: true, force: true });
 
 // The runtime is intentionally copied from the machine used to build this private
 // single-user release, so the installed app does not depend on a system Node install.
@@ -127,6 +127,11 @@ rmSync(stagingRoot, { recursive: true, force: true });
 copyFileSync(process.execPath, join(runtimeRoot, "node.exe"));
 copyFileSync(envTemplateSource, join(runtimeRoot, ".env.example"));
 
+rmSync(finalRuntimeRoot, { recursive: true, force: true });
+mkdirSync(dirname(finalRuntimeRoot), { recursive: true });
+renameSync(runtimeRoot, finalRuntimeRoot);
+rmSync(stagingRoot, { recursive: true, force: true });
+
 console.log("Prepared standalone desktop runtime:");
-console.log(`  ${runtimeRoot}`);
+console.log(`  ${finalRuntimeRoot}`);
 console.log("  Included Node, API, Worker, production dependencies, and local configuration.");

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Personal AI Assistant",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "identifier": "com.personalai.assistant",
   "build": {
     "beforeDevCommand": "pnpm --dir ../.. dev:local",
@@ -13,6 +13,7 @@
     "windows": [
       {
         "title": "个人 AI 助理",
+        "visible": false,
         "width": 1200,
         "height": 820,
         "minWidth": 960,

@@ -12,14 +12,20 @@ export type FocusTimerJob = {
   attempts: number;
 };
 
+export function focusTimerLeaseExpiredBefore(now: Date): Date {
+  return new Date(now.getTime() - 5 * 60_000);
+}
+
 export class FocusTimerWorker {
   constructor(private readonly db: AppDatabase, private readonly maxAttempts = 3) {}
 
   async claimDueJob(now = new Date()): Promise<FocusTimerJob | null> {
+    const leaseExpiredBefore = focusTimerLeaseExpiredBefore(now);
     const result = await this.db.execute(sql`
       WITH next_job AS (
         SELECT id FROM focus_timer_jobs
-        WHERE status = 'pending' AND due_at <= ${now}
+        WHERE (status = 'pending' AND due_at <= ${now})
+          OR (status = 'processing' AND updated_at <= ${leaseExpiredBefore})
         ORDER BY due_at, created_at
         FOR UPDATE SKIP LOCKED
         LIMIT 1
@@ -406,7 +412,7 @@ export class FocusTimerWorker {
     const retryAt = new Date(now.getTime() + 60_000);
     await db.execute(sql`
       UPDATE focus_timer_jobs
-      SET status = ${status}, due_at = ${retryAt}, last_error = ${reason.slice(0, 1000)}, updated_at = ${now}
+      SET status = ${status}, due_at = ${retryAt}::timestamptz, last_error = ${reason.slice(0, 1000)}, updated_at = ${now}::timestamptz
       WHERE id = ${id} AND status = 'processing'
     `);
   }

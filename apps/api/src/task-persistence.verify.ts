@@ -26,7 +26,10 @@ try {
   if (createResponse.statusCode !== 201) {
     throw new Error(`Task creation returned ${createResponse.statusCode}.`);
   }
-  createdTaskId = createResponse.json<{ task: { id: string } }>().task.id;
+  const createdTask = createResponse.json<{
+    task: { id: string; version: number; scheduleRevision: number };
+  }>().task;
+  createdTaskId = createdTask.id;
 
   const listResponse = await app.inject({
     method: "GET",
@@ -56,7 +59,61 @@ try {
     throw new Error("Task reminder and no-response follow-up were not persisted with the exact schedule contract.");
   }
 
-  console.log("Task, 15-minute reminder, and 5-minute no-response follow-up persistence verified with exact test-record cleanup.");
+  const deleteResponse = await app.inject({
+    method: "DELETE",
+    url: `/api/v1/tasks/${createdTaskId}`,
+    payload: { expectedVersion: createdTask.version, reason: "persistence verification" }
+  });
+  if (deleteResponse.statusCode !== 204) {
+    throw new Error(`Task soft delete returned ${deleteResponse.statusCode}.`);
+  }
+
+  const trashResponse = await app.inject({
+    method: "GET",
+    url: "/api/v1/tasks/trash?date=2099-12-31"
+  });
+  const deletedTask = trashResponse.json<{
+    tasks: Array<{ id: string; version: number; scheduleRevision: number; deletedAt: string | null }>;
+  }>().tasks.find((task) => task.id === createdTaskId);
+  if (
+    trashResponse.statusCode !== 200
+    || !deletedTask?.deletedAt
+    || deletedTask.version !== createdTask.version + 1
+    || deletedTask.scheduleRevision !== createdTask.scheduleRevision + 1
+  ) {
+    throw new Error("Soft-deleted task was not persisted in the trash with a new schedule revision.");
+  }
+
+  const restoreResponse = await app.inject({
+    method: "POST",
+    url: `/api/v1/tasks/${createdTaskId}/restore`,
+    payload: { expectedVersion: deletedTask.version, conflictDecision: "reject" }
+  });
+  const restoredTask = restoreResponse.json<{
+    task: { id: string; version: number; scheduleRevision: number; deletedAt: string | null };
+  }>().task;
+  if (
+    restoreResponse.statusCode !== 200
+    || restoredTask.id !== createdTaskId
+    || restoredTask.deletedAt !== null
+    || restoredTask.version !== deletedTask.version + 1
+    || restoredTask.scheduleRevision !== deletedTask.scheduleRevision + 1
+  ) {
+    throw new Error("Restored task was not persisted with the expected version contract.");
+  }
+
+  const restoredReminders = await connection.client.query<{
+    schedule_revision: number;
+    status: string;
+  }>(`SELECT schedule_revision, status FROM reminder_jobs WHERE task_id = $1`, [createdTaskId]);
+  if (
+    restoredReminders.rows.length !== 2
+    || restoredReminders.rows.some((job) => job.schedule_revision !== restoredTask.scheduleRevision || job.status !== "pending")
+  ) {
+    throw new Error("Restoring the task did not re-arm both revision-bound reminders.");
+  }
+
+  console.log("Task creation, reminders, trash, restore, and exact test-record cleanup were verified in PostgreSQL.");
 } finally {
   await app.close();
   if (createdTaskId) {

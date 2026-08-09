@@ -232,6 +232,10 @@ export class TaskService {
     return { tasks: listedTasks, blockingConflicts, historicalOverlaps };
   }
 
+  listDeleted(localDate?: string): Promise<StoredTask[]> {
+    return this.store.listDeletedTasks(localDate);
+  }
+
   async get(id: string): Promise<{
     task: StoredTask;
     outcomes: StoredTaskOutcome[];
@@ -324,6 +328,58 @@ export class TaskService {
         id: randomUUID(), taskId: id, fromStatus: current.lifecycleStatus as TaskLifecycle,
         toStatus: "deleted", source: "app", reason
       });
+    });
+  }
+
+  async restore(
+    id: string,
+    expectedVersion: number,
+    conflictDecision: "reject" | "keep",
+    expectedConflictFingerprint?: string,
+    reason?: string
+  ): Promise<{ task: StoredTask; historicalOverlaps: TaskConflict[] }> {
+    return this.store.runSerializable(async (transaction) => {
+      const current = await transaction.getTask(id, true);
+      if (!current) throw new TaskNotFoundError("Task not found.");
+      if (!current.deletedAt) throw new InvalidTaskTransitionError(current.lifecycleStatus, "restore");
+      if (current.version !== expectedVersion) throw new TaskVersionConflictError(current);
+      const target = {
+        ...current,
+        deletedAt: null,
+        version: current.version + 1,
+        scheduleRevision: current.scheduleRevision + 1
+      };
+      const blocking = await this.findConflicts(transaction, target, id);
+      await this.assertConflictDecision(
+        transaction,
+        target,
+        blocking,
+        conflictDecision,
+        expectedConflictFingerprint
+      );
+      const updated = await transaction.restoreDeletedTask(id, expectedVersion, {
+        deletedAt: null,
+        version: target.version,
+        scheduleRevision: target.scheduleRevision,
+        updatedAt: new Date()
+      });
+      if (!updated) throw await this.versionOrMissing(transaction, id, true);
+      await transaction.invalidateFocusStructures(updated.id, updated.scheduleRevision, "task restored");
+      await transaction.syncReminderForTask(updated);
+      await transaction.insertLifecycleEvent({
+        id: randomUUID(),
+        taskId: id,
+        fromStatus: current.lifecycleStatus as TaskLifecycle,
+        toStatus: current.lifecycleStatus as TaskLifecycle,
+        source: "app",
+        reason: reason ?? "restored from trash"
+      });
+      if (conflictDecision === "keep") {
+        await transaction.insertConflictAcceptances(
+          blocking.map((conflict) => canonicalAcceptance(updated, conflict))
+        );
+      }
+      return { task: updated, historicalOverlaps: await this.findHistoricalOverlaps(transaction, updated) };
     });
   }
 
@@ -500,8 +556,12 @@ export class TaskService {
     return current;
   }
 
-  private async versionOrMissing(transaction: TaskStoreTransaction, id: string): Promise<Error> {
-    const current = await transaction.getTask(id, true);
+  private async versionOrMissing(
+    transaction: TaskStoreTransaction,
+    id: string,
+    includeDeleted = true
+  ): Promise<Error> {
+    const current = await transaction.getTask(id, includeDeleted);
     return current ? new TaskVersionConflictError(current) : new TaskNotFoundError("Task not found.");
   }
 

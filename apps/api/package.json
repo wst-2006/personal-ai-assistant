@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc --outDir dist",
+    "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc --project tsconfig.build.json --outDir dist",
     "start": "node dist/server.js",
     "check": "tsc --noEmit",
     "test": "vitest run",

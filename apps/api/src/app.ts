@@ -1,5 +1,5 @@
 import cors from "@fastify/cors";
-import Fastify from "fastify";
+import Fastify, { LogController } from "fastify";
 import { aiRoutes } from "./ai/routes.js";
 import { inboxRoutes } from "./inbox-routes.js";
 import type { TaskParser } from "./ai/task-parser.js";
@@ -68,7 +68,13 @@ type AppOptions = {
 };
 
 export function buildApp(options: AppOptions = {}) {
-  const app = Fastify({ logger: true, bodyLimit: 9 * 1024 * 1024 });
+  const app = Fastify({
+    logger: true,
+    logController: new LogController({
+      disableRequestLogging: process.env.NODE_ENV === "production"
+    }),
+    bodyLimit: 9 * 1024 * 1024
+  });
 
   app.removeContentTypeParser("application/json");
   app.addContentTypeParser("application/json", { parseAs: "string" }, (request, body, done) => {

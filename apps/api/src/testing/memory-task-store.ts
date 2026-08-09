@@ -114,10 +114,24 @@ export class MemoryTaskStore implements TaskStore, TaskStoreTransaction {
     return updated;
   }
 
+  async restoreDeletedTask(id: string, expectedVersion: number, changes: TaskUpdateRecord): Promise<StoredTask | null> {
+    const index = this.tasks.findIndex((task) => task.id === id && task.version === expectedVersion && Boolean(task.deletedAt));
+    if (index < 0) return null;
+    const updated = { ...this.tasks[index]!, ...changes } as StoredTask;
+    this.tasks[index] = updated;
+    return updated;
+  }
+
   async listTasks(localDate?: string): Promise<StoredTask[]> {
     return this.tasks
       .filter((task) => !task.deletedAt && (!localDate || task.localDate === localDate))
       .sort((left, right) => (left.startAt?.getTime() ?? Number.MAX_SAFE_INTEGER) - (right.startAt?.getTime() ?? Number.MAX_SAFE_INTEGER));
+  }
+
+  async listDeletedTasks(localDate?: string): Promise<StoredTask[]> {
+    return this.tasks
+      .filter((task) => Boolean(task.deletedAt) && (!localDate || task.localDate === localDate))
+      .sort((left, right) => (right.deletedAt?.getTime() ?? 0) - (left.deletedAt?.getTime() ?? 0));
   }
 
   async listOutcomes(taskId: string): Promise<StoredTaskOutcome[]> {
@@ -203,12 +217,13 @@ export class MemoryTaskStore implements TaskStore, TaskStoreTransaction {
     const scheduledAt = task.startAt!;
     for (const kind of ["task_start", "task_follow_up"] as const) {
       const index = this.reminderJobs.findIndex((job) => job.taskId === task.id && job.kind === kind);
+      const existing = index >= 0 ? this.reminderJobs[index]! : null;
       const next: MemoryReminderJob = {
-        id: index >= 0 ? this.reminderJobs[index]!.id : `reminder-${kind}-${task.id}`,
+        id: existing?.id ?? `reminder-${kind}-${task.id}`,
         taskId: task.id,
         kind,
         scheduleRevision: task.scheduleRevision,
-        status: "pending",
+        status: existing?.scheduleRevision === task.scheduleRevision ? existing.status : "pending",
         scheduledAt,
         availableAt: kind === "task_start"
           ? new Date(scheduledAt.getTime() - 15 * 60 * 1000)

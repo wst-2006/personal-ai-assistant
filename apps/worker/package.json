@@ -3,7 +3,7 @@
   "version": "0.1.3",
   "private": true,
   "type": "module",
-  "scripts": { "dev": "tsx watch src/worker.ts", "check": "tsc --noEmit", "build": "tsc --outDir dist", "start": "node dist/worker.js", "test": "vitest run" },
+  "scripts": { "dev": "tsx watch src/worker.ts", "check": "tsc --noEmit", "build": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\" && tsc --project tsconfig.build.json --outDir dist", "start": "node dist/worker.js", "test": "vitest run" },
   "dependencies": { "@personal-ai/db": "workspace:*", "@personal-ai/domain": "workspace:*", "drizzle-orm": "^0.38.4" },
   "devDependencies": { "tsx": "^4.19.2", "typescript": "^5.7.3", "vitest": "^3.0.7" }
 }

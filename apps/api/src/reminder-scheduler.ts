@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { AppDatabase } from "@personal-ai/db/client";
 import { reminderJobs, tasks } from "@personal-ai/db/schema";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 
 type SchedulableTask = typeof tasks.$inferSelect;
 
@@ -62,8 +62,15 @@ async function upsertReminder(
   }).onConflictDoUpdate({
     target: [reminderJobs.taskId, reminderJobs.channel, reminderJobs.kind],
     set: {
-      scheduleRevision: task.scheduleRevision, status: "pending", scheduledAt, availableAt,
-      attempts: 0, payload, lastError: null, sentAt: null, updatedAt: now
+      scheduleRevision: task.scheduleRevision,
+      status: sql`CASE WHEN ${reminderJobs.scheduleRevision} <> EXCLUDED.schedule_revision THEN 'pending' ELSE ${reminderJobs.status} END`,
+      scheduledAt,
+      availableAt,
+      attempts: sql`CASE WHEN ${reminderJobs.scheduleRevision} <> EXCLUDED.schedule_revision THEN 0 ELSE ${reminderJobs.attempts} END`,
+      payload,
+      lastError: sql`CASE WHEN ${reminderJobs.scheduleRevision} <> EXCLUDED.schedule_revision THEN NULL ELSE ${reminderJobs.lastError} END`,
+      sentAt: sql`CASE WHEN ${reminderJobs.scheduleRevision} <> EXCLUDED.schedule_revision THEN NULL ELSE ${reminderJobs.sentAt} END`,
+      updatedAt: now
     }
   });
 }

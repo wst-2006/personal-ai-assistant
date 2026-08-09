@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AppDatabase } from "@personal-ai/db/client";
-import { ReminderWorker, reminderRetryAt, type ReminderDeliveryProvider, type ReminderJob } from "./worker-core.js";
+import { ReminderWorker, reminderLeaseExpiredBefore, reminderRetryAt, type ReminderDeliveryProvider, type ReminderJob } from "./worker-core.js";
 
 const now = new Date("2026-07-29T01:45:00.000Z");
 const job: ReminderJob = {
@@ -30,6 +30,10 @@ describe("ReminderWorker", () => {
 
   it("uses an absolute retry timestamp exactly one minute later", () => {
     expect(reminderRetryAt(now)).toEqual(new Date("2026-07-29T01:46:00.000Z"));
+  });
+
+  it("reclaims processing jobs only after the five-minute lease expires", () => {
+    expect(reminderLeaseExpiredBefore(now)).toEqual(new Date("2026-07-29T01:40:00.000Z"));
   });
 
   it("delivers and marks sent only after the current task contract is verified", async () => {

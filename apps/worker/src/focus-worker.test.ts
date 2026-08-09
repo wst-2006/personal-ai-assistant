@@ -1,10 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AppDatabase } from "@personal-ai/db/client";
-import { FocusTimerWorker, type FocusTimerJob } from "./focus-worker.js";
+import { FocusTimerWorker, focusTimerLeaseExpiredBefore, type FocusTimerJob } from "./focus-worker.js";
 
 const now = new Date("2026-07-29T02:00:00.000Z");
 
 describe("FocusTimerWorker", () => {
+  it("reclaims processing timer jobs only after the five-minute lease expires", () => {
+    expect(focusTimerLeaseExpiredBefore(now)).toEqual(new Date("2026-07-29T01:55:00.000Z"));
+  });
+
   it("moves a scheduled session into the one-minute preparation at task time", async () => {
     const job: FocusTimerJob = {
       id: "job-scheduled", focusSessionId: "session-scheduled", kind: "preparation_start",

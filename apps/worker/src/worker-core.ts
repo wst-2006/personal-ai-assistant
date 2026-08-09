@@ -10,13 +10,20 @@ export function reminderRetryAt(now: Date): Date {
   return new Date(now.getTime() + 60_000);
 }
 
+export function reminderLeaseExpiredBefore(now: Date): Date {
+  return new Date(now.getTime() - 5 * 60_000);
+}
+
 export class ReminderWorker {
   constructor(private readonly db: AppDatabase, private readonly maxAttempts = 3) {}
 
   async claimDueJob(now = new Date()): Promise<ReminderJob | null> {
+    const leaseExpiredBefore = reminderLeaseExpiredBefore(now);
     const result = await this.db.execute(sql`
       WITH next_job AS (
-        SELECT id FROM reminder_jobs WHERE status = 'pending' AND available_at <= ${now}
+        SELECT id FROM reminder_jobs
+        WHERE (status = 'pending' AND available_at <= ${now})
+          OR (status = 'processing' AND updated_at <= ${leaseExpiredBefore})
         ORDER BY available_at, created_at FOR UPDATE SKIP LOCKED LIMIT 1
       )
       UPDATE reminder_jobs AS job
@@ -35,7 +42,7 @@ export class ReminderWorker {
 
   async markFailed(id: string, error: string, now = new Date()) {
     const retryAt = reminderRetryAt(now);
-    await this.db.execute(sql`UPDATE reminder_jobs SET status = CASE WHEN attempts >= ${this.maxAttempts} THEN 'failed' ELSE 'pending' END, available_at = ${retryAt}, last_error = ${error.slice(0, 1000)}, updated_at = ${now} WHERE id = ${id} AND status = 'processing'`);
+    await this.db.execute(sql`UPDATE reminder_jobs SET status = CASE WHEN attempts >= ${this.maxAttempts} THEN 'failed' ELSE 'pending' END, available_at = ${retryAt}::timestamptz, last_error = ${error.slice(0, 1000)}, updated_at = ${now}::timestamptz WHERE id = ${id} AND status = 'processing'`);
   }
 
   async markCancelled(id: string, reason: string, now = new Date()) {

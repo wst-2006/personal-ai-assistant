@@ -1,6 +1,6 @@
 [package]
 name = "personal-ai-desktop"
-version = "0.1.14"
+version = "0.1.15"
 description = "Personal AI Assistant desktop shell"
 edition = "2021"
 
@@ -17,4 +17,5 @@ windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_Threading",
+  "Win32_UI_WindowsAndMessaging",
 ] }

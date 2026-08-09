@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -46,22 +46,36 @@ for (const relativePath of requiredRuntimeFiles) {
   assert(existsSync(join(runtimeRoot, relativePath)), `desktop runtime file is missing: ${relativePath}`);
 }
 assert(!existsSync(join(runtimeRoot, ".env")), "private .env must not be bundled into the installer");
+for (const service of ["api", "worker"]) {
+  const releaseFiles = readdirSync(join(runtimeRoot, service, "dist"), { recursive: true });
+  assert(
+    !releaseFiles.some((file) => /(?:\.test|\.verify)\.js$/i.test(String(file)) || /(?:^|[\\/])testing(?:[\\/]|$)/i.test(String(file))),
+    `${service} release output still contains tests or verification helpers`
+  );
+}
 
 const hookPath = tauriConfig.bundle?.windows?.nsis?.installerHooks;
 assert(typeof hookPath === "string", "NSIS installer hooks are not configured");
 const installerHookFile = join(tauriRoot, hookPath);
 assert(existsSync(installerHookFile), "configured NSIS installer hook file is missing");
-const cleanupScript = readFileSync(join(tauriRoot, "installer", "stop-bundled-runtime.ps1"), "utf8");
-const encodedCleanupScript = Buffer.from(cleanupScript, "utf16le").toString("base64");
+assert(
+  !existsSync(join(tauriRoot, "installer", "stop-bundled-runtime.ps1")),
+  "obsolete PowerShell runtime cleanup file must not ship"
+);
 const hookSource = readFileSync(installerHookFile, "utf8");
-assert(hookSource.includes(encodedCleanupScript), "embedded runtime cleanup command is out of sync with its source script");
 for (const marker of [
   "NSIS_HOOK_PREINSTALL",
   "NSIS_HOOK_PREUNINSTALL",
-  "PERSONAL_AI_RUNTIME_NODE",
-  "-EncodedCommand"
+  "MAINBINARYSRCPATH",
+  "--cleanup-installed-runtime"
 ]) {
   assert(hookSource.includes(marker), `NSIS installer hooks are missing marker: ${marker}`);
+}
+for (const forbiddenMarker of ["powershell", "EncodedCommand", "PERSONAL_AI_RUNTIME_NODE", "stop-bundled-runtime.ps1"]) {
+  assert(
+    !hookSource.toLowerCase().includes(forbiddenMarker.toLowerCase()),
+    `NSIS installer hooks still use forbidden shell cleanup: ${forbiddenMarker}`
+  );
 }
 
 const executableBytes = readFileSync(releaseExecutable);
@@ -72,6 +86,7 @@ const generatedSource = readFileSync(generatedInstaller, "utf8");
 for (const marker of [
   "NSIS_HOOK_PREINSTALL",
   "installer-hooks.nsh",
+  "PERSONAL_AI_SAFE_IN_PLACE_UPGRADE",
   "runtime\\node.exe",
   "api\\dist\\server.js",
   "worker\\dist\\worker.js"
@@ -81,7 +96,8 @@ for (const marker of [
 
 const installerSize = statSync(installer).size;
 assert(installerSize > 10_000_000, `desktop installer is unexpectedly small: ${installerSize} bytes`);
-await verifyExactPathCleanup(join(runtimeRoot, "node.exe"), join(tauriRoot, "installer", "stop-bundled-runtime.ps1"));
+await verifyExactPathCleanup(join(runtimeRoot, "node.exe"), releaseExecutable);
+verifyMissingRuntimeCleanup(releaseExecutable, join(runtimeRoot, "missing-node.exe"));
 const sha256 = createHash("sha256").update(readFileSync(installer)).digest("hex").toUpperCase();
 
 console.log(`desktop-installer-version: ${version}`);
@@ -107,7 +123,7 @@ function readPeSubsystem(bytes, label) {
   return bytes.readUInt16LE(peOffset + 24 + 68);
 }
 
-async function verifyExactPathCleanup(nodePath, cleanupScriptPath) {
+async function verifyExactPathCleanup(nodePath, cleanupExecutable) {
   const child = spawn(nodePath, ["-e", "setInterval(() => {}, 1000)"], {
     stdio: "ignore",
     windowsHide: true
@@ -116,26 +132,12 @@ async function verifyExactPathCleanup(nodePath, cleanupScriptPath) {
   try {
     await delay(300);
     assert(child.exitCode === null, "cleanup verification node did not start");
-    const result = spawnSync(
-      "powershell.exe",
-      [
-        "-NoLogo",
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-WindowStyle",
-        "Hidden",
-        "-File",
-        cleanupScriptPath
-      ],
-      {
-        encoding: "utf8",
-        windowsHide: true,
-        env: { ...process.env, PERSONAL_AI_RUNTIME_NODE: nodePath }
-      }
-    );
+    const result = spawnSync(cleanupExecutable, ["--cleanup-installed-runtime", nodePath], {
+      encoding: "utf8",
+      windowsHide: true
+    });
     assert(result.status === 0, `runtime cleanup command failed: ${result.stderr || result.stdout}`);
+    assert(process.kill(process.pid, 0) === true, "runtime cleanup command stopped the verifier process");
     const exited = await Promise.race([
       exitPromise.then(() => true),
       delay(2_000).then(() => false)
@@ -144,6 +146,14 @@ async function verifyExactPathCleanup(nodePath, cleanupScriptPath) {
   } finally {
     if (child.exitCode === null) child.kill();
   }
+}
+
+function verifyMissingRuntimeCleanup(cleanupExecutable, missingNodePath) {
+  const result = spawnSync(cleanupExecutable, ["--cleanup-installed-runtime", missingNodePath], {
+    encoding: "utf8",
+    windowsHide: true
+  });
+  assert(result.status === 0, "runtime cleanup must succeed when no previous bundled node exists");
 }
 
 function delay(milliseconds) {

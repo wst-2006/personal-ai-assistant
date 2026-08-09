@@ -33,6 +33,12 @@ export const taskRoutes: FastifyPluginAsync<TaskRoutesOptions> = async (app, opt
     return options.taskService.list(query.data.date);
   });
 
+  app.get("/tasks/trash", async (request, reply) => {
+    const query = listQuerySchema.safeParse(request.query);
+    if (!query.success) return invalid(reply, "invalid_query", query.error);
+    return { tasks: await options.taskService.listDeleted(query.data.date) };
+  });
+
   app.get("/tasks/:id", async (request, reply) => {
     const params = taskParamsSchema.safeParse(request.params);
     if (!params.success) return invalid(reply, "invalid_task_id", params.error);
@@ -85,6 +91,24 @@ export const taskRoutes: FastifyPluginAsync<TaskRoutesOptions> = async (app, opt
     try {
       await options.taskService.softDelete(params.data.id, input.data.expectedVersion, input.data.reason);
       return reply.status(204).send();
+    } catch (error) {
+      return taskError(reply, error);
+    }
+  });
+
+  app.post("/tasks/:id/restore", async (request, reply) => {
+    const params = taskParamsSchema.safeParse(request.params);
+    const input = taskReopenSchema.safeParse(request.body);
+    if (!params.success) return invalid(reply, "invalid_task_id", params.error);
+    if (!input.success) return invalid(reply, "invalid_restore_request", input.error);
+    try {
+      return await options.taskService.restore(
+        params.data.id,
+        input.data.expectedVersion,
+        input.data.conflictDecision,
+        input.data.expectedConflictFingerprint,
+        input.data.reason
+      );
     } catch (error) {
       return taskError(reply, error);
     }

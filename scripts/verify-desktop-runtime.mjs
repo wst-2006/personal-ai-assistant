@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,7 +22,6 @@ if (!existsSync(envFile)) {
 if (existsSync(bundledEnv)) {
   throw new Error("standalone runtime must never contain the private repository .env file");
 }
-const localConfiguration = parseEnv(readFileSync(envFile, "utf8"));
 for (const entrypoint of [api, worker]) {
   const syntax = spawnSync(node, ["--check", entrypoint], { cwd: runtimeRoot, encoding: "utf8" });
   if (syntax.status !== 0) {
@@ -37,7 +36,10 @@ const child = spawn(node, [api], {
     ...process.env,
     API_HOST: "127.0.0.1",
     API_PORT: port,
-    PERSONAL_AI_ENV_FILE: envFile
+    PERSONAL_AI_ENV_FILE: envFile,
+    // External Feishu delivery was already accepted separately. Packaging QA
+    // verifies the local runtime without opening a duplicate long connection.
+    FEISHU_CALLBACK_TRANSPORT: "http"
   }
 });
 let errorOutput = "";
@@ -84,19 +86,6 @@ try {
       throw new Error("standalone focus structure response is malformed");
     }
   }
-  const expectsFeishuWebSocket = localConfiguration.FEISHU_CALLBACK_TRANSPORT !== "http"
-    && Boolean(localConfiguration.FEISHU_APP_ID)
-    && Boolean(localConfiguration.FEISHU_APP_SECRET)
-    && Boolean(localConfiguration.FEISHU_TARGET_OPEN_ID);
-  if (expectsFeishuWebSocket) {
-    for (let attempt = 0; attempt < 30 && !standardOutput.includes("Feishu long connection established."); attempt += 1) {
-      await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
-    }
-    if (!standardOutput.includes("Feishu long connection established.")) {
-      throw new Error(`standalone Feishu long connection was not established${errorOutput ? `: ${errorOutput}` : ""}`);
-    }
-    console.log("standalone-runtime-feishu-websocket: ok");
-  }
   console.log("standalone-runtime-health-capabilities: ok");
   console.log("standalone-runtime-task-read: ok");
   console.log(`standalone-runtime-focus-structure-read: ${exactTask ? "ok" : "skipped (no exact task today)"}`);
@@ -111,17 +100,4 @@ async function fetchJson(url) {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`${url} returned HTTP ${response.status}`);
   return response.json();
-}
-
-function parseEnv(source) {
-  const values = {};
-  for (const line of source.split(/\r?\n/)) {
-    const match = line.match(/^\s*([A-Z][A-Z0-9_]*)\s*=\s*(.*?)\s*$/);
-    if (!match) continue;
-    const rawValue = match[2];
-    values[match[1]] = rawValue.startsWith('"') && rawValue.endsWith('"')
-      ? rawValue.slice(1, -1)
-      : rawValue;
-  }
-  return values;
 }
