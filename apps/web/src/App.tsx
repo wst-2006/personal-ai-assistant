@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { AlertTriangle, BarChart3, Bot, BrainCircuit, CalendarDays, Check, CircleHelp, Download, HardDriveDownload, HeartPulse, LoaderCircle, Map, NotebookPen, RefreshCw, Send, Settings2, Sparkles, Target, X } from "lucide-react";
+import { AlertTriangle, BarChart3, Bot, CalendarDays, Check, CircleHelp, Download, HardDriveDownload, HeartPulse, LoaderCircle, Map, NotebookPen, RefreshCw, Send, Settings2, Sparkles, Target, X } from "lucide-react";
 import { DiaryWorkspace } from "./DiaryWorkspace";
 import { FocusWorkspace } from "./FocusWorkspace";
 import { GrowthWorkspace } from "./GrowthWorkspace";
@@ -593,8 +593,8 @@ export function App() {
 
   return <main className="app-shell">
     <aside className="app-rail" aria-label="主要导航">
-      <button className="brand-mark" type="button" aria-label="回到今日" onClick={() => setView("today")}><BrainCircuit /></button>
-      <nav className="rail-nav">{navItems.map(({ id, label, icon: Icon }) => <button className={`rail-button ${view === id ? "active" : ""}`} type="button" key={id} aria-label={label} aria-current={view === id ? "page" : undefined} onClick={() => setView(id)}><Icon /><span>{label}</span></button>)}</nav>
+      <button className="brand-mark" type="button" aria-label="回到今日" onClick={() => setView("today")}><span aria-hidden="true">序</span></button>
+      <nav className="rail-nav">{navItems.map(({ id, label, icon: Icon }, index) => <button className={`rail-button ${view === id ? "active" : ""}`} type="button" key={id} data-index={String(index + 1).padStart(2, "0")} aria-label={label} aria-current={view === id ? "page" : undefined} onClick={() => setView(id)}><Icon /><span>{label}</span></button>)}</nav>
       <div className="rail-footer" title="只记录你主动输入的内容"><CircleHelp /></div>
     </aside>
     <section className="app-canvas">
