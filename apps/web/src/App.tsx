@@ -7,6 +7,7 @@ import { HealthWorkspace } from "./HealthWorkspace";
 import { LongRangePlansWorkspace } from "./LongRangePlansWorkspace";
 import { PlanChangeDrawer, type PlanChangeAdjustmentReview } from "./PlanChangeDrawer";
 import { ReviewWorkspace } from "./ReviewWorkspace";
+import { InitialInkLoadingScreen } from "./SeasonalAtmosphere";
 import { TodayWorkspace, type PlanChangeTaskEditRequest } from "./TodayWorkspace";
 import { UserProfileSettings } from "./UserProfileSettings";
 import { PRODUCT_SCHEDULE_END_MINUTE, PRODUCT_SCHEDULE_START_MINUTE } from "@personal-ai/domain/task";
@@ -592,6 +593,7 @@ export function App() {
   }
 
   return <main className="app-shell">
+    <InitialInkLoadingScreen />
     <aside className="app-rail" aria-label="主要导航">
       <button className="brand-mark" type="button" aria-label="回到今日" onClick={() => setView("today")}><span aria-hidden="true">序</span></button>
       <nav className="rail-nav">{navItems.map(({ id, label, icon: Icon }, index) => <button className={`rail-button ${view === id ? "active" : ""}`} type="button" key={id} data-index={String(index + 1).padStart(2, "0")} aria-label={label} aria-current={view === id ? "page" : undefined} onClick={() => setView(id)}><Icon /><span>{label}</span></button>)}</nav>

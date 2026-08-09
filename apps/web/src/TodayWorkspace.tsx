@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, CalendarPlus, Check, CheckCircle2, ChevronDown, CircleDashed, GripHorizontal, HeartPulse, History, Leaf, Lightbulb, ListTodo, LoaderCircle, MoreHorizontal, Pencil, Play, RotateCcw, Search, Sparkles, Trash2, X, XCircle } from "lucide-react";
+import { SeasonalPlant } from "./SeasonalAtmosphere";
 
 type ScheduleKind = "none" | "daypart" | "exact";
 type Daypart = "morning" | "afternoon" | "evening";
@@ -237,6 +238,7 @@ export function TodayWorkspace({ onFocus, onOpenHealth, healthTaskDraft, onHealt
   return <section className="today-workspace">
     <header className="timeline-header">
       <svg className="today-ink-landscape" viewBox="0 0 900 300" preserveAspectRatio="none" aria-hidden="true"><path className="ink-mountain ink-mountain-far" d="M130 244C212 213 248 128 326 158C379 179 401 237 459 210C529 177 548 91 625 119C684 140 707 211 771 188C819 171 850 130 900 118"/><path className="ink-mountain ink-mountain-near" d="M253 259C324 225 343 185 397 194C449 203 472 250 531 224C596 194 620 157 679 174C735 191 761 239 838 207"/><path className="ink-flight" d="M696 79c11-10 23-10 34 0m-34 0c-10-8-20-8-29 0M764 111c8-7 17-7 25 0m-25 0c-7-6-14-6-21 0"/></svg>
+      <SeasonalPlant date={date} />
       <div className="today-inscription" aria-hidden="true"><span>一日有序</span><i/><span>心自从容</span></div>
       <div className="today-title-lockup"><div className="today-title-row"><span className="today-title-han">今日</span><span className="today-title-latin">TODAY</span><span className="today-seal">今</span></div><h1>把今天放回时间里。</h1><small className="timeline-rule">{date===today()?`可排时段 07:00–23:00；未来安排从 ${hhmm(earliestAllowedMinute(date))} 开始，过去时段可补录。`:"可排时段 07:00–23:00"}</small></div>
       <div className="timeline-date"><div className="date-folio" key={date}><span>日</span><strong>{dateFolio.day}</strong><small>{dateFolio.meta}</small></div><label className="date-picker"><span>选择日期</span><input aria-label="时间轴日期" type="date" value={date} onChange={e=>setDate(e.target.value)}/></label><button className="primary-button" onClick={()=>{setError(null);setEditing(null);setSource(null);setForm(emptyForm(date));}}><CalendarPlus/>完整添加</button></div>

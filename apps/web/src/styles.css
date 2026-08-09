@@ -780,6 +780,535 @@ select {
   }
 }
 
+/* Seasonal atmosphere v3: a decorative layer that never captures interaction. */
+.seasonal-corner {
+  position: absolute;
+  z-index: 0;
+  top: -24px;
+  right: 8px;
+  width: 180px;
+  height: 156px;
+  color: #4d4a43;
+  opacity: 0;
+  pointer-events: none;
+  transform-origin: 84% 14%;
+  animation: seasonal-corner-arrive 1.35s 1.62s cubic-bezier(.16, .84, .24, 1) forwards;
+}
+
+.seasonal-corner::before {
+  position: absolute;
+  top: 28px;
+  right: 17px;
+  width: 1px;
+  height: 78px;
+  background: rgba(63, 57, 51, .19);
+  content: "";
+  transform-origin: top;
+  animation: vertical-rule-write .8s 2.18s cubic-bezier(.2, .8, .2, 1) both;
+}
+
+.seasonal-corner svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.seasonal-wash {
+  fill: rgba(76, 73, 66, .035);
+  transform-origin: center;
+  animation: seasonal-wash-breathe 13s 2.2s ease-in-out infinite alternate;
+}
+
+.seasonal-mist {
+  fill: none;
+  stroke: rgba(72, 69, 63, .22);
+  stroke-width: .7;
+  stroke-linecap: round;
+  stroke-dasharray: 290;
+  stroke-dashoffset: 290;
+  animation: ink-line-draw 1.5s 2.18s ease-out forwards;
+}
+
+.seasonal-plant-lines {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.seasonal-plant-lines > path:not(.seasonal-falling-petal),
+.seasonal-plant-lines > g > path {
+  stroke-dasharray: 520;
+  stroke-dashoffset: 520;
+  animation: seasonal-brush-write 1.75s 1.78s cubic-bezier(.18, .82, .2, 1) forwards;
+}
+
+.seasonal-plant-lines > path:nth-child(2),
+.seasonal-plant-lines > g > path:nth-child(2) {
+  animation-delay: 2.02s;
+}
+
+.seasonal-plant-lines circle {
+  fill: currentColor;
+  stroke: none;
+  opacity: 0;
+  animation: seasonal-center-bloom .55s 2.72s ease-out forwards;
+}
+
+.seasonal-leaf-soft {
+  fill: rgba(57, 73, 65, .035);
+  stroke-width: 1;
+  opacity: .76;
+}
+
+.seasonal-flower {
+  stroke-width: 1.1;
+}
+
+.seasonal-orchid .seasonal-flower {
+  fill: rgba(76, 84, 101, .055);
+  stroke: #686b75;
+}
+
+.seasonal-lotus .seasonal-flower {
+  fill: rgba(154, 103, 96, .06);
+  stroke: #806b67;
+}
+
+.seasonal-chrysanthemum .seasonal-flower {
+  fill: rgba(147, 117, 62, .025);
+  stroke: #7a6948;
+}
+
+.seasonal-flower-wash {
+  fill: rgba(142, 113, 61, .07);
+  stroke: none;
+  opacity: 0;
+  transform-origin: 172px 86px;
+  animation: seasonal-wash-bloom 1.2s 2.28s ease-out forwards;
+}
+
+.seasonal-chrysanthemum-bloom path {
+  stroke-width: .95;
+}
+
+.seasonal-chrysanthemum-bloom .seasonal-petal-inner {
+  stroke-width: .78;
+  opacity: .72;
+}
+
+.seasonal-side-bloom {
+  opacity: .68;
+}
+
+.seasonal-side-bloom path {
+  stroke-width: .85;
+}
+
+.seasonal-plum .seasonal-flower {
+  fill: rgba(161, 65, 53, .045);
+  stroke: #84534d;
+}
+
+.seasonal-water-line {
+  opacity: .46;
+}
+
+.seasonal-branch {
+  stroke-width: 2.1;
+  opacity: .82;
+}
+
+.seasonal-falling-petal {
+  fill: rgba(151, 115, 61, .09);
+  stroke: #7a6948;
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: seasonal-petal-drift 8s 3.4s ease-in-out infinite;
+}
+
+.seasonal-caption {
+  position: absolute;
+  top: 22px;
+  right: 2px;
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  color: #6a6259;
+  font-family: "FZKai-Z03", KaiTi, STKaiti, serif;
+  writing-mode: vertical-rl;
+}
+
+.seasonal-caption span {
+  color: var(--editorial-seal-dark);
+  font-size: 10px;
+  letter-spacing: .18em;
+}
+
+.seasonal-caption strong {
+  color: #514b44;
+  font-size: 18px;
+  font-weight: 400;
+  letter-spacing: .13em;
+}
+
+.seasonal-caption small {
+  font-size: 9px;
+  letter-spacing: .2em;
+  opacity: .72;
+}
+
+.timeline-date {
+  position: relative;
+  z-index: 2;
+}
+
+.ink-loading-screen {
+  position: fixed;
+  z-index: 120;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  color: var(--editorial-ink);
+  background:
+    repeating-linear-gradient(92deg, rgba(69, 60, 51, .012) 0 1px, transparent 1px 8px),
+    repeating-linear-gradient(4deg, rgba(103, 87, 68, .012) 0 1px, transparent 1px 11px),
+    var(--editorial-paper);
+  isolation: isolate;
+}
+
+.ink-loading-screen.is-leaving {
+  pointer-events: none;
+  animation: ink-loading-leave .43s cubic-bezier(.4, 0, .8, .4) forwards;
+}
+
+.ink-loading-landscape {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.loading-ink-washes {
+  fill: #4e514c;
+  opacity: .055;
+  animation: loading-wash-drift 5.2s ease-in-out infinite alternate;
+}
+
+.loading-mountain-lines,
+.loading-river-lines,
+.loading-waterfall {
+  fill: none;
+  stroke: #474942;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.loading-mountain-lines {
+  stroke-width: 1.05;
+  opacity: .27;
+}
+
+.loading-mountain-lines path {
+  stroke-dasharray: 1500;
+  stroke-dashoffset: 1500;
+  animation: loading-mountain-draw 1.5s .08s cubic-bezier(.18, .82, .2, 1) forwards;
+}
+
+.loading-mountain-lines path + path {
+  opacity: .62;
+  animation-delay: .3s;
+}
+
+.loading-waterfall {
+  stroke-width: 1.35;
+  opacity: .34;
+}
+
+.loading-waterfall path {
+  stroke-dasharray: 46 18;
+  animation: loading-water-flow 1.25s linear infinite;
+}
+
+.loading-waterfall path:nth-child(2) {
+  animation-delay: -.42s;
+}
+
+.loading-waterfall path:nth-child(3) {
+  animation-delay: -.78s;
+}
+
+.loading-river-lines {
+  stroke-width: .9;
+  opacity: .22;
+}
+
+.loading-river-lines path {
+  stroke-dasharray: 560;
+  stroke-dashoffset: 560;
+  animation: loading-mountain-draw 1.15s .62s ease-out forwards;
+}
+
+.ink-loading-center {
+  display: grid;
+  width: min(340px, calc(100vw - 64px));
+  grid-template-columns: 48px minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 0 16px;
+  padding: 26px 0 22px;
+  border-top: 1px solid rgba(65, 57, 51, .23);
+  border-bottom: 1px solid rgba(65, 57, 51, .13);
+  animation: loading-center-arrive .7s .08s cubic-bezier(.2, .8, .2, 1) both;
+}
+
+.ink-loading-center::after {
+  position: absolute;
+  width: 54px;
+  height: 1px;
+  align-self: end;
+  margin-bottom: -1px;
+  background: var(--editorial-seal);
+  content: "";
+  transform-origin: left;
+  animation: rule-write .9s .22s cubic-bezier(.2, .8, .2, 1) both;
+}
+
+.ink-loading-seal {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  grid-row: 1 / 3;
+  place-items: center;
+  border-radius: 4px 3px 5px 2px;
+  color: #fff8ed;
+  background: var(--editorial-seal);
+  box-shadow: 0 8px 18px rgba(93, 40, 33, .13), inset 0 0 0 1px rgba(255, 255, 255, .2);
+  font-family: "FZKai-Z03", KaiTi, STKaiti, serif;
+  font-size: 23px;
+  transform: rotate(-3deg);
+  animation: seal-arrive .58s .25s cubic-bezier(.18, .9, .26, 1.25) both;
+}
+
+.ink-loading-center > div {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 15px;
+}
+
+.ink-loading-center strong {
+  font-family: "Noto Serif SC", "Songti SC", STSong, serif;
+  font-size: 18px;
+  font-weight: 500;
+  letter-spacing: .2em;
+}
+
+.ink-loading-center small {
+  color: var(--editorial-muted);
+  font-family: "FZKai-Z03", KaiTi, STKaiti, serif;
+  font-size: 10px;
+  letter-spacing: .18em;
+}
+
+.ink-loading-center progress {
+  width: 100%;
+  height: 3px;
+  align-self: center;
+  appearance: none;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+.ink-loading-center progress::-webkit-progress-bar {
+  background: rgba(62, 54, 48, .14);
+}
+
+.ink-loading-center progress::-webkit-progress-value {
+  background: linear-gradient(90deg, #4a4943, var(--editorial-seal));
+  transition: width 80ms linear;
+}
+
+.ink-loading-center progress::-moz-progress-bar {
+  background: var(--editorial-seal);
+}
+
+.ink-loading-percent {
+  align-self: end;
+  color: #726a61;
+  font-family: Georgia, serif;
+  font-size: 10px;
+  letter-spacing: .1em;
+}
+
+@keyframes seasonal-corner-arrive {
+  0% { opacity: 0; transform: translate3d(18px, -22px, 0) scale(.96); filter: blur(4px); }
+  54% { opacity: .58; filter: blur(0); }
+  100% { opacity: .68; transform: translate3d(0, 0, 0) scale(1); filter: blur(0); }
+}
+
+@keyframes seasonal-brush-write {
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes seasonal-center-bloom {
+  from { opacity: 0; transform: scale(.4); }
+  to { opacity: .72; transform: scale(1); }
+}
+
+@keyframes seasonal-wash-bloom {
+  from { opacity: 0; transform: scale(.72) rotate(-4deg); }
+  to { opacity: .82; transform: scale(1) rotate(0); }
+}
+
+@keyframes seasonal-wash-breathe {
+  from { opacity: .62; transform: scale(.985) rotate(-.4deg); }
+  to { opacity: 1; transform: scale(1.025) rotate(.35deg); }
+}
+
+@keyframes seasonal-petal-drift {
+  0%, 18% { opacity: 0; transform: translate3d(0, 0, 0) rotate(0deg); }
+  34% { opacity: .62; }
+  76% { opacity: .28; }
+  100% { opacity: 0; transform: translate3d(-18px, 92px, 0) rotate(92deg); }
+}
+
+@keyframes loading-mountain-draw {
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes loading-water-flow {
+  to { stroke-dashoffset: -128; }
+}
+
+@keyframes loading-wash-drift {
+  from { transform: translate3d(-1.2%, .5%, 0) scale(.98); }
+  to { transform: translate3d(1.4%, -.8%, 0) scale(1.025); }
+}
+
+@keyframes loading-center-arrive {
+  from { opacity: 0; transform: translateY(13px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes ink-loading-leave {
+  from { opacity: 1; filter: blur(0); }
+  to { opacity: 0; filter: blur(7px); }
+}
+
+@media (max-width: 1050px) {
+  .seasonal-corner {
+    top: -18px;
+    right: 2px;
+    width: 156px;
+    height: 142px;
+    opacity: .56;
+  }
+
+  .seasonal-caption {
+    right: 0;
+  }
+}
+
+@media (max-width: 760px) {
+  .seasonal-corner {
+    top: -8px;
+    right: -20px;
+    width: 154px;
+    height: 154px;
+    opacity: 0;
+    animation-name: seasonal-corner-arrive-mobile;
+  }
+
+  .seasonal-corner::before,
+  .seasonal-caption {
+    display: none;
+  }
+
+  .ink-loading-center {
+    width: min(310px, calc(100vw - 42px));
+    grid-template-columns: 44px minmax(0, 1fr) 25px;
+    gap: 0 12px;
+  }
+
+  .loading-mountain-lines {
+    opacity: .2;
+  }
+
+  .loading-waterfall {
+    opacity: .27;
+  }
+}
+
+@keyframes seasonal-corner-arrive-mobile {
+  0% { opacity: 0; transform: translate3d(15px, -18px, 0) scale(.95); filter: blur(3px); }
+  100% { opacity: .36; transform: translate3d(0, 0, 0) scale(1); filter: blur(0); }
+}
+
+@media (max-width: 470px) {
+  .seasonal-corner {
+    right: -30px;
+    width: 128px;
+    height: 136px;
+  }
+
+  .ink-loading-center strong {
+    font-size: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .seasonal-corner,
+  .seasonal-corner::before,
+  .seasonal-wash,
+  .seasonal-mist,
+  .seasonal-plant-lines > path,
+  .seasonal-plant-lines > g > path,
+  .seasonal-plant-lines circle,
+  .seasonal-flower-wash,
+  .seasonal-falling-petal,
+  .ink-loading-screen,
+  .loading-ink-washes,
+  .loading-mountain-lines path,
+  .loading-waterfall path,
+  .loading-river-lines path,
+  .ink-loading-center,
+  .ink-loading-center::after,
+  .ink-loading-seal {
+    animation: none !important;
+  }
+
+  .seasonal-corner {
+    opacity: .6;
+  }
+
+  .seasonal-plant-lines > path,
+  .seasonal-plant-lines > g > path,
+  .seasonal-mist,
+  .loading-mountain-lines path,
+  .loading-river-lines path {
+    stroke-dashoffset: 0;
+  }
+
+  .seasonal-plant-lines circle {
+    opacity: .7;
+  }
+
+  .seasonal-flower-wash {
+    opacity: .78;
+  }
+
+  .ink-loading-screen.is-leaving {
+    opacity: 0;
+  }
+}
+
 /* Eastern editorial system v2: composition and interaction, not a color filter. */
 :root {
   --editorial-paper: #f5f0e7;
