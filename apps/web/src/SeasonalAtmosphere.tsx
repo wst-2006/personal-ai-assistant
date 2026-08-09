@@ -76,6 +76,9 @@ function PlantDrawing({ kind }: { kind: SeasonalPlantKind }) {
   }
   if (kind === "chrysanthemum") {
     return <g className="seasonal-plant-lines seasonal-chrysanthemum">
+      <path className="seasonal-chrysanthemum-inkmass seasonal-chrysanthemum-inkmass-left" d="M160 177C145 157 123 157 106 174C113 197 141 205 160 177Z" />
+      <path className="seasonal-chrysanthemum-inkmass seasonal-chrysanthemum-inkmass-right" d="M178 158C194 137 218 139 229 160C214 178 191 176 178 158Z" />
+      <path className="seasonal-chrysanthemum-inkmass seasonal-chrysanthemum-inkmass-high" d="M151 145C134 130 113 136 106 154C120 167 141 163 151 145Z" />
       <path d="M172 218C171 177 170 138 171 95M169 178C147 155 128 139 99 128M173 161C194 143 211 132 234 126M159 149C143 130 132 117 116 104" />
       <path className="seasonal-leaf-soft" d="M160 177C136 161 117 170 107 194C132 198 151 191 160 177ZM178 157C196 138 215 142 226 162C205 170 189 167 178 157ZM151 145C132 133 116 138 108 154C126 159 141 155 151 145Z" />
       <path className="seasonal-flower-wash" d="M138 86C138 56 156 35 182 38C210 41 220 65 209 92C199 117 164 126 145 107C139 101 137 94 138 86Z" />
@@ -91,10 +94,12 @@ function PlantDrawing({ kind }: { kind: SeasonalPlantKind }) {
         <path className="seasonal-petal-inner" d="M172 87C165 79 165 70 172 69C179 74 177 82 172 87ZM173 87C181 80 190 80 191 87C186 94 179 91 173 87ZM172 89C179 95 178 103 171 104C164 99 167 93 172 89ZM170 88C162 93 154 90 155 83C162 78 167 83 170 88Z" />
         <circle cx="172" cy="87" r="3.2" />
       </g>
+      <path className="seasonal-side-flower-wash" d="M92 103C91 86 101 74 116 76C131 78 140 92 134 107C127 123 106 126 96 115C93 112 92 108 92 103Z" />
       <g className="seasonal-flower seasonal-side-bloom">
-        <path d="M113 105C104 96 104 87 111 83C119 87 120 97 113 105M114 105C121 95 130 92 134 98C132 107 123 109 114 105M112 106C104 112 96 109 97 102C103 97 108 101 112 106" />
+        <path d="M113 105C104 96 104 87 111 83C119 87 120 97 113 105M114 105C121 95 130 92 134 98C132 107 123 109 114 105M112 106C104 112 96 109 97 102C103 97 108 101 112 106M113 104C110 94 115 86 122 89C126 97 120 103 113 104M112 106C116 115 109 121 103 117C101 111 106 107 112 106" />
         <circle cx="113" cy="104" r="2.2" />
       </g>
+      <path className="seasonal-chrysanthemum-bud" d="M230 126C222 117 224 108 232 107C241 112 240 121 230 126ZM100 128C93 118 96 110 104 111C111 117 108 125 100 128Z" />
       <path className="seasonal-falling-petal" d="M222 73C231 66 238 70 233 79C228 86 222 83 222 73Z" />
     </g>;
   }
@@ -127,7 +132,7 @@ export function InitialInkLoadingScreen() {
 
   useEffect(() => {
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const duration = reducedMotion ? 260 : 1_650;
+    const duration = reducedMotion ? 260 : 2_150;
     const fadeDuration = reducedMotion ? 40 : 430;
     const startedAt = performance.now();
     let animationFrame = 0;
@@ -153,29 +158,44 @@ export function InitialInkLoadingScreen() {
   }, []);
 
   if (!visible) return null;
+  const progressRatio = progress / 100;
+  const sunOffset = Math.round((1 - progressRatio) * 96);
+  const sunOpacity = Math.min(1, .18 + progressRatio * 1.05);
   return <section className={`ink-loading-screen ${leaving ? "is-leaving" : ""}`} aria-label="正在加载个人 AI 助手" aria-live="polite">
     <svg className="ink-loading-landscape" viewBox="0 0 1200 720" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
       <defs>
-        <filter id="loading-ink-soften" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="13" /></filter>
-        <filter id="loading-water-soften" x="-40%" y="-20%" width="180%" height="150%"><feGaussianBlur stdDeviation="1.7" /></filter>
+        <filter id="loading-ink-soften" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="18" /></filter>
+        <filter id="loading-mist-soften" x="-30%" y="-60%" width="160%" height="220%"><feGaussianBlur stdDeviation="11" /></filter>
+        <clipPath id="loading-sun-horizon">
+          <path d="M0 0H1200V300C899 292 821 277 760 290C721 299 700 314 674 296C648 309 629 291 594 283C548 272 510 286 465 303C407 324 339 311 0 302Z" />
+        </clipPath>
       </defs>
       <g className="loading-ink-washes" filter="url(#loading-ink-soften)">
-        <ellipse cx="166" cy="292" rx="210" ry="132" />
-        <ellipse cx="1060" cy="216" rx="228" ry="118" />
-        <ellipse cx="949" cy="622" rx="296" ry="92" />
+        <ellipse cx="227" cy="349" rx="245" ry="172" />
+        <ellipse cx="994" cy="327" rx="254" ry="178" />
+        <ellipse cx="609" cy="626" rx="362" ry="76" />
       </g>
-      <g className="loading-mountain-lines">
-        <path d="M-35 546C98 487 143 324 262 368C334 394 368 475 445 441C525 406 547 243 667 284C763 317 791 455 890 409C1000 358 1038 178 1239 225" />
-        <path d="M58 590C193 539 228 429 332 459C403 480 452 551 536 508C617 466 653 349 744 379C847 413 873 541 1019 465C1098 424 1139 366 1233 350" />
+      <g className="loading-distant-mountains">
+        <path d="M-64 493C80 430 148 276 278 316C365 343 394 423 474 394C552 365 570 211 685 248C773 277 815 414 912 376C1016 336 1071 188 1272 237L1272 532L-64 532Z" />
+        <path d="M17 530C136 483 216 380 321 411C393 432 447 493 525 454C614 409 644 322 740 348C844 377 891 480 1009 429C1095 392 1149 341 1244 337L1244 562L17 562Z" />
       </g>
-      <g className="loading-waterfall" filter="url(#loading-water-soften)">
-        <path d="M865 243C851 306 854 354 842 421C833 473 824 518 830 575" />
-        <path d="M883 246C871 312 877 369 861 438C851 485 849 531 855 578" />
-        <path d="M900 251C887 315 896 378 880 443C869 491 869 540 879 579" />
+      <g clipPath="url(#loading-sun-horizon)">
+        <g className="loading-rising-sun" style={{ transform: `translateY(${sunOffset}px)`, opacity: sunOpacity }}>
+          <circle className="loading-sun-glow" cx="674" cy="244" r="63" />
+          <circle className="loading-sun-disc" cx="674" cy="244" r="39" />
+        </g>
+      </g>
+      <image className="loading-waterfall-art" href="/art/cold-waterfall-ink-public-domain.png" x="292" y="28" width="636" height="702" preserveAspectRatio="xMidYMid meet" />
+      <g className="loading-water-glints">
+        <path d="M630 440C620 478 621 520 613 558M650 427C643 473 647 520 640 574M670 445C662 489 667 531 660 563" />
+      </g>
+      <g className="loading-water-spray" filter="url(#loading-mist-soften)">
+        <ellipse cx="628" cy="649" rx="132" ry="26" />
+        <ellipse cx="680" cy="641" rx="92" ry="20" />
       </g>
       <g className="loading-river-lines">
-        <path d="M824 579C737 586 672 604 601 634C542 658 478 664 388 657" />
-        <path d="M901 580C819 600 768 621 708 653C674 671 632 681 573 680" />
+        <path d="M466 659C391 659 330 671 278 694" />
+        <path d="M704 659C781 659 849 670 917 698" />
       </g>
     </svg>
     <div className="ink-loading-center">
