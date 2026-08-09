@@ -98,6 +98,11 @@ test.describe("真实今日时间轴",()=>{
     expect(labels).toHaveLength(17);
     expect(labels[0]).toBe("07:00");
     expect(labels.at(-1)).toBe("23:00");
+    await page.locator(".day-scroll").evaluate(element=>{element.scrollTop=0;});
+    const firstLabelBox=await page.locator(".hour-line time").first().boundingBox();
+    const scrollBox=await page.locator(".day-scroll").boundingBox();
+    expect(firstLabelBox).not.toBeNull();expect(scrollBox).not.toBeNull();
+    expect(firstLabelBox!.y).toBeGreaterThanOrEqual(scrollBox!.y);
     await page.getByRole("button",{name:"完整添加"}).click();
     await page.getByLabel("任务标题").fill("不应进入清晨的任务");
     await page.getByLabel("开始时间").fill("06:30");
