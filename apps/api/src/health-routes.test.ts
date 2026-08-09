@@ -8,6 +8,20 @@ import { HealthService } from "./health-service.js";
 
 const connection = await connectVerifiedDatabase(loadDatabaseConfig());
 const service = new HealthService(connection.db);
+const testContent = (overview: string) => ({
+  overview,
+  supplements: ["仅供测试查看。"],
+  days: Array.from({ length: 7 }, () => ({
+    nutritionDirection: "维持正常餐盘结构。",
+    proteinRangeGrams: { minimum: 90, maximum: 120 },
+    plateGuidance: ["每餐有主要蛋白质来源。"],
+    seasonalVegetables: ["番茄"],
+    seasonalGuidance: null,
+    seasonalPoem: null,
+    movement: { category: "recovery" as const, durationMinutes: { minimum: 20, maximum: 30 }, intensity: "low" as const, highIntensity: false, safetyReminder: "按实际舒适度决定。" }
+  }))
+});
+const createManual = (weekStart: string, overview: string) => service.createManualCandidate({ weekStart, content: testContent(overview) });
 const app = buildApp({
   healthService: service,
   healthPlanner: {
@@ -62,7 +76,7 @@ describe("sleep screenshot routes", () => {
 
   it("returns only the confirmed daily reference for the Today summary", async () => {
     const weekStart = "2099-05-03";
-    const candidate = await service.createTemplateCandidate(weekStart, null);
+    const candidate = await createManual(weekStart, "今日摘要测试参考");
     try {
       const before = await app.inject({ method: "GET", url: "/api/v1/health/days/2099-05-04" });
       expect(before.statusCode).toBe(200);
@@ -103,7 +117,7 @@ describe("sleep screenshot routes", () => {
 
   it("creates a user-requested sleep revision candidate without replacing the active week", async () => {
     const weekStart = "2099-03-08";
-    const base = await service.createTemplateCandidate(weekStart, null);
+    const base = await createManual(weekStart, "睡眠修订测试参考");
     const active = await service.confirm(base.plan.id, base.plan.version);
     const png = `data:image/png;base64,${Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString("base64")}`;
     const sleep = await service.analyzeSleepImage({ localDate: "2099-03-09", fileName: "sleep.png", mimeType: "image/png", dataUrl: png }, {
@@ -139,7 +153,7 @@ describe("sleep screenshot routes", () => {
 
   it("accepts a complete manual candidate and keeps the active plan unchanged before confirmation", async () => {
     const weekStart = "2099-03-22";
-    const base = await service.createTemplateCandidate(weekStart, null);
+    const base = await createManual(weekStart, "手动候选测试参考");
     const active = await service.confirm(base.plan.id, base.plan.version);
     let manualId: string | null = null;
     try {

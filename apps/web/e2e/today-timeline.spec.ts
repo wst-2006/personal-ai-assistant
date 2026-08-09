@@ -1,8 +1,8 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { connectVerifiedDatabase } from "@personal-ai/db/client";
 import { loadDatabaseConfig } from "@personal-ai/db/config";
-import { taskFeedback, taskOutcomes } from "@personal-ai/db/schema";
-import { eq } from "drizzle-orm";
+import { desktopCommandRequests, focusSessionSegmentRuns, focusSessions, focusStructureSegments, focusStructures, focusTimerJobs, reminderJobs, taskConflictAcceptances, taskFeedback, taskLegacyMetadata, taskLifecycleEvents, taskOutcomes, tasks } from "@personal-ai/db/schema";
+import { eq, inArray, or } from "drizzle-orm";
 
 const apiBase = process.env.PLAYWRIGHT_API_BASE_URL ?? "http://127.0.0.1:3100";
 const halfHourPixels = 36;
@@ -63,15 +63,50 @@ async function createExactTask(
 }
 
 async function cleanup(request:APIRequestContext, ids:string[]) {
-  for(const id of ids){
-    const detail=await request.get(`${apiBase}/api/v1/tasks/${id}`);
-    if(!detail.ok()) continue;
-    const task=(await detail.json()).task as {version:number};
-    await request.delete(`${apiBase}/api/v1/tasks/${id}`,{data:{expectedVersion:task.version,reason:"e2e cleanup"}});
-  }
+  if(!ids.length)return;
+  const {client,db}=await connectVerifiedDatabase(loadDatabaseConfig());
+  try{await db.transaction(async(tx)=>{
+    await tx.delete(desktopCommandRequests).where(inArray(desktopCommandRequests.taskId,ids));
+    await tx.delete(reminderJobs).where(inArray(reminderJobs.taskId,ids));
+    await tx.delete(taskConflictAcceptances).where(or(inArray(taskConflictAcceptances.taskIdLow,ids),inArray(taskConflictAcceptances.taskIdHigh,ids)));
+    await tx.delete(taskFeedback).where(inArray(taskFeedback.taskId,ids));
+    await tx.delete(taskOutcomes).where(inArray(taskOutcomes.taskId,ids));
+    const sessions=await tx.select({id:focusSessions.id}).from(focusSessions).where(inArray(focusSessions.taskId,ids));
+    if(sessions.length){const sessionIds=sessions.map(session=>session.id);await tx.delete(focusTimerJobs).where(inArray(focusTimerJobs.focusSessionId,sessionIds));await tx.delete(focusSessionSegmentRuns).where(inArray(focusSessionSegmentRuns.focusSessionId,sessionIds));await tx.delete(focusSessions).where(inArray(focusSessions.id,sessionIds));}
+    const structures=await tx.select({id:focusStructures.id}).from(focusStructures).where(inArray(focusStructures.taskId,ids));
+    if(structures.length){const structureIds=structures.map(structure=>structure.id);await tx.delete(focusStructureSegments).where(inArray(focusStructureSegments.focusStructureId,structureIds));await tx.delete(focusStructures).where(inArray(focusStructures.id,structureIds));}
+    await tx.delete(taskLegacyMetadata).where(inArray(taskLegacyMetadata.taskId,ids));
+    await tx.delete(taskLifecycleEvents).where(inArray(taskLifecycleEvents.taskId,ids));
+    await tx.delete(tasks).where(inArray(tasks.id,ids));
+  });}finally{await client.end();}
+}
+
+async function timelinePoint(page:Page, hour:number, minute=0){
+  const line=page.locator(".hour-line").filter({hasText:`${String(hour).padStart(2,"0")}:00`});
+  await line.scrollIntoViewIfNeeded();
+  const lineBox=await line.boundingBox();expect(lineBox).not.toBeNull();
+  const grid=await page.locator(".day-grid").boundingBox();expect(grid).not.toBeNull();
+  return {x:grid!.x+Math.min(180,grid!.width-20),y:lineBox!.y+Math.max(1,minute/60*72)};
 }
 
 test.describe("真实今日时间轴",()=>{
+  test("时间轴和完整表单共同限制为07:00至23:00",async({page,request})=>{
+    const testDate=await isolatedDate(request);
+    await page.goto("/");
+    await page.getByLabel("时间轴日期").fill(testDate);
+    const labels=await page.locator(".hour-line time").allTextContents();
+    expect(labels).toHaveLength(17);
+    expect(labels[0]).toBe("07:00");
+    expect(labels.at(-1)).toBe("23:00");
+    await page.getByRole("button",{name:"完整添加"}).click();
+    await page.getByLabel("任务标题").fill("不应进入清晨的任务");
+    await page.getByLabel("开始时间").fill("06:30");
+    await page.getByLabel("结束时间").fill("07:30");
+    await page.getByRole("button",{name:"保存任务"}).click();
+    expect(await page.getByLabel("开始时间").evaluate(input=>(input as HTMLInputElement).validity.rangeUnderflow)).toBe(true);
+    await expect(page.getByRole("dialog",{name:"让这项安排足够清楚"})).toBeVisible();
+  });
+
   test("创建、刷新、拖动、拉伸、保留冲突并再次刷新",async({page,request})=>{
     const suffix=Date.now().toString(36);const ids:string[]=[];
     const testDate=await isolatedDate(request);
@@ -200,20 +235,23 @@ test.describe("真实今日时间轴",()=>{
     }finally{await cleanup(request,ids);}
   });
 
-  test("点击空白时间以 30 分钟默认块创建并持久化",async({page,request})=>{
+  test("单击空白时间不创建任务，拖动 30 分钟才打开创建表单",async({page,request})=>{
     const ids:string[]=[];const title=`E2E 空白创建 ${Date.now().toString(36)}`;const testDate=await isolatedDate(request);
     try{
       await page.goto("/");
       const dateLoaded=page.waitForResponse((response)=>response.url()===`${apiBase}/api/v1/tasks?date=${testDate}`&&response.request().method()==="GET"&&response.status()===200);
       await page.getByLabel("时间轴日期").fill(testDate);
       await dateLoaded;
-      const scroll=page.locator(".day-scroll");
-      await scroll.evaluate((element)=>{element.scrollTop=9*72-120;});
-      const box=await scroll.boundingBox();expect(box).not.toBeNull();
-      const clickX=box!.x+Math.min(180,box!.width-20);const clickY=box!.y+120;
+      const point=await timelinePoint(page,9);
+      const clickX=point.x;const clickY=point.y;
+      await page.mouse.click(clickX,clickY);
+      await expect(page.locator(".range-anchor")).toHaveCount(0);
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+
       await page.mouse.move(clickX,clickY);await page.mouse.down();
       await expect(page.locator(".range-anchor")).toBeVisible();
-      await expect(page.locator(".range-preview")).toHaveCount(0);
+      await page.mouse.move(clickX,clickY+halfHourPixels,{steps:4});
+      await expect(page.locator(".range-preview")).toContainText("09:00–09:30");
       await page.mouse.up();
       await expect(page.getByRole("dialog")).toBeVisible();
       await expect(page.getByLabel("开始时间")).toHaveValue("09:00");
@@ -236,9 +274,8 @@ test.describe("真实今日时间轴",()=>{
       await page.goto("/");
       const dateLoaded=page.waitForResponse((response)=>response.url()===`${apiBase}/api/v1/tasks?date=${testDate}`&&response.request().method()==="GET"&&response.status()===200);
       await page.getByLabel("时间轴日期").fill(testDate);await dateLoaded;
-      const scroll=page.locator(".day-scroll");await scroll.evaluate((element)=>{element.scrollTop=9*72-120;});
-      const box=await scroll.boundingBox();expect(box).not.toBeNull();
-      const x=box!.x+Math.min(180,box!.width-20);const startY=box!.y+120;const endY=startY+36;
+      const point=await timelinePoint(page,9);
+      const x=point.x;const startY=point.y;const endY=startY+36;
       await page.mouse.move(x,startY);await page.mouse.down();await expect(page.locator(".range-anchor")).toBeVisible();
       await page.mouse.move(x,startY-36);await expect(page.locator(".range-preview")).toContainText("08:30–09:00");await expect(page.locator(".range-anchor")).toBeVisible();
       await page.mouse.move(x,endY);await expect(page.locator(".range-preview")).toContainText("09:00–09:30");
@@ -268,8 +305,8 @@ test.describe("真实今日时间轴",()=>{
       const backfillDialog=page.getByRole("dialog",{name:"补上今天已经发生的事项"});
       await expect(backfillDialog).toBeVisible();
       await expect(backfillDialog).toContainText("不会发送提醒或启动专注");
-      await expect(page.getByLabel("开始时间")).toHaveValue("00:00");
-      await expect(page.getByLabel("结束时间")).toHaveValue("00:30");
+      await expect(page.getByLabel("开始时间")).toHaveValue("07:00");
+      await expect(page.getByLabel("结束时间")).toHaveValue("07:30");
       await page.getByLabel("任务标题").fill(title);
       const firstAttempt=page.waitForResponse((response)=>response.url()===`${apiBase}/api/v1/tasks/backfill`&&response.request().method()==="POST");
       await page.getByRole("button",{name:"保存并记录结果"}).click();
@@ -306,7 +343,7 @@ test.describe("真实今日时间轴",()=>{
       expect(persistedFeedback).toMatchObject({satisfaction:"neutral",note:"补录时分别保存客观进度和主观感受"});
 
       await page.reload();
-      await expect(page.locator(`[data-task-id="${task.id}"]`)).toContainText("00:00–00:30");
+      await expect(page.locator(`[data-task-id="${task.id}"]`)).toContainText("07:00–07:30");
       await expect(page.locator(`[data-task-id="${task.id}"]`)).toContainText("部分完成");
     }finally{await cleanup(request,ids);await client.end();}
   });
@@ -323,6 +360,8 @@ test.describe("真实今日时间轴",()=>{
       await page.keyboard.press("ArrowDown");
       const movedTask=(await (await moved).json()).task as {startAt:string;endAt:string};
       expect(movedTask.startAt).toContain("05:30:00.000Z");expect(movedTask.endAt).toContain("06:30:00.000Z");
+      await expect(block).toHaveAttribute("aria-busy","false");
+      await block.focus();
       const resized=page.waitForResponse((response)=>response.url().endsWith(`/api/v1/tasks/${task.id}`)&&response.request().method()==="PATCH"&&response.status()===200);
       await page.keyboard.press("Shift+ArrowDown");
       const resizedTask=(await (await resized).json()).task as {startAt:string;endAt:string};
@@ -340,12 +379,38 @@ test.describe("真实今日时间轴",()=>{
       const created=page.waitForResponse((response)=>response.url()===`${apiBase}/api/v1/tasks`&&response.request().method()==="POST"&&response.status()===201);
       await page.getByRole("button",{name:"保存",exact:true}).click();
       const task=(await (await created).json()).task as {id:string};ids.push(task.id);
-      const loose=page.locator(".loose-task").filter({hasText:title});
+      const loose=page.locator(".task-summary-list article").filter({hasText:title});
       await loose.getByLabel(`打开 ${title} 的任务操作`).click();
       await page.getByRole("button",{name:"开始专注"}).click();
       await expect(page.getByRole("heading",{name:title})).toBeVisible();
       await page.getByRole("button",{name:"回到时间轴"}).click();
-      await expect(page.locator(".loose-task").filter({hasText:title})).toBeVisible();
+      await expect(page.locator(".task-summary-list article").filter({hasText:title})).toBeVisible();
+    }finally{await cleanup(request,ids);}
+  });
+
+  test("任务列表默认三项，其他任务折叠，回收站通过图标搜索和恢复",async({page,request})=>{
+    const ids:string[]=[];const testDate=await isolatedDate(request);const suffix=Date.now().toString(36);let deletedTitle="";
+    try{
+      for(let index=0;index<5;index+=1){
+        const response=await request.post(`${apiBase}/api/v1/tasks`,{data:{title:`E2E 列表 ${index+1} ${suffix}`,scheduleKind:"none",localDate:testDate,timeZone:"Asia/Shanghai"}});
+        expect(response.status()).toBe(201);
+        const task=(await response.json()).task as {id:string;version:number;title:string};ids.push(task.id);
+        if(index===4){deletedTitle=task.title;const removed=await request.delete(`${apiBase}/api/v1/tasks/${task.id}`,{data:{expectedVersion:task.version,reason:"e2e trash search"}});expect(removed.status()).toBe(204);}
+      }
+      await page.goto("/");
+      await page.getByLabel("时间轴日期").fill(testDate);
+      await expect(page.locator(".task-summary-list article")).toHaveCount(3);
+      await page.getByRole("button",{name:"查看其他 1 项"}).click();
+      await expect(page.locator(".task-summary-list article")).toHaveCount(4);
+      await page.getByRole("button",{name:/打开回收站/}).click();
+      const trashDialog=page.getByRole("dialog",{name:"查找并恢复任务"});
+      await expect(trashDialog).toBeVisible();
+      await trashDialog.getByLabel("搜索回收站任务").fill(deletedTitle);
+      await expect(trashDialog.getByText(deletedTitle,{exact:true})).toBeVisible();
+      await trashDialog.getByRole("button",{name:"恢复",exact:true}).click();
+      await expect(trashDialog.getByText(deletedTitle,{exact:true})).toHaveCount(0);
+      await trashDialog.getByRole("button",{name:"关闭回收站"}).click();
+      await expect(page.locator(".task-summary-list article").filter({hasText:deletedTitle})).toBeVisible();
     }finally{await cleanup(request,ids);}
   });
 

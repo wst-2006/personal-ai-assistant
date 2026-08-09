@@ -8,6 +8,8 @@ export const taskOutcomeSchema = z.enum(["not_completed", "partial", "complete"]
 export const taskSatisfactionSchema = z.enum(["satisfied", "neutral", "dissatisfied"]);
 export const taskEventSourceSchema = z.enum(["app", "ai", "feishu", "system"]);
 export const conflictDecisionSchema = z.enum(["reject", "keep"]);
+export const PRODUCT_SCHEDULE_START_MINUTE = 7 * 60;
+export const PRODUCT_SCHEDULE_END_MINUTE = 23 * 60;
 
 export const ianaTimeZoneSchema = z.string().trim().min(1).max(64).refine(isValidIanaTimeZone, {
   message: "timeZone must be a valid IANA time zone"
@@ -195,6 +197,24 @@ function isHalfHourBoundary(value: Date, timeZone: string): boolean {
   const minute = Number(parts.find((part) => part.type === "minute")?.value ?? -1);
   const second = Number(parts.find((part) => part.type === "second")?.value ?? -1);
   return minute % 30 === 0 && second === 0 && value.getUTCMilliseconds() === 0;
+}
+
+export function localMinuteAtTimeZone(value: string | Date, timeZone: string): number {
+  const date = value instanceof Date ? value : new Date(value);
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).formatToParts(date);
+  const hour = Number(parts.find((part) => part.type === "hour")?.value ?? 0) % 24;
+  const minute = Number(parts.find((part) => part.type === "minute")?.value ?? 0);
+  return hour * 60 + minute;
+}
+
+export function isWithinProductScheduleWindow(startAt: string | Date, endAt: string | Date, timeZone: string): boolean {
+  return localMinuteAtTimeZone(startAt, timeZone) >= PRODUCT_SCHEDULE_START_MINUTE
+    && localMinuteAtTimeZone(endAt, timeZone) <= PRODUCT_SCHEDULE_END_MINUTE;
 }
 
 export function validateTaskSchedule(input: ScheduleShape, context: z.RefinementCtx): void {

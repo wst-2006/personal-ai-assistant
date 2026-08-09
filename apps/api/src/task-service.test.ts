@@ -5,6 +5,7 @@ import {
   ConflictSetChangedError,
   InboxEntryConflictError,
   InvalidTaskTransitionError,
+  TaskScheduleBoundsError,
   TaskService,
   TaskTimeConflictError,
   TaskVersionConflictError
@@ -42,6 +43,13 @@ async function rejectedConflict(operation: Promise<unknown>): Promise<TaskTimeCo
 }
 
 describe("TaskService lifecycle and revisions", () => {
+  it("enforces the 07:00-23:00 product scheduling boundary", async () => {
+    const service = new TaskService(new MemoryTaskStore());
+    await expect(service.create(exact("Too early", "06:30", "07:30"))).rejects.toBeInstanceOf(TaskScheduleBoundsError);
+    await expect(service.create(exact("Too late", "22:30", "23:30"))).rejects.toBeInstanceOf(TaskScheduleBoundsError);
+    await expect(service.create(exact("Full window", "07:00", "23:00"))).resolves.toMatchObject({ task: { title: "Full window" } });
+  });
+
   it("keeps lifecycle, scheduling, deletion, version and schedule revision independent", async () => {
     const store = new MemoryTaskStore();
     const service = new TaskService(store);

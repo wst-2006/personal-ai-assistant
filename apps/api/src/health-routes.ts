@@ -75,16 +75,6 @@ export async function healthRoutes(app: FastifyInstance, options: { healthServic
     }
   });
 
-  app.post("/health/weeks/template-candidates", async (request, reply) => {
-    const input = createHealthPlanCandidateSchema.safeParse(request.body);
-    if (!input.success) return reply.status(400).send({ error: "invalid_health_candidate", details: input.error.flatten() });
-    try {
-      return reply.status(201).send({ plan: serializePlan(await healthService.createTemplateCandidate(input.data.weekStart, input.data.specialContext ?? null)) });
-    } catch (error) {
-      return healthError(reply, error);
-    }
-  });
-
   app.post("/health/weeks/manual-candidates", async (request, reply) => {
     const input = createManualHealthPlanCandidateSchema.safeParse(request.body);
     if (!input.success) return reply.status(400).send({ error: "invalid_manual_health_candidate", details: input.error.flatten() });

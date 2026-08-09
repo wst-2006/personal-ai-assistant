@@ -1,5 +1,8 @@
 import {
+  isWithinProductScheduleWindow,
   localDateAtTimeZone,
+  PRODUCT_SCHEDULE_END_MINUTE,
+  PRODUCT_SCHEDULE_START_MINUTE,
   taskInputSchema,
   type TaskBackfillInput,
   type TaskEventSource,
@@ -89,6 +92,15 @@ export class TaskBackfillWindowError extends Error {
   }
 }
 
+export class TaskScheduleBoundsError extends Error {
+  constructor(
+    readonly minimumMinute = PRODUCT_SCHEDULE_START_MINUTE,
+    readonly maximumMinute = PRODUCT_SCHEDULE_END_MINUTE
+  ) {
+    super("Exact tasks must stay within the 07:00-23:00 scheduling window.");
+  }
+}
+
 export class ConflictSetChangedError extends Error {
   constructor(readonly conflicts: TaskConflict[], readonly conflictSetFingerprint: string) {
     super("The blocking conflict set changed before confirmation.");
@@ -105,6 +117,7 @@ export class TaskService {
   async createBackfill(input: TaskBackfillInput): Promise<{ task: StoredTask; historicalOverlaps: TaskConflict[] }> {
     return this.store.runSerializable(async (transaction) => {
       const record: NewTaskRecord = { ...toNewTaskRecord(input), lifecycleStatus: "awaiting_outcome" };
+      assertProductScheduleBounds(record);
       assertBackfillWindow(record);
       const blocking = await this.findConflicts(transaction, record);
       await this.assertConflictDecision(transaction, record, blocking, input.conflictDecision, input.expectedConflictFingerprint);
@@ -136,6 +149,7 @@ export class TaskService {
   ): Promise<{ task: StoredTask; historicalOverlaps: TaskConflict[] }> {
     return this.store.runSerializable(async (transaction) => {
       const record = toNewTaskRecord(input, taskId as NewTaskRecord["id"]);
+      assertProductScheduleBounds(record);
       assertScheduleWindow(record);
       const blocking = await this.findConflicts(transaction, record);
       await this.assertConflictDecision(transaction, record, blocking, input.conflictDecision, input.expectedConflictFingerprint);
@@ -193,6 +207,7 @@ export class TaskService {
       const source = await transaction.getInboxEntry(id);
       if (!source || source.version !== expectedVersion || source.convertedAt) throw new InboxEntryConflictError(source);
       const record = { ...toNewTaskRecord(input), sourceInboxEntryId: id };
+      assertProductScheduleBounds(record);
       assertScheduleWindow(record);
       const blocking = await this.findConflicts(transaction, record);
       await this.assertConflictDecision(transaction, record, blocking, input.conflictDecision, input.expectedConflictFingerprint);
@@ -266,7 +281,10 @@ export class TaskService {
       }
       this.assertEditable(current, patch);
       const normalized = mergeAndValidate(current, patch);
-      assertScheduleWindow(normalized);
+      if (hasSchedulePatchField(patch)) {
+        assertProductScheduleBounds(normalized);
+        assertScheduleWindow(normalized);
+      }
       const scheduleChanged = hasScheduleSemanticChange(current, normalized);
       const target: NewTaskRecord = {
         ...normalized,
@@ -704,6 +722,11 @@ function assertScheduleWindow(task: Pick<NewTaskRecord, "scheduleKind" | "startA
   if (startMinute < earliestMinute) {
     throw new TaskScheduleWindowError(new Date(task.startAt.getTime() + (earliestMinute - startMinute) * 60_000));
   }
+}
+
+function assertProductScheduleBounds(task: Pick<NewTaskRecord, "scheduleKind" | "startAt" | "endAt" | "timeZone">): void {
+  if (task.scheduleKind !== "exact" || !task.startAt || !task.endAt) return;
+  if (!isWithinProductScheduleWindow(task.startAt, task.endAt, task.timeZone)) throw new TaskScheduleBoundsError();
 }
 
 function assertBackfillWindow(task: Pick<NewTaskRecord, "scheduleKind" | "startAt" | "endAt" | "timeZone">): void {

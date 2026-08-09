@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Check,
   CheckCircle2,
+  ChevronDown,
   ChevronLeft,
   CircleDashed,
   Clock3,
@@ -12,7 +13,7 @@ import {
 } from "lucide-react";
 import { FocusStructureEditor, type FocusStructureRecord } from "./FocusStructureEditor";
 import { getFocusGuidance } from "./focus-guidance";
-import type { FocusSegment } from "@personal-ai/domain/focus";
+import { formatFocusClock, type FocusSegment } from "@personal-ai/domain/focus";
 
 type Task = {
   id: string;
@@ -67,8 +68,6 @@ const nowDate = () =>
     month: "2-digit",
     day: "2-digit",
   }).format(new Date());
-const time = (seconds: number) =>
-  `${String(Math.floor(Math.max(0, seconds) / 60)).padStart(2, "0")}:${String(Math.max(0, seconds) % 60).padStart(2, "0")}`;
 const clock = (value: string, timeZone: string) => new Intl.DateTimeFormat("zh-CN", {
   timeZone, hour: "2-digit", minute: "2-digit", hour12: false
 }).format(new Date(value));
@@ -117,6 +116,7 @@ export function FocusWorkspace({
   const [progress, setProgress] = useState("100");
   const [satisfaction, setSatisfaction] = useState<Satisfaction>("satisfied");
   const [note, setNote] = useState("");
+  const [pickerExpanded, setPickerExpanded] = useState(false);
   const load = useCallback(async () => {
     const [list, current] = await Promise.all([
       request<{ tasks: Task[] }>(`/api/v1/tasks?date=${nowDate()}`),
@@ -139,6 +139,11 @@ export function FocusWorkspace({
     for (const task of additionalTasks) {
       if (task && !visible.some((visibleTask) => visibleTask.id === task.id)) visible.push(task);
     }
+    visible.sort((left, right) => {
+      const leftTime = left.startAt ? new Date(left.startAt).getTime() : Number.MAX_SAFE_INTEGER;
+      const rightTime = right.startAt ? new Date(right.startAt).getTime() : Number.MAX_SAFE_INTEGER;
+      return leftTime - rightTime || left.title.localeCompare(right.title, "zh-CN");
+    });
     setTasks(visible);
     setSession(current.session);
     setSelectedId((currentId) => currentId ?? current.session?.taskId ?? visible[0]?.id ?? null);
@@ -586,11 +591,11 @@ export function FocusWorkspace({
               {stage === "preparing"
                 ? `00:${String(prepLeft).padStart(2, "0")}`
                 : stage === "scheduled"
-                  ? time(scheduledLeft)
+                  ? formatFocusClock(scheduledLeft)
                 : currentSegment
-                  ? time(currentSegmentRemaining)
+                  ? formatFocusClock(currentSegmentRemaining)
                   : displayTask
-                    ? time(elapsed)
+                    ? formatFocusClock(elapsed)
                   : "--:--"}
             </strong>
           </div>
@@ -774,7 +779,7 @@ export function FocusWorkspace({
           {tasks.length === 0 ? (
             <p>今天还没有可开始的任务。</p>
           ) : (
-            tasks.map((task) => (
+            (pickerExpanded ? tasks : tasks.slice(0, 3)).map((task) => (
               <button
                 className={task.id === selected?.id ? "selected" : ""}
                 onClick={() => setSelectedId(task.id)}
@@ -793,6 +798,7 @@ export function FocusWorkspace({
             ))
           )}
         </div>
+        {tasks.length > 3 && <button className="focus-picker-toggle" type="button" onClick={() => setPickerExpanded((value) => !value)}>{pickerExpanded ? "收起其他任务" : `查看其他 ${tasks.length - 3} 项`}<ChevronDown className={pickerExpanded ? "expanded" : ""} /></button>}
       </aside>
       {error && (
         <div className="focus-error" role="alert">

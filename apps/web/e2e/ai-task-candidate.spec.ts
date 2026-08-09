@@ -1,8 +1,23 @@
 import { expect, test, type APIRequestContext, type Page } from "@playwright/test";
 import { connectVerifiedDatabase } from "@personal-ai/db/client";
 import { loadDatabaseConfig } from "@personal-ai/db/config";
-import { inboxEntries } from "@personal-ai/db/schema";
-import { eq } from "drizzle-orm";
+import {
+  desktopCommandRequests,
+  focusSessionSegmentRuns,
+  focusSessions,
+  focusStructureSegments,
+  focusStructures,
+  focusTimerJobs,
+  inboxEntries,
+  reminderJobs,
+  taskConflictAcceptances,
+  taskFeedback,
+  taskLegacyMetadata,
+  taskLifecycleEvents,
+  taskOutcomes,
+  tasks
+} from "@personal-ai/db/schema";
+import { eq, inArray, or } from "drizzle-orm";
 
 const apiBase = process.env.PLAYWRIGHT_API_BASE_URL ?? "http://127.0.0.1:3100";
 
@@ -35,13 +50,38 @@ async function openCandidate(page: Page, originalText: string) {
   await expect(page.getByRole("heading", { name: "逐项确认后再保存", exact: true })).toBeVisible();
 }
 
-async function softDeleteTask(request: APIRequestContext, id: string) {
-  const detail = await request.get(`${apiBase}/api/v1/tasks/${id}`);
-  if (!detail.ok()) return;
-  const task = (await detail.json()).task as { version: number };
-  await request.delete(`${apiBase}/api/v1/tasks/${id}`, {
-    data: { expectedVersion: task.version, reason: "ai candidate e2e cleanup" }
-  });
+async function hardDeleteTask(id: string) {
+  const { client, db } = await connectVerifiedDatabase(loadDatabaseConfig());
+  try {
+    await db.transaction(async (transaction) => {
+      await transaction.delete(desktopCommandRequests).where(eq(desktopCommandRequests.taskId, id));
+      await transaction.delete(reminderJobs).where(eq(reminderJobs.taskId, id));
+      await transaction.delete(taskConflictAcceptances).where(or(eq(taskConflictAcceptances.taskIdLow, id), eq(taskConflictAcceptances.taskIdHigh, id)));
+      await transaction.delete(taskFeedback).where(eq(taskFeedback.taskId, id));
+      await transaction.delete(taskOutcomes).where(eq(taskOutcomes.taskId, id));
+
+      const sessions = await transaction.select({ id: focusSessions.id }).from(focusSessions).where(eq(focusSessions.taskId, id));
+      if (sessions.length > 0) {
+        const sessionIds = sessions.map((session) => session.id);
+        await transaction.delete(focusTimerJobs).where(inArray(focusTimerJobs.focusSessionId, sessionIds));
+        await transaction.delete(focusSessionSegmentRuns).where(inArray(focusSessionSegmentRuns.focusSessionId, sessionIds));
+        await transaction.delete(focusSessions).where(inArray(focusSessions.id, sessionIds));
+      }
+
+      const structures = await transaction.select({ id: focusStructures.id }).from(focusStructures).where(eq(focusStructures.taskId, id));
+      if (structures.length > 0) {
+        const structureIds = structures.map((structure) => structure.id);
+        await transaction.delete(focusStructureSegments).where(inArray(focusStructureSegments.focusStructureId, structureIds));
+        await transaction.delete(focusStructures).where(inArray(focusStructures.id, structureIds));
+      }
+
+      await transaction.delete(taskLegacyMetadata).where(eq(taskLegacyMetadata.taskId, id));
+      await transaction.delete(taskLifecycleEvents).where(eq(taskLifecycleEvents.taskId, id));
+      await transaction.delete(tasks).where(eq(tasks.id, id));
+    });
+  } finally {
+    await client.end();
+  }
 }
 
 async function findAvailableExactDate(request: APIRequestContext): Promise<string> {
@@ -103,6 +143,17 @@ test("AI 任务候选在确认前不写入，编辑后通过真实任务 API 持
     expect(taskWrites).toBe(0);
     expect(inboxWrites).toBe(0);
     await expect(page.getByLabel("候选日期")).toHaveValue("2090-03-17");
+    await expect(page.getByLabel("候选开始时间")).toHaveAttribute("min", "07:00");
+    await expect(page.getByLabel("候选开始时间")).toHaveAttribute("max", "22:30");
+    await expect(page.getByLabel("候选结束时间")).toHaveAttribute("min", "07:30");
+    await expect(page.getByLabel("候选结束时间")).toHaveAttribute("max", "23:00");
+
+    await page.getByLabel("候选开始时间").fill("06:30");
+    expect(await page.getByLabel("候选开始时间").evaluate((input) => (input as HTMLInputElement).validity.rangeUnderflow)).toBe(true);
+    await page.getByLabel("候选开始时间").fill("14:00");
+    await page.getByLabel("候选结束时间").fill("23:30");
+    expect(await page.getByLabel("候选结束时间").evaluate((input) => (input as HTMLInputElement).validity.rangeOverflow)).toBe(true);
+    await page.getByLabel("候选结束时间").fill("15:00");
 
     await page.getByLabel("候选标题").fill(editedTitle);
     await page.getByLabel("候选日期").fill(editedDate);
@@ -156,7 +207,7 @@ test("AI 任务候选在确认前不写入，编辑后通过真实任务 API 持
     await page.getByLabel("时间轴日期").fill(editedDate);
     await expect(page.locator(`[data-task-id="${task.id}"]`)).toContainText("14:00–15:00");
   } finally {
-    if (taskId) await softDeleteTask(request, taskId);
+    if (taskId) await hardDeleteTask(taskId);
   }
 });
 
@@ -237,7 +288,7 @@ test("AI 服务失败时保留原句且不写入，明确重试后才允许确�
     expect(persisted.status()).toBe(200);
     expect((await persisted.json()).task).toMatchObject({ id: task.id, title, localDate, scheduleKind: "none" });
   } finally {
-    if (taskId) await softDeleteTask(request, taskId);
+    if (taskId) await hardDeleteTask(taskId);
   }
 });
 
@@ -311,7 +362,7 @@ test("AI 候选遇到冲突时返回调整不写入也不误报失败，修改�
     await page.getByLabel("时间轴日期").fill(date);
     await expect(page.locator(`[data-task-id="${task.id}"]`)).toContainText(candidateTitle);
   } finally {
-    for (const id of ids.reverse()) await softDeleteTask(request, id);
+    for (const id of ids.reverse()) await hardDeleteTask(id);
   }
 });
 
@@ -387,5 +438,9 @@ test("390px 下可编辑精确任务候选且不发生横向溢出", async ({ pa
   await openCandidate(page, "安排移动端候选");
   await expect(page.getByLabel("候选开始时间")).toHaveAttribute("step", "1800");
   await expect(page.getByLabel("候选结束时间")).toHaveAttribute("step", "1800");
+  await expect(page.getByLabel("候选开始时间")).toHaveAttribute("min", "07:00");
+  await expect(page.getByLabel("候选开始时间")).toHaveAttribute("max", "22:30");
+  await expect(page.getByLabel("候选结束时间")).toHaveAttribute("min", "07:30");
+  await expect(page.getByLabel("候选结束时间")).toHaveAttribute("max", "23:00");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 });

@@ -47,6 +47,13 @@ export const healthDailyReferenceSchema = z.object({
   proteinRangeGrams: z.object({ minimum: z.number().int().min(1).max(300), maximum: z.number().int().min(1).max(300) }).strict(),
   plateGuidance: z.array(z.string().trim().min(1).max(240)).min(1).max(5),
   seasonalVegetables: z.array(z.string().trim().min(1).max(80)).min(1).max(6),
+  seasonalGuidance: z.string().trim().min(1).max(500).nullable().optional(),
+  seasonalPoem: z.object({
+    title: z.string().trim().min(1).max(120),
+    author: z.string().trim().min(1).max(120),
+    excerpt: z.string().trim().min(1).max(180),
+    relevance: z.string().trim().min(1).max(300)
+  }).strict().nullable().optional(),
   movement: z.object({
     category: healthMovementCategorySchema,
     durationMinutes: z.object({ minimum: z.number().int().min(0).max(240), maximum: z.number().int().min(0).max(300) }).strict(),

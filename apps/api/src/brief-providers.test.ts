@@ -40,6 +40,32 @@ describe("brief weather provider", () => {
     expect(result.location).toBeNull();
     expect(result.section.body).toContain("没有找到");
   });
+
+  it("returns a dated seven-day forecast for health candidates without inventing missing days", async () => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        results: [{ name: "杭州", admin1: "浙江", country: "中国", latitude: 30.25, longitude: 120.17, timezone: "Asia/Shanghai" }]
+      }), { status: 200, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        daily: {
+          time: ["2026-08-09", "2026-08-10"],
+          weather_code: [3, 61],
+          temperature_2m_max: [34, 31],
+          temperature_2m_min: [27, 25],
+          precipitation_probability_max: [20, 70]
+        }
+      }), { status: 200, headers: { "content-type": "application/json" } }));
+
+    const result = await new BriefProviders({}, fetcher).weeklyWeather("杭州", "2026-08-09", "2026-08-15");
+
+    expect(String(fetcher.mock.calls[1]?.[0])).toContain("start_date=2026-08-09&end_date=2026-08-15");
+    expect(result.location?.name).toBe("杭州，浙江，中国");
+    expect(result.days).toEqual([
+      { localDate: "2026-08-09", minimumCelsius: 27, maximumCelsius: 34, precipitationProbabilityPercent: 20, weatherCode: 3 },
+      { localDate: "2026-08-10", minimumCelsius: 25, maximumCelsius: 31, precipitationProbabilityPercent: 70, weatherCode: 61 }
+    ]);
+    expect(result.source?.provider).toBe("open_meteo");
+  });
 });
 
 describe("brief search provider", () => {

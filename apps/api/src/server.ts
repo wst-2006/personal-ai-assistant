@@ -48,6 +48,7 @@ const feishuWebhookConfig = loadFeishuWebhookConfig(process.env);
 const feishuLongConnectionConfig = loadFeishuLongConnectionConfig(process.env);
 const deepSeekConfig = loadDeepSeekConfig();
 const visionConfig = loadVisionConfig();
+const briefProviders = new BriefProviders();
 const feishuIntake = feishuIntakeConfig
   ? new FeishuIntakeService(feishuIntakeConfig, database.db, taskService, new DeepSeekTaskParser(deepSeekConfig, userProfileService))
   : null;
@@ -64,11 +65,11 @@ const app = buildApp({
   focusStructurePlanner: new DeepSeekFocusStructurePlanner(deepSeekConfig, userProfileService),
   reviewService: new ReviewService(database.db),
   reviewResponder: new DeepSeekReviewResponder(deepSeekConfig, userProfileService),
-  briefService: new BriefService(database.db, new BriefProviders(), new DeepSeekBriefWriter(deepSeekConfig, userProfileService)),
+  briefService: new BriefService(database.db, briefProviders, new DeepSeekBriefWriter(deepSeekConfig, userProfileService)),
   diaryService: new DiaryService(database.db),
   growthService: new GrowthService(database.db),
   backupService: new BackupService(database.db),
-  healthService: new HealthService(database.db),
+  healthService: new HealthService(database.db, briefProviders),
   healthPlanner: new DeepSeekHealthPlanner(deepSeekConfig, userProfileService),
   sleepImageAnalyzer: visionConfig
     ? new OpenAiCompatibleSleepImageAnalyzer(visionConfig)

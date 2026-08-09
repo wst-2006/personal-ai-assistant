@@ -28,7 +28,21 @@ export type HealthPlanner = {
     scheduledActivities: Array<{ localDate: string; title: string }>;
     specialContext: string | null;
     sleepAnalysis: { localDate: string; analysis: SleepImageAnalysis } | null;
+    weather: {
+      locationName: string;
+      provider: string;
+      retrievedAt: string | null;
+      days: Array<{ localDate: string; minimumCelsius: number; maximumCelsius: number; precipitationProbabilityPercent: number | null; weatherCode: number }>;
+    } | null;
   }): Promise<HealthPlanContent>;
+};
+
+export type HealthWeatherProvider = {
+  weeklyWeather(locationName: string | undefined, startDate: string, endDate: string): Promise<{
+    source: { provider?: string; retrievedAt?: string } | null;
+    location: { name: string } | null;
+    days: Array<{ localDate: string; minimumCelsius: number; maximumCelsius: number; precipitationProbabilityPercent: number | null; weatherCode: number }>;
+  }>;
 };
 
 export type SleepImageAnalyzer = {
@@ -55,7 +69,7 @@ export class SleepAnalysisOutsideWeekError extends Error {}
 export class SleepImageValidationError extends Error {}
 
 export class HealthService {
-  constructor(private readonly db: AppDatabase) {}
+  constructor(private readonly db: AppDatabase, private readonly weatherProvider?: HealthWeatherProvider) {}
 
   async getProfile() {
     const [profile] = await this.db.select().from(healthProfiles).where(eq(healthProfiles.id, primaryHealthProfileId)).limit(1);
@@ -94,28 +108,6 @@ export class HealthService {
     if (!active) return null;
     const day = active.days.find((reference) => reference.localDate === localDate);
     return day ? { plan: active.plan, day } : null;
-  }
-
-  async createTemplateCandidate(weekStart: string, specialContext: string | null): Promise<HealthPlanWithDays> {
-    const [profileRecord, scheduledActivities, basePlan] = await Promise.all([
-      this.requireProfile(this.db),
-      this.weekActivities(weekStart),
-      this.findPlan(weekStart, "active")
-    ]);
-    const profile = profileRecord.profile as HealthProfile;
-    const solarTerm = solarTermFor(weekStart);
-    return this.storeCandidate({
-      weekStart,
-      profileVersion: profileRecord.version,
-      city: profile.city,
-      solarTerm,
-      specialContext,
-      source: "template",
-      content: buildTemplateHealthPlan(profile, weekStart, scheduledActivities, solarTerm, specialContext),
-      basedOnPlanId: basePlan?.plan.id,
-      basedOnPlanVersion: basePlan?.plan.version,
-      revisionReason: basePlan ? "基于当前生效版本生成基础修订候选；确认前，原本周参考保持不变。" : undefined
-    });
   }
 
   async createManualCandidate(input: { weekStart: string; specialContext?: string | null; content: HealthPlanContent }): Promise<HealthPlanWithDays> {
@@ -170,7 +162,8 @@ export class HealthService {
     ]);
     const profile = profileRecord.profile as HealthProfile;
     const solarTerm = solarTermFor(weekStart);
-    const content = healthPlanContentSchema.parse(await planner.plan({ profile, weekStart, solarTerm, scheduledActivities, specialContext, sleepAnalysis: null }));
+    const weather = await this.weatherContext(profile.city, weekStart);
+    const content = healthPlanContentSchema.parse(await planner.plan({ profile, weekStart, solarTerm, scheduledActivities, specialContext, sleepAnalysis: null, weather }));
     return this.storeCandidate({
       weekStart,
       profileVersion: profileRecord.version,
@@ -199,13 +192,15 @@ export class HealthService {
     const scheduledActivities = await this.weekActivities(input.weekStart);
     const solarTerm = solarTermFor(input.weekStart);
     const sleepAnalysis = sleepRecord.analysis as SleepImageAnalysis;
+    const weather = await this.weatherContext(profile.city, input.weekStart);
     const content = healthPlanContentSchema.parse(await planner.plan({
       profile,
       weekStart: input.weekStart,
       solarTerm,
       scheduledActivities,
       specialContext: input.specialContext ?? null,
-      sleepAnalysis: { localDate: sleepRecord.localDate, analysis: sleepAnalysis }
+      sleepAnalysis: { localDate: sleepRecord.localDate, analysis: sleepAnalysis },
+      weather
     }));
     return this.storeCandidate({
       weekStart: input.weekStart,
@@ -347,6 +342,23 @@ export class HealthService {
       .then((rows) => rows.filter((row): row is { localDate: string; title: string } => row.localDate !== null));
   }
 
+  private async weatherContext(city: string | null, weekStart: string): Promise<Parameters<HealthPlanner["plan"]>[0]["weather"]> {
+    if (!city || !this.weatherProvider) return null;
+    try {
+      const dates = localDatesForHealthWeek(weekStart);
+      const result = await this.weatherProvider.weeklyWeather(city, dates[0]!, dates[dates.length - 1]!);
+      if (!result.location || result.days.length === 0) return null;
+      return {
+        locationName: result.location.name,
+        provider: result.source?.provider ?? "weather_provider",
+        retrievedAt: result.source?.retrievedAt ?? null,
+        days: result.days
+      };
+    } catch {
+      return null;
+    }
+  }
+
   private async requireProfile(db: AppDatabase) {
     const [profile] = await db.select().from(healthProfiles).where(eq(healthProfiles.id, primaryHealthProfileId)).limit(1);
     if (!profile) throw new HealthProfileNotFoundError();
@@ -395,110 +407,6 @@ function decodeSleepImage(input: SleepImageAnalysisRequest): { bytes: Buffer } {
       : bytes.length >= 12 && bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP";
   if (!matches) throw new SleepImageValidationError("sleep screenshot bytes do not match the declared image type");
   return { bytes };
-}
-
-function buildTemplateHealthPlan(
-  profile: HealthProfile,
-  weekStart: string,
-  activities: Array<{ localDate: string; title: string }>,
-  solarTerm: string,
-  specialContext: string | null
-): HealthPlanContent {
-  type MovementKind = HealthPlanContent["days"][number]["movement"]["category"];
-  const fallbackRotation: MovementKind[] = ["strength", "recovery", "volleyball", "rest", "cycling", "strength", "running"];
-  const preferred = [...new Set(profile.activity.preferredActivities.map(activityKindForText).filter((kind): kind is MovementKind => Boolean(kind) && kind !== "rest" && kind !== "recovery"))];
-  const trainingKinds = preferred.length > 0 ? preferred : fallbackRotation.filter((kind) => kind !== "rest" && kind !== "recovery");
-  const targetSessions = Math.min(7, profile.activity.sessionsPerWeek);
-  let trainingIndex = 0;
-  const base = Array.from({ length: 7 }, (_, index): MovementKind => {
-    if (trainingIndex < targetSessions && ![1, 3].includes(index)) return trainingKinds[trainingIndex++ % trainingKinds.length]!;
-    return index === 3 || targetSessions === 0 ? "rest" : "recovery";
-  });
-  while (trainingIndex < targetSessions) {
-    const replacementIndex = base.findIndex((kind) => kind === "recovery" || kind === "rest");
-    if (replacementIndex < 0) break;
-    base[replacementIndex] = trainingKinds[trainingIndex++ % trainingKinds.length]!;
-  }
-  const considerations = profile.considerations.join("；");
-  const kneeSensitive = /膝|积液|半月板|髌/.test(considerations);
-  const neckSensitive = /颈|肩|肱骨|脊柱/.test(considerations);
-  const respiratorySensitive = /哮喘|呼吸|花粉|灰尘|过敏/.test(considerations);
-  const highRiskLimited = profile.activity.avoidHighRisk || kneeSensitive || respiratorySensitive;
-  const riskNotes = [
-    kneeSensitive ? "膝部有既往不适记录，跳跃、跑步或深屈膝动作只在舒适范围内进行。" : null,
-    neckSensitive ? "颈肩有既往不适记录，避免为了完成次数牺牲颈肩位置。" : null,
-    respiratorySensitive ? "有呼吸道或过敏相关记录，留意空气、花粉和灰尘环境；不适时停止。" : null
-  ].filter((note): note is string => Boolean(note)).join(" ");
-  const defaults: Record<MovementKind, HealthPlanContent["days"][number]["movement"]> = {
-    strength: { category: "strength", durationMinutes: { minimum: 60, maximum: 90 }, intensity: "moderate", highIntensity: false, safetyReminder: "以动作稳定和舒适范围为先；颈肩或膝部不适时主动降低负荷。" },
-    recovery: { category: "recovery", durationMinutes: { minimum: 20, maximum: 45 }, intensity: "low", highIntensity: false, safetyReminder: "以轻松活动和恢复为主，不把恢复日变成补课式训练。" },
-    volleyball: { category: "volleyball", durationMinutes: { minimum: 60, maximum: highRiskLimited ? 90 : 120 }, intensity: highRiskLimited ? "moderate" : "high", highIntensity: !highRiskLimited, safetyReminder: "注意膝部反应和落地舒适度；不适时应停止并寻求专业建议。" },
-    rest: { category: "rest", durationMinutes: { minimum: 0, maximum: 0 }, intensity: "rest", highIntensity: false, safetyReminder: "休息日不需要补偿性训练，保持日常活动即可。" },
-    cycling: { category: "cycling", durationMinutes: { minimum: 45, maximum: 90 }, intensity: "moderate", highIntensity: false, safetyReminder: "优先白天、熟悉且安全的路线；感觉膝部不适时缩短行程。" },
-    running: { category: "running", durationMinutes: { minimum: 30, maximum: highRiskLimited ? 30 : 45 }, intensity: highRiskLimited ? "low" : "moderate", highIntensity: false, safetyReminder: "以舒适、可对话的强度为参考；膝部不适时改为恢复活动。" }
-  };
-  const vegetableSets = seasonalVegetableSets(solarTerm);
-  const dates = localDatesForHealthWeek(weekStart);
-  const contextNote = specialContext ? ` 本周特别说明：${specialContext}` : "";
-  const locationCopy = profile.city ? `${profile.city}的` : "未设置城市，因此使用通用的";
-  const dislikedCopy = profile.food.dislikes.length > 0 ? ` 已避开偏好中不喜欢的${profile.food.dislikes.slice(0, 5).join("、")}。` : "";
-  const supplements = [
-    profile.supplements.current.length > 0
-      ? `当前已记录：${profile.supplements.current.slice(0, 5).join("、")}。先查看实际标签，避免重复成分。`
-      : "当前没有记录固定补充剂；本周参考不会自动添加。",
-    profile.supplements.considering.length > 0
-      ? `正在考虑的${profile.supplements.considering.slice(0, 5).join("、")}仍保持待讨论状态，不自动加入本周安排。`
-      : "没有待加入的补充剂；不因模板生成而新增。",
-    "未掌握产品含量、近期检查和药物情况时，不给出确定剂量；有疑问请咨询专业人士。"
-  ];
-  const commonFoodCopy = profile.food.commonFoods.length > 0
-    ? profile.food.commonFoods.slice(0, 5).join("、")
-    : "食堂或外卖中常见的肉、蛋、奶和豆制品";
-  return {
-    overview: `本周参考围绕${profile.goals.join("、")}，按每周约 ${profile.activity.sessionsPerWeek} 次、单次 ${profile.activity.usualDurationMinutes.minimum}–${profile.activity.usualDurationMinutes.maximum} 分钟的个人习惯安排，并优先读取日程中已有运动任务。结合${locationCopy}${solarTerm}时令与“${profile.food.mealContext}”场景，不要求称重或打卡。${riskNotes ? ` ${riskNotes}` : ""}${contextNote}`,
-    supplements,
-    days: base.map((kind, index) => {
-      const scheduled = activities.find((activity) => activity.localDate === dates[index] && activityKindForText(activity.title));
-      const scheduledKind = scheduled ? activityKindForText(scheduled.title) : null;
-      const resolvedKind = scheduledKind ?? kind;
-      const movement = {
-        ...defaults[resolvedKind],
-        safetyReminder: `${defaults[resolvedKind].safetyReminder}${riskNotes ? ` ${riskNotes}` : ""}${scheduled ? ` 已参考当天已有的“${scheduled.title}”安排，不另行叠加同类训练。` : ""}`
-      };
-      const highDay = movement.highIntensity;
-      return {
-        nutritionDirection: highDay
-          ? "高强度日保持三餐餐盘完整，主食和主要蛋白质来源不要因忙碌而随意省略。"
-          : "维持正常餐盘结构：每餐有主要蛋白质来源，午晚餐尽量搭配两类蔬菜。",
-        proteinRangeGrams: { minimum: 90, maximum: 120 },
-        plateGuidance: ["早餐包含主食和一种蛋白质来源。", "午餐和晚餐优先一份主要蛋白质来源加两类蔬菜。", `优先从${commonFoodCopy}中灵活选择。${dislikedCopy}`],
-        seasonalVegetables: vegetableSets[index]!,
-        movement
-      };
-    })
-  };
-}
-
-function activityKindForText(value: string): HealthPlanContent["days"][number]["movement"]["category"] | null {
-  if (/力量|健身|抗阻|器械/.test(value)) return "strength";
-  if (/排球/.test(value)) return "volleyball";
-  if (/骑行|自行车/.test(value)) return "cycling";
-  if (/跑步|慢跑/.test(value)) return "running";
-  if (/恢复|拉伸|散步|瑜伽/.test(value)) return "recovery";
-  if (/休息|休整/.test(value)) return "rest";
-  return null;
-}
-
-function seasonalVegetableSets(solarTerm: string): string[][] {
-  const spring = ["菠菜", "油麦菜", "芦笋", "春笋", "生菜", "韭菜", "豌豆苗"];
-  const summer = ["番茄", "黄瓜", "苦瓜", "茄子", "丝瓜", "苋菜", "空心菜"];
-  const autumn = ["莲藕", "南瓜", "芹菜", "西兰花", "莲花白", "胡萝卜", "菌菇"];
-  const winter = ["白菜", "白萝卜", "菠菜", "菜花", "芥蓝", "胡萝卜", "菌菇"];
-  const springTerms = new Set(["立春", "雨水", "惊蛰", "春分", "清明", "谷雨"]);
-  const summerTerms = new Set(["立夏", "小满", "芒种", "夏至", "小暑", "大暑"]);
-  const autumnTerms = new Set(["立秋", "处暑", "白露", "秋分", "寒露", "霜降"]);
-  const vegetables = springTerms.has(solarTerm) ? spring : summerTerms.has(solarTerm) ? summer : autumnTerms.has(solarTerm) ? autumn : winter;
-  return Array.from({ length: 7 }, (_, index) => [vegetables[index]!, vegetables[(index + 2) % vegetables.length]!]);
 }
 
 function sleepRevisionReason(localDate: string, analysis: SleepImageAnalysis): string {

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type FormEvent } from "react";
-import { Check, ChevronLeft, ChevronRight, ClipboardPenLine, HeartPulse, Leaf, LoaderCircle, MapPin, MessageCircleQuestion, Sparkles, Upload, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, ClipboardPenLine, HeartPulse, Leaf, LoaderCircle, MapPin, MessageCircleQuestion, Quote, Sparkles, Upload, X } from "lucide-react";
 
 type Profile = {
   city: string | null;
@@ -22,6 +22,8 @@ type DayReference = {
     proteinRangeGrams: { minimum: number; maximum: number };
     plateGuidance: string[];
     seasonalVegetables: string[];
+    seasonalGuidance?: string | null;
+    seasonalPoem?: { title: string; author: string; excerpt: string; relevance: string } | null;
     movement: { category: "strength" | "volleyball" | "running" | "cycling" | "recovery" | "rest"; durationMinutes: { minimum: number; maximum: number }; intensity: "rest" | "low" | "moderate" | "high"; highIntensity: boolean; safetyReminder: string };
   };
 };
@@ -109,6 +111,8 @@ function revisionChanges(previous: DayReference, next: DayReference): string[] {
   }
   if (previous.content.plateGuidance.join("\n") !== next.content.plateGuidance.join("\n")) changes.push("餐盘提示已调整");
   if (previous.content.seasonalVegetables.join("\n") !== next.content.seasonalVegetables.join("\n")) changes.push("时令蔬菜提示已调整");
+  if ((previous.content.seasonalGuidance ?? null) !== (next.content.seasonalGuidance ?? null)) changes.push("时令生活提示已调整");
+  if (JSON.stringify(previous.content.seasonalPoem ?? null) !== JSON.stringify(next.content.seasonalPoem ?? null)) changes.push("时令诗词已调整");
   if (beforeMovement.safetyReminder !== nextMovement.safetyReminder) changes.push("安全提醒已调整");
   if (beforeMovement.highIntensity !== nextMovement.highIntensity) changes.push(nextMovement.highIntensity ? "调整为高强度日" : "不再标记为高强度日");
   return changes;
@@ -132,6 +136,8 @@ function manualDraftFromPlan(plan: HealthPlan): ManualPlanDraft {
       proteinRangeGrams: { ...day.content.proteinRangeGrams },
       plateGuidance: [...day.content.plateGuidance],
       seasonalVegetables: [...day.content.seasonalVegetables],
+      seasonalGuidance: day.content.seasonalGuidance ?? null,
+      seasonalPoem: day.content.seasonalPoem ? { ...day.content.seasonalPoem } : null,
       movement: { ...day.content.movement, durationMinutes: { ...day.content.movement.durationMinutes } }
     }))
   };
@@ -168,7 +174,6 @@ export function HealthWorkspace({ onAskHealth, onCreateTask }:{
   const [sleepDropActive, setSleepDropActive] = useState(false);
   const [manualDraft, setManualDraft] = useState<ManualPlanDraft | null>(null);
   const [sleepImageAnalysisAvailable, setSleepImageAnalysisAvailable] = useState<boolean | null>(null);
-  const autoCandidateRequested = useRef<string | null>(null);
   const sleepFileInputRef = useRef<HTMLInputElement | null>(null);
   const visiblePlan = candidate ?? active;
   const selectedReference = visiblePlan?.days[selectedDay] ?? null;
@@ -183,13 +188,6 @@ export function HealthWorkspace({ onAskHealth, onCreateTask }:{
       .catch(() => { if (!cancelled) setSleepImageAnalysisAvailable(false); });
     return () => { cancelled = true; };
   }, []);
-
-  useEffect(() => {
-    if (!loading && profile && !active && !candidate && autoCandidateRequested.current !== weekStart) {
-      autoCandidateRequested.current = weekStart;
-      void createCandidate("template");
-    }
-  }, [loading, profile, active, candidate, weekStart]);
 
   useEffect(() => {
     let cancelled = false;
@@ -218,16 +216,16 @@ export function HealthWorkspace({ onAskHealth, onCreateTask }:{
     }
   }
 
-  async function createCandidate(kind: "template" | "ai") {
+  async function createCandidate() {
     setBusy(true); setError(null);
     try {
-      const result = await request<{ plan: HealthPlan }>(`/api/v1/health/weeks/${kind === "ai" ? "ai-" : "template-"}candidates`, "POST", {
+      const result = await request<{ plan: HealthPlan }>("/api/v1/health/weeks/ai-candidates", "POST", {
         weekStart, ...(specialContext.trim() ? { specialContext: specialContext.trim() } : {})
       });
       setCandidate(result.plan); setSelectedDay(0);
     } catch (requestError) {
       const code = requestError instanceof Error ? (requestError as ApiError).body?.error : undefined;
-      setError(code === "health_profile_required" ? "请先保存健康资料，再生成本周参考。" : kind === "ai" ? "AI 暂时无法生成候选，现有参考保持不变。" : "基础候选生成失败，现有参考保持不变。");
+      setError(code === "health_profile_required" ? "请先保存健康资料，再生成本周参考。" : "DeepSeek 暂时无法生成候选，现有参考保持不变；系统没有写入固定替代内容。");
     } finally { setBusy(false); }
   }
 
@@ -419,6 +417,11 @@ export function HealthWorkspace({ onAskHealth, onCreateTask }:{
     });
   }
 
+  function updateManualPoem(patch: Partial<NonNullable<DayReference["content"]["seasonalPoem"]>>) {
+    const current = manualDraft?.days[selectedDay]?.seasonalPoem ?? { title: "", author: "", excerpt: "", relevance: "" };
+    updateManualDay({ seasonalPoem: { ...current, ...patch } });
+  }
+
   function updateManualMovement(patch: Partial<DayReference["content"]["movement"]>) {
     setManualDraft((current) => {
       if (!current) return current;
@@ -434,7 +437,23 @@ export function HealthWorkspace({ onAskHealth, onCreateTask }:{
     if (!manualDraft) return;
     setBusy(true); setError(null);
     try {
-      const content = { ...manualDraft, overview: manualDraft.overview.trim(), supplements: listText(manualDraft.supplements) };
+      const content = {
+        ...manualDraft,
+        overview: manualDraft.overview.trim(),
+        supplements: listText(manualDraft.supplements),
+        days: manualDraft.days.map((day) => ({
+          ...day,
+          seasonalGuidance: day.seasonalGuidance?.trim() || null,
+          seasonalPoem: day.seasonalPoem?.excerpt.trim()
+            ? {
+                title: day.seasonalPoem.title.trim(),
+                author: day.seasonalPoem.author.trim(),
+                excerpt: day.seasonalPoem.excerpt.trim(),
+                relevance: day.seasonalPoem.relevance.trim()
+              }
+            : null
+        }))
+      };
       const result = candidate
         ? await request<{ plan: HealthPlan }>(`/api/v1/health/weeks/${candidate.id}/manual-candidate`, "PUT", { expectedVersion: candidate.version, content })
         : await request<{ plan: HealthPlan }>("/api/v1/health/weeks/manual-candidates", "POST", { weekStart, content });
@@ -512,7 +531,7 @@ export function HealthWorkspace({ onAskHealth, onCreateTask }:{
       <section className="health-generation">
         <div><p className="section-kicker">本周候选</p><h2>{candidate ? "候选尚未生效" : active ? "当前参考保持稳定" : "先生成一份本周参考"}</h2><small>最多补充一句本周的运动、外出、身体不适或饮食场景；跳过也能生成。</small></div>
         <textarea aria-label="本周健康特殊情况" rows={3} maxLength={1000} value={specialContext} onChange={(event) => setSpecialContext(event.target.value)} placeholder="可选，例如：周三有排球，周末需要外出" />
-        <div className="health-generation-actions"><button className="quiet-button" type="button" disabled={busy || !profile} onClick={() => void createCandidate("template")}><Leaf />{active ? "生成基础修订" : "生成基础候选"}</button><button className="quiet-button" type="button" disabled={busy || !profile || !visiblePlan} onClick={openManualEditor}><ClipboardPenLine />手动编辑候选</button><button className="primary-button" type="button" disabled={busy || !profile} onClick={() => void createCandidate("ai")}><Sparkles />{active ? "请求 AI 修订" : "让 AI 生成候选"}</button></div>
+        <div className="health-generation-actions"><button className="quiet-button" type="button" disabled={busy || !profile || !visiblePlan} onClick={openManualEditor}><ClipboardPenLine />手动编辑候选</button><button className="primary-button" type="button" disabled={busy || !profile} onClick={() => void createCandidate()}><Sparkles />{active ? "请求 DeepSeek 修订" : "让 DeepSeek 生成候选"}</button></div>
       </section>
       {manualDraft && <form className="health-manual-editor" onSubmit={saveManualCandidate}>
         <header><div><p className="section-kicker">手动周参考候选</p><h2>你决定每一项内容。</h2><small>保存后只会形成待确认候选，不会立即覆盖当前生效版本。</small></div><button className="quiet-button" type="button" disabled={busy} onClick={() => setManualDraft(null)}>取消编辑</button></header>
@@ -525,6 +544,11 @@ export function HealthWorkspace({ onAskHealth, onCreateTask }:{
           <label><span>蛋白质上限（g）</span><input type="number" min="1" max="300" value={manualDraft.days[selectedDay]!.proteinRangeGrams.maximum} onChange={(event) => updateManualDay({ proteinRangeGrams: { ...manualDraft.days[selectedDay]!.proteinRangeGrams, maximum: Number(event.target.value) } })} required /></label>
           <label className="wide"><span>餐盘提示（逗号或换行分隔）</span><textarea value={manualDraft.days[selectedDay]!.plateGuidance.join("\n")} onChange={(event) => updateManualDay({ plateGuidance: listText(event.target.value) })} rows={2} required /></label>
           <label className="wide"><span>时令蔬菜提示（逗号或换行分隔）</span><textarea value={manualDraft.days[selectedDay]!.seasonalVegetables.join("，")} onChange={(event) => updateManualDay({ seasonalVegetables: listText(event.target.value) })} rows={2} required /></label>
+          <label className="wide"><span>时令生活提示（可选）</span><textarea value={manualDraft.days[selectedDay]!.seasonalGuidance ?? ""} onChange={(event) => updateManualDay({ seasonalGuidance: event.target.value.trim() ? event.target.value : null })} rows={2} maxLength={500} /></label>
+          <label><span>诗词篇名（可选）</span><input value={manualDraft.days[selectedDay]!.seasonalPoem?.title ?? ""} onChange={(event) => updateManualPoem({ title: event.target.value })} maxLength={120} required={Boolean(manualDraft.days[selectedDay]!.seasonalPoem)} /></label>
+          <label><span>作者（可选）</span><input value={manualDraft.days[selectedDay]!.seasonalPoem?.author ?? ""} onChange={(event) => updateManualPoem({ author: event.target.value })} maxLength={120} required={Boolean(manualDraft.days[selectedDay]!.seasonalPoem)} /></label>
+          <label className="wide"><span>诗句（可选；留空则不显示诗词）</span><textarea value={manualDraft.days[selectedDay]!.seasonalPoem?.excerpt ?? ""} onChange={(event) => event.target.value.trim() ? updateManualPoem({ excerpt: event.target.value }) : updateManualDay({ seasonalPoem: null })} rows={2} maxLength={180} /></label>
+          {manualDraft.days[selectedDay]!.seasonalPoem && <label className="wide"><span>与当天的关联</span><textarea value={manualDraft.days[selectedDay]!.seasonalPoem?.relevance ?? ""} onChange={(event) => updateManualPoem({ relevance: event.target.value })} rows={2} maxLength={300} required /></label>}
           <label><span>运动类别</span><select value={manualDraft.days[selectedDay]!.movement.category} onChange={(event) => updateManualMovement({ category: event.target.value as DayReference["content"]["movement"]["category"] })}><option value="strength">力量训练</option><option value="volleyball">排球</option><option value="running">跑步</option><option value="cycling">骑行</option><option value="recovery">轻量恢复</option><option value="rest">休息</option></select></label>
           <label><span>运动强度</span><select value={manualDraft.days[selectedDay]!.movement.intensity} onChange={(event) => updateManualMovement({ intensity: event.target.value as DayReference["content"]["movement"]["intensity"] })}><option value="rest">休息</option><option value="low">低强度</option><option value="moderate">中等强度</option><option value="high">高强度</option></select></label>
           <label><span>运动下限（分钟）</span><input type="number" min="0" max="240" value={manualDraft.days[selectedDay]!.movement.durationMinutes.minimum} onChange={(event) => updateManualMovement({ durationMinutes: { ...manualDraft.days[selectedDay]!.movement.durationMinutes, minimum: Number(event.target.value) } })} required /></label>
@@ -535,7 +559,7 @@ export function HealthWorkspace({ onAskHealth, onCreateTask }:{
         <footer><button className="primary-button" type="submit" disabled={busy}>{busy ? <LoaderCircle className="spin" /> : <Check />}保存为待确认候选</button></footer>
       </form>}
       {visiblePlan ? <section className="health-plan">
-        <header className="health-plan-header"><div><p className="section-kicker">{candidate ? "待确认版本" : "本周生效版本"}</p><h2>{visiblePlan.solarTerm} · {visiblePlan.city ?? "通用时令参考"}</h2><small>{candidate ? (visiblePlan.source === "ai" ? "AI 只生成候选，确认后才会替换本周参考。" : visiblePlan.source === "manual" ? "由你手动编辑的候选，确认后才会替换本周参考。" : "基础候选需经你确认后才会生效。") : "本周参考不会因一天睡眠或运动变化自动改写。"}</small></div>{candidate && <div className="candidate-actions"><button className="quiet-button" type="button" disabled={busy} onClick={() => void discardCandidate()}>放弃候选</button><button className="primary-button" type="button" disabled={busy} onClick={() => void confirmCandidate()}>{busy ? <LoaderCircle className="spin" /> : <Check />}确认并使用</button></div>}</header>
+        <header className="health-plan-header"><div><p className="section-kicker">{candidate ? "待确认版本" : "本周生效版本"}</p><h2>{visiblePlan.solarTerm} · {visiblePlan.city ?? "未设置城市"}</h2><small>{candidate ? (visiblePlan.source === "ai" ? "DeepSeek 只生成候选；天气不可用时不会编造，确认后才会替换本周参考。" : visiblePlan.source === "manual" ? "由你手动编辑的候选，确认后才会替换本周参考。" : "这是历史候选，仍需你确认后才会生效。") : "本周参考不会因一天睡眠或运动变化自动改写。"}</small></div>{candidate && <div className="candidate-actions"><button className="quiet-button" type="button" disabled={busy} onClick={() => void discardCandidate()}>放弃候选</button><button className="primary-button" type="button" disabled={busy} onClick={() => void confirmCandidate()}>{busy ? <LoaderCircle className="spin" /> : <Check />}确认并使用</button></div>}</header>
         <p className="health-overview">{visiblePlan.overview}</p>
         {candidate?.revisionReason && active && candidate.basedOnPlanId === active.id && <section className="health-revision-preview" aria-label={candidateIsUneditedSleepRevision ? "睡眠修订前后差异" : "候选前后差异"}>
           <header><Sparkles /><div><p className="section-kicker">{candidateIsUneditedSleepRevision ? "本次修订依据" : "候选说明"}</p><strong>候选尚未生效</strong></div></header>
@@ -550,7 +574,7 @@ export function HealthWorkspace({ onAskHealth, onCreateTask }:{
           }) && <div><strong>本周</strong><span>候选没有改变当前可显示的每日参考；确认前原计划仍保持不变。</span></div>}</div>
         </section>}
         <div className="health-days" role="tablist" aria-label="本周健康参考日期">{visiblePlan.days.map((day) => <button key={day.id} role="tab" aria-selected={selectedDay === day.dayIndex} className={selectedDay === day.dayIndex ? "active" : ""} type="button" onClick={() => setSelectedDay(day.dayIndex)}><span>{weekday[day.dayIndex]}</span><strong>{day.localDate.slice(8)}</strong></button>)}</div>
-        {selectedReference && <><article className="health-day-detail"><section><header><Leaf /><div><p>饮食方向</p><strong>蛋白质约 {selectedReference.content.proteinRangeGrams.minimum}–{selectedReference.content.proteinRangeGrams.maximum} g / 天</strong></div></header><p>{selectedReference.content.nutritionDirection}</p><ul>{selectedReference.content.plateGuidance.map((item) => <li key={item}>{item}</li>)}</ul><div className="vegetable-tags">{selectedReference.content.seasonalVegetables.map((item) => <span key={item}>{item}</span>)}</div></section><section><header><HeartPulse /><div><p>运动范围</p><strong>{activityLabel[selectedReference.content.movement.category]} · {intensityLabel[selectedReference.content.movement.intensity]}</strong></div></header><p>{selectedReference.content.movement.durationMinutes.maximum === 0 ? "不安排训练；保持日常轻松活动即可。" : `${selectedReference.content.movement.durationMinutes.minimum}–${selectedReference.content.movement.durationMinutes.maximum} 分钟，按当天实际状态自主决定。`}</p><aside>{selectedReference.content.movement.safetyReminder}</aside></section></article><div className="health-reference-actions"><button className="quiet-button" type="button" onClick={() => askAbout("food")}><MessageCircleQuestion />询问具体饮食</button><button className="quiet-button" type="button" onClick={() => askAbout("movement")}><MessageCircleQuestion />询问具体运动</button>{!candidate && active?.id === visiblePlan.id && selectedReference.content.movement.category !== "rest" && <button className="primary-button" type="button" onClick={createTaskFromMovement}><ClipboardPenLine />转为任务并重新排期</button>}</div></>}
+        {selectedReference && <>{(selectedReference.content.seasonalGuidance||selectedReference.content.seasonalPoem)&&<article className="health-seasonal-card"><Leaf/><div>{selectedReference.content.seasonalGuidance&&<><p className="section-kicker">结合时令与已取得的环境信息</p><strong>{selectedReference.content.seasonalGuidance}</strong></>}{selectedReference.content.seasonalPoem&&<blockquote><Quote/><p>“{selectedReference.content.seasonalPoem.excerpt}”</p><cite>{selectedReference.content.seasonalPoem.author}《{selectedReference.content.seasonalPoem.title}》</cite><small>{selectedReference.content.seasonalPoem.relevance}</small></blockquote>}</div></article>}<article className="health-day-detail"><section><header><Leaf /><div><p>饮食方向</p><strong>蛋白质约 {selectedReference.content.proteinRangeGrams.minimum}–{selectedReference.content.proteinRangeGrams.maximum} g / 天</strong></div></header><p>{selectedReference.content.nutritionDirection}</p><ul>{selectedReference.content.plateGuidance.map((item) => <li key={item}>{item}</li>)}</ul><div className="vegetable-tags">{selectedReference.content.seasonalVegetables.map((item) => <span key={item}>{item}</span>)}</div></section><section><header><HeartPulse /><div><p>运动范围</p><strong>{activityLabel[selectedReference.content.movement.category]} · {intensityLabel[selectedReference.content.movement.intensity]}</strong></div></header><p>{selectedReference.content.movement.durationMinutes.maximum === 0 ? "不安排训练；保持日常轻松活动即可。" : `${selectedReference.content.movement.durationMinutes.minimum}–${selectedReference.content.movement.durationMinutes.maximum} 分钟，按当天实际状态自主决定。`}</p><aside>{selectedReference.content.movement.safetyReminder}</aside></section></article><div className="health-reference-actions"><button className="quiet-button" type="button" onClick={() => askAbout("food")}><MessageCircleQuestion />询问具体饮食</button><button className="quiet-button" type="button" onClick={() => askAbout("movement")}><MessageCircleQuestion />询问具体运动</button>{!candidate && active?.id === visiblePlan.id && selectedReference.content.movement.category !== "rest" && <button className="primary-button" type="button" onClick={createTaskFromMovement}><ClipboardPenLine />转为任务并重新排期</button>}</div></>}
         <section className="health-supplements"><p className="section-kicker">补充剂参考</p>{visiblePlan.supplements.map((item) => <p key={item}>{item}</p>)}</section>
       </section> : <div className="health-empty"><HeartPulse /><strong>健康资料已准备好后，会在这里生成一份待你确认的本周参考。</strong></div>}
       <section className="health-sleep-card">

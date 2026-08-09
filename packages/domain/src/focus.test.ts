@@ -7,12 +7,19 @@ import {
   calculateSegmentElapsedSeconds,
   createFocusSessionSchema,
   evaluateFocusSessionSchema,
+  formatFocusClock,
   focusStructureInputSchema,
   locateFocusSegment,
   validateSegmentedFocusStructure
 } from "./focus.js";
 
 describe("focus input contracts", () => {
+  it("shows hour-long focus sessions without truncating the duration", () => {
+    expect(formatFocusClock(30 * 60)).toBe("30:00");
+    expect(formatFocusClock(90 * 60)).toBe("1:30:00");
+    expect(formatFocusClock(120 * 60 + 5)).toBe("2:00:05");
+  });
+
   it("accepts preparation/reminder starts but rejects manual restart", () => {
     expect(createFocusSessionSchema.safeParse({
       taskId: "00000000-0000-4000-8000-000000000001", expectedTaskVersion: 2, mode: "prepare"

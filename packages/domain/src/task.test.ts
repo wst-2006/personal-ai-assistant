@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { naturalLanguageTaskCandidateSchema, taskBackfillInputSchema, taskInputSchema, taskOutcomeInputSchema } from "./task.js";
+import { isWithinProductScheduleWindow, naturalLanguageTaskCandidateSchema, taskBackfillInputSchema, taskInputSchema, taskOutcomeInputSchema } from "./task.js";
 
 const exactTask = {
   title: "Deep work",
@@ -47,6 +47,12 @@ describe("task scheduling validation", () => {
       endAt: "2026-07-28T00:30:00+08:00"
     });
     expect(result.success).toBe(false);
+  });
+
+  it("defines the product scheduling window as 07:00 through 23:00", () => {
+    expect(isWithinProductScheduleWindow("2026-07-27T07:00:00+08:00", "2026-07-27T23:00:00+08:00", "Asia/Shanghai")).toBe(true);
+    expect(isWithinProductScheduleWindow("2026-07-27T06:30:00+08:00", "2026-07-27T07:30:00+08:00", "Asia/Shanghai")).toBe(false);
+    expect(isWithinProductScheduleWindow("2026-07-27T22:30:00+08:00", "2026-07-27T23:30:00+08:00", "Asia/Shanghai")).toBe(false);
   });
 
   it("rejects task entry types because ideas and questions use the inbox API", () => {

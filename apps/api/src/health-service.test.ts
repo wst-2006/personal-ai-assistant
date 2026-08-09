@@ -2,25 +2,86 @@ import { afterAll, describe, expect, it } from "vitest";
 import { connectVerifiedDatabase } from "@personal-ai/db/client";
 import { loadDatabaseConfig } from "@personal-ai/db/config";
 import { healthDailyReferences, healthSleepAnalyses, healthWeekPlans } from "@personal-ai/db/schema";
+import type { HealthPlanContent } from "@personal-ai/domain/health";
 import { eq, inArray } from "drizzle-orm";
 import { HealthPlanBaseChangedError, HealthService } from "./health-service.js";
 
 const connection = await connectVerifiedDatabase(loadDatabaseConfig());
 const service = new HealthService(connection.db);
 
+function healthContent(overview: string): HealthPlanContent {
+  return {
+    overview,
+    supplements: ["测试中只保留用户确认边界。"],
+    days: Array.from({ length: 7 }, () => ({
+      nutritionDirection: "维持正常餐盘结构。",
+      proteinRangeGrams: { minimum: 90, maximum: 120 },
+      plateGuidance: ["每餐有主要蛋白质来源。"],
+      seasonalVegetables: ["番茄"],
+      seasonalGuidance: null,
+      seasonalPoem: null,
+      movement: { category: "recovery", durationMinutes: { minimum: 20, maximum: 30 }, intensity: "low", highIntensity: false, safetyReminder: "按实际舒适度决定。" }
+    }))
+  };
+}
+
+function createManual(weekStart: string, overview: string, specialContext: string | null = null) {
+  return service.createManualCandidate({ weekStart, specialContext, content: healthContent(overview) });
+}
+
 afterAll(async () => { await connection.client.end(); });
 
 describe("health reference persistence", () => {
+  it("passes provider-backed weather only when the user has saved a city and never guesses one", async () => {
+    const weekStart = "2099-01-11";
+    const savedProfile = await service.getProfile();
+    const savedCity = (savedProfile?.profile as { city?: string | null } | undefined)?.city ?? null;
+    let weatherRequests = 0;
+    const aiService = new HealthService(connection.db, {
+      async weeklyWeather(locationName, startDate, endDate) {
+        weatherRequests += 1;
+        expect(locationName).toBe(savedCity);
+        expect([startDate, endDate]).toEqual(["2099-01-11", "2099-01-17"]);
+        return {
+          source: { provider: "open_meteo", retrievedAt: "2099-01-11T01:00:00.000Z" },
+          location: { name: "杭州，浙江，中国" },
+          days: [{ localDate: "2099-01-11", minimumCelsius: 5, maximumCelsius: 12, precipitationProbabilityPercent: 30, weatherCode: 3 }]
+        };
+      }
+    });
+    let planId: string | null = null;
+    try {
+      const candidate = await aiService.createAiCandidate(weekStart, null, {
+        async plan(input) {
+          expect(input.weather).toEqual(savedCity ? {
+            locationName: "杭州，浙江，中国", provider: "open_meteo", retrievedAt: "2099-01-11T01:00:00.000Z",
+            days: [{ localDate: "2099-01-11", minimumCelsius: 5, maximumCelsius: 12, precipitationProbabilityPercent: 30, weatherCode: 3 }]
+          } : null);
+          return healthContent("DeepSeek 根据真实上下文生成的候选。 ");
+        }
+      });
+      planId = candidate.plan.id;
+      expect(candidate.plan).toMatchObject({ state: "candidate", source: "ai" });
+      expect((await aiService.getWeek(weekStart)).active).toBeNull();
+      expect(weatherRequests).toBe(savedCity ? 1 : 0);
+    } finally {
+      if (planId) await connection.db.transaction(async (transaction) => {
+        await transaction.delete(healthDailyReferences).where(eq(healthDailyReferences.healthWeekPlanId, planId!));
+        await transaction.delete(healthWeekPlans).where(eq(healthWeekPlans.id, planId!));
+      });
+    }
+  });
+
   it("creates a read-only candidate, confirms it explicitly, and keeps seven independent daily references", async () => {
-    const candidate = await service.createTemplateCandidate("2099-01-04", "本周有一次长途出行");
+    const candidate = await createManual("2099-01-04", "本周有一次长途出行");
     let replacementId: string | null = null;
     try {
       expect(candidate.plan.state).toBe("candidate");
-      expect(candidate.plan.source).toBe("template");
+      expect(candidate.plan.source).toBe("manual");
       expect(candidate.days).toHaveLength(7);
       expect(candidate.days[0]?.content).toMatchObject({ proteinRangeGrams: { minimum: 90, maximum: 120 } });
 
-      const replacement = await service.createTemplateCandidate("2099-01-04", "改为最新的待确认参考");
+      const replacement = await createManual("2099-01-04", "改为最新的待确认参考");
       replacementId = replacement.plan.id;
       expect((await service.getWeek("2099-01-04")).candidate?.plan.id).toBe(replacement.plan.id);
       const [cancelledOld] = await connection.db.select().from(healthWeekPlans).where(eq(healthWeekPlans.id, candidate.plan.id));
@@ -65,7 +126,7 @@ describe("health reference persistence", () => {
 
   it("creates a sleep-based revision candidate without changing the active week until explicit confirmation", async () => {
     const weekStart = "2099-03-01";
-    const base = await service.createTemplateCandidate(weekStart, null);
+    const base = await createManual(weekStart, "睡眠修订前的用户确认参考");
     const active = await service.confirm(base.plan.id, base.plan.version);
     const png = `data:image/png;base64,${Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).toString("base64")}`;
     const sleep = await service.analyzeSleepImage({ localDate: "2099-03-02", fileName: "sleep.png", mimeType: "image/png", dataUrl: png }, {
@@ -122,7 +183,7 @@ describe("health reference persistence", () => {
 
   it("stores a user-edited weekly reference as a manual candidate before it replaces the active week", async () => {
     const weekStart = "2099-03-15";
-    const base = await service.createTemplateCandidate(weekStart, null);
+    const base = await createManual(weekStart, "手动编辑前的用户确认参考");
     const active = await service.confirm(base.plan.id, base.plan.version);
     let manualId: string | null = null;
     try {
@@ -169,11 +230,11 @@ describe("health reference persistence", () => {
     }
   });
 
-  it("binds template revisions to the active version and rejects a stale confirmation", async () => {
+  it("binds manual revisions to the active version and rejects a stale confirmation", async () => {
     const weekStart = "2099-04-12";
-    const base = await service.createTemplateCandidate(weekStart, null);
+    const base = await createManual(weekStart, "当前生效参考");
     const active = await service.confirm(base.plan.id, base.plan.version);
-    const revision = await service.createTemplateCandidate(weekStart, "周三外出，用餐场景会变化");
+    const revision = await createManual(weekStart, "周三外出，用餐场景会变化", "周三外出，用餐场景会变化");
     try {
       expect(revision.plan).toMatchObject({
         state: "candidate",
@@ -181,9 +242,7 @@ describe("health reference persistence", () => {
         basedOnPlanVersion: active.plan.version
       });
       expect(revision.plan.revisionReason).toContain("修订候选");
-      expect(revision.plan.overview).toContain("周三外出，用餐场景会变化");
-      expect(revision.plan.overview).toContain("清明");
-      expect((revision.days[0]?.content as { seasonalVegetables: string[] }).seasonalVegetables).toEqual(["菠菜", "芦笋"]);
+      expect(revision.plan.overview).toBe("周三外出，用餐场景会变化");
       await connection.db.update(healthWeekPlans).set({ version: active.plan.version + 1 }).where(eq(healthWeekPlans.id, active.plan.id));
       await expect(service.confirm(revision.plan.id, revision.plan.version)).rejects.toBeInstanceOf(HealthPlanBaseChangedError);
       expect((await service.getWeek(weekStart)).active?.plan.id).toBe(active.plan.id);

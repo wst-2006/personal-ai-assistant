@@ -1,8 +1,29 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { connectVerifiedDatabase } from "@personal-ai/db/client";
 import { loadDatabaseConfig } from "@personal-ai/db/config";
 import { healthDailyReferences, healthWeekPlans, reminderJobs, taskConflictAcceptances, taskFeedback, taskLifecycleEvents, taskOutcomes, tasks } from "@personal-ai/db/schema";
 import { and, eq, inArray, or } from "drizzle-orm";
+
+const apiBase = process.env.PLAYWRIGHT_API_BASE_URL ?? "http://127.0.0.1:3100";
+const healthContent = (overview = "这是等待用户确认的测试健康参考。") => ({
+  overview,
+  supplements: ["仅供查看，不自动改变任何安排。"],
+  days: Array.from({ length: 7 }, () => ({
+    nutritionDirection: "维持正常餐盘结构，并按当天实际情况选择。",
+    proteinRangeGrams: { minimum: 90, maximum: 120 },
+    plateGuidance: ["每餐有主要蛋白质来源。"],
+    seasonalVegetables: ["番茄"],
+    seasonalGuidance: "结合当天实际天气和体感，自主决定外出与活动强度。",
+    seasonalPoem: { title: "山居秋暝", author: "王维", excerpt: "空山新雨后，天气晚来秋。", relevance: "只作为真实诗词的时令阅读候选。" },
+    movement: { category: "strength", durationMinutes: { minimum: 30, maximum: 60 }, intensity: "moderate", highIntensity: false, safetyReminder: "按当天实际舒适度决定。" }
+  }))
+});
+
+async function seedCandidate(page: Page, weekStart: string) {
+  await cleanupWeek(weekStart);
+  const response = await page.request.post(`${apiBase}/api/v1/health/weeks/manual-candidates`, { data: { weekStart, content: healthContent() } });
+  expect(response.status()).toBe(201);
+}
 
 async function cleanupWeek(weekStart: string) {
   const { client, db } = await connectVerifiedDatabase(loadDatabaseConfig());
@@ -38,6 +59,7 @@ test("健康参考候选经确认后持久化，且不创建任务", async ({ pa
 
   try {
     await page.clock.setFixedTime(new Date("2099-01-04T10:00:00+08:00"));
+    await seedCandidate(page, weekStart);
     await page.goto("/");
     await page.getByRole("button", { name: "健康", exact: true }).click();
     await expect(page.getByText("候选尚未生效", { exact: true })).toBeVisible();
@@ -59,6 +81,7 @@ test("390px 移动端可查看健康候选且不发生横向溢出", async ({ pa
   const weekStart = "2099-01-11";
   try {
     await page.clock.setFixedTime(new Date("2099-01-11T10:00:00+08:00"));
+    await seedCandidate(page, weekStart);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/");
     await page.getByRole("button", { name: "健康", exact: true }).click();
@@ -80,6 +103,7 @@ test("手动编辑周参考会持久化为待确认候选，并只在确认后�
 
   try {
     await page.clock.setFixedTime(new Date("2099-02-01T10:00:00+08:00"));
+    await seedCandidate(page, weekStart);
     await page.goto("/");
     await page.getByRole("button", { name: "健康", exact: true }).click();
     await expect(page.getByText("候选尚未生效", { exact: true })).toBeVisible();
@@ -120,6 +144,7 @@ test("今日摘要、健康问答和转任务流程都保持用户确认边界",
   page.on("request", (request) => { if (request.url().endsWith("/api/v1/tasks") && request.method() === "POST") taskWrites += 1; });
   try {
     await page.clock.setFixedTime(new Date("2099-06-07T09:00:00+08:00"));
+    await seedCandidate(page, weekStart);
     await page.goto("/");
     await page.getByRole("button", { name: "健康", exact: true }).click();
     await expect(page.getByText("候选尚未生效", { exact: true })).toBeVisible();

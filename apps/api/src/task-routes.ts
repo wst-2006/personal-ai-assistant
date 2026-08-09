@@ -14,6 +14,7 @@ import {
   InvalidTaskTransitionError,
   TaskBackfillWindowError,
   TaskNotFoundError,
+  TaskScheduleBoundsError,
   TaskScheduleWindowError,
   TaskScheduleRevisionConflictError,
   TaskService,
@@ -181,6 +182,11 @@ function invalid(reply: FastifyReply, error: string, validation: ZodError) {
 }
 
 function taskError(reply: FastifyReply, error: unknown) {
+  if (error instanceof TaskScheduleBoundsError) return reply.status(400).send({
+    error: "task_schedule_outside_allowed_hours",
+    minimumMinute: error.minimumMinute,
+    maximumMinute: error.maximumMinute
+  });
   if (error instanceof TaskBackfillWindowError) return reply.status(400).send({
     error: "task_backfill_window_unavailable",
     latestEndAt: error.latestEndAt.toISOString()
