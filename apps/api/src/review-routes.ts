@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { reviewDateSchema, reviewMessageSchema } from "@personal-ai/domain/review";
+import { reviewDateSchema, reviewMessageSchema, reviewRadarSchema } from "@personal-ai/domain/review";
 import { z } from "zod";
 import {
   ReviewNoPendingReplyError,
@@ -45,6 +45,18 @@ export async function reviewRoutes(app: FastifyInstance, options: { reviewServic
         reviewSessionId: error.reviewSessionId,
         userMessageId: error.userMessageId,
       });
+      throw error;
+    }
+  });
+
+  app.post("/reviews/:id/radar", async (request, reply) => {
+    const id = sessionParams.safeParse(request.params);
+    const input = reviewRadarSchema.safeParse(request.body);
+    if (!id.success || !input.success) return reply.status(400).send({ error: "invalid_review_radar", details: input.success ? undefined : input.error.flatten() });
+    try {
+      return reply.status(201).send(await options.reviewService.saveRadarSnapshot(id.data.id, input.data));
+    } catch (error) {
+      if (error instanceof ReviewNotFoundError) return reply.status(404).send({ error: "review_session_not_found" });
       throw error;
     }
   });

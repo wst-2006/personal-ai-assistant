@@ -64,20 +64,21 @@ test("复盘消息与每日简报通过真实 API 持久保存、编辑、刷新
     await page.clock.setFixedTime(new Date(`${localDate}T21:00:00+08:00`));
     await page.goto("/");
     await page.locator(".app-rail").getByRole("button", { name: "复盘", exact: true }).click();
+    await expect(page.locator('.workspace-layer.current[data-layer-view="review"]')).toHaveCount(1, { timeout: 1800 });
     await expect(page.getByRole("heading", { name: "把今天还给自己。", exact: true })).toBeVisible();
     await expect(page.getByText(`E2E 复盘任务 ${suffix}`, { exact: true })).toHaveCount(0);
-    await expect(page.locator(".review-checkin")).toContainText("90m");
-    await expect(page.locator(".review-checkin")).toContainText("80m");
+    await expect(page.locator(".review-colophon")).toContainText("90m");
+    await expect(page.locator(".review-colophon")).toContainText("80m");
 
     const message = `E2E 复盘消息 ${suffix}：完成了核心任务，也记录了今天的节奏。`;
     await page.getByLabel("复盘正文", { exact: true }).fill(message);
     const messageSaved = page.waitForResponse((response) => response.url().endsWith(`/api/v1/reviews/${ids.review}/messages`) && response.request().method() === "POST" && response.status() === 201);
-    await page.getByRole("button", { name: "只保存片段", exact: true }).click();
+    await page.getByRole("button", { name: "保存", exact: true }).click();
     await messageSaved;
-    await expect(page.locator(".review-stream").getByText(message, { exact: true })).toBeVisible();
+    await expect(page.locator(".review-fragment-list").getByText(message, { exact: true })).toBeVisible();
 
     const briefCreated = page.waitForResponse((response) => response.url().endsWith(`/api/v1/reviews/${ids.review}/briefs`) && response.request().method() === "POST" && response.status() === 201);
-    await page.getByRole("button", { name: "结束今日复盘并生成简报", exact: true }).click();
+    await page.getByRole("button", { name: "收卷并生成今日简报", exact: true }).click();
     const createdBrief = (await (await briefCreated).json()) as { brief: { id: string; state: string; content: { sections: Array<{ title: string }> } } };
     briefId = createdBrief.brief.id;
     expect(createdBrief.brief.state).toBe("draft");
@@ -102,7 +103,7 @@ test("复盘消息与每日简报通过真实 API 持久保存、编辑、刷新
 
     await page.reload();
     await page.locator(".app-rail").getByRole("button", { name: "复盘", exact: true }).click();
-    await expect(page.locator(".review-stream").getByText(message, { exact: true })).toBeVisible();
+    await expect(page.locator(".review-fragment-list").getByText(message, { exact: true })).toBeVisible();
     await expect(page.getByText("每日简报 · 已确认", { exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: editedTitle, exact: true })).toBeVisible();
     await expect(page.getByLabel("简报任务摘要", { exact: true })).toBeDisabled();
@@ -127,7 +128,7 @@ test("复盘消息与每日简报通过真实 API 持久保存、编辑、刷新
     await page.reload();
     await page.locator(".mobile-nav").getByRole("button", { name: "复盘", exact: true }).click();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
-    await expect(page.locator(".review-stream").getByText(message, { exact: true })).toBeVisible();
+    await expect(page.locator(".review-fragment-list").getByText(message, { exact: true })).toBeVisible();
     await expect(page.getByText("每日简报 · 已确认", { exact: true })).toBeVisible();
   } finally {
     await db.delete(cyberDiaries).where(eq(cyberDiaries.reviewSessionId, ids.review));

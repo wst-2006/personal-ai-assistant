@@ -1,0 +1,36 @@
+name: 功能建议
+description: 提出与本地单用户产品边界一致的新建议
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        当前版本坚持本地优先、单用户和用户确认后再写入计划。请描述希望解决的问题，不要提交账号、密钥或真实个人数据。
+  - type: textarea
+    id: problem
+    attributes:
+      label: 想解决的问题
+    validations:
+      required: true
+  - type: textarea
+    id: workflow
+    attributes:
+      label: 希望的使用流程
+      description: 请说明用户在哪一步做决定，以及哪些操作必须再次确认。
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 你考虑过的替代办法
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: 产品边界确认
+      options:
+        - label: 这个建议不要求公开注册、多人租户、社交、监控、人格推断或惩罚机制。
+          required: true
+        - label: 如果建议涉及计划变化，我接受最终写入必须由用户明确确认。
+          required: true

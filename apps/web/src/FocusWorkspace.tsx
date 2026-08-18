@@ -1,23 +1,28 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import {
-  Check,
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
-  CircleDashed,
   Clock3,
-  Compass,
+  Eye,
+  PencilLine,
   Play,
-  Sparkles,
-  XCircle,
 } from "lucide-react";
 import { FocusStructureEditor, type FocusStructureRecord } from "./FocusStructureEditor";
-import { getFocusGuidance } from "./focus-guidance";
+import {
+  FocusEvaluationForm,
+  progressForOutcome,
+  validFocusEvaluation,
+  type FocusOutcome,
+  type FocusSatisfaction,
+} from "./FocusEvaluationForm";
 import { formatFocusClock, type FocusSegment } from "@personal-ai/domain/focus";
+import { defaultFocusSoundPreferences, playFocusCue, type FocusSoundPreferences } from "./focus-audio";
 
 type Task = {
   id: string;
   title: string;
+  recordKind: "formal" | "backfill";
   lifecycleStatus:
     | "open"
     | "active"
@@ -35,7 +40,10 @@ type FocusState =
   | "scheduled"
   | "reminded"
   | "preparing"
+  | "armed"
+  | "awaiting_late_start"
   | "running"
+  | "paused"
   | "ended"
   | "evaluated"
   | "stopped_no_response"
@@ -48,6 +56,8 @@ type Session = {
   plannedEndAt: string | null;
   preparingEndsAt: string | null;
   activeSinceAt: string | null;
+  pausedAt: string | null;
+  pausedTotalSeconds: number;
   rawActiveSeconds: number;
   effectiveFocusSeconds: number;
   focusStructureId: string | null;
@@ -57,8 +67,24 @@ type Session = {
   version: number;
   stoppedReason: string | null;
 };
-type Outcome = "not_completed" | "partial" | "complete";
-type Satisfaction = "satisfied" | "neutral" | "dissatisfied";
+type UserSoundProfile = {
+  focusFlipSoundEnabled?: boolean;
+  focusStartSoundEnabled?: boolean;
+  breakStartSoundEnabled?: boolean;
+  breakEndSoundEnabled?: boolean;
+  focusEndSoundEnabled?: boolean;
+};
+
+function isFocusStartEligibleTask(task: Task | null | undefined): task is Task {
+  return Boolean(
+    task
+    && task.recordKind === "formal"
+    && task.lifecycleStatus === "open"
+    && task.scheduleKind === "exact"
+    && task.startAt
+    && task.endAt
+  );
+}
 
 const API = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:3000";
 const nowDate = () =>
@@ -91,12 +117,28 @@ async function request<T>(
   return (await response.json()) as T;
 }
 
+function InkClepsydra({ value, progress, resting, empty }: { value: string; progress: number; resting: boolean; empty: boolean }) {
+  const boundedProgress = Math.max(0, Math.min(100, progress));
+  return <div
+    className={`ink-clepsydra ${resting ? "resting" : ""}`}
+    aria-label={`${resting ? "休息" : "剩余"}时间 ${value}`}
+    style={{
+      "--ink-progress": `${boundedProgress}%`,
+    } as CSSProperties}
+  >
+    <strong className={empty ? "empty" : undefined}>{empty ? "·" : value}</strong>
+    <span className="ink-clepsydra-line" aria-hidden="true"><i><b /></i></span>
+  </div>;
+}
+
 export function FocusWorkspace({
+  isWorkspaceCurrent,
   preferredTaskId,
   onBack,
   onPlanChange,
   onPreferredTaskReady,
 }: {
+  isWorkspaceCurrent: boolean;
   preferredTaskId: string | null;
   onBack: () => void;
   onPlanChange: (task: { id: string; title: string }) => void;
@@ -109,19 +151,32 @@ export function FocusWorkspace({
   const [candidateStructure, setCandidateStructure] = useState<FocusStructureRecord | null>(null);
   const [loadedStructureKey, setLoadedStructureKey] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(preferredTaskId);
-  const [elapsed, setElapsed] = useState(0);
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [outcome, setOutcome] = useState<Outcome>("complete");
+  const [outcome, setOutcome] = useState<FocusOutcome>("complete");
   const [progress, setProgress] = useState("100");
-  const [satisfaction, setSatisfaction] = useState<Satisfaction>("satisfied");
+  const [satisfaction, setSatisfaction] = useState<FocusSatisfaction>("satisfied");
   const [note, setNote] = useState("");
   const [pickerExpanded, setPickerExpanded] = useState(false);
+  const [arrangementOpen, setArrangementOpen] = useState(false);
+  const [editArrangementOpen, setEditArrangementOpen] = useState(false);
+  const [soundPreferences, setSoundPreferences] = useState<FocusSoundPreferences>(defaultFocusSoundPreferences);
+  const previousCueState = useRef<{ sessionId: string; state: FocusState; segmentPosition: number | null; segmentType: FocusSegment["segmentType"] | null } | null>(null);
+  const previousFlipMinute = useRef<number | null>(null);
   const load = useCallback(async () => {
-    const [list, current] = await Promise.all([
+    const [list, current, profileResult] = await Promise.all([
       request<{ tasks: Task[] }>(`/api/v1/tasks?date=${nowDate()}`),
-      request<{ session: Session | null }>("/api/v1/focus-sessions/current")
+      request<{ session: Session | null }>("/api/v1/focus-sessions/current"),
+      request<{ profile: UserSoundProfile }>("/api/v1/user-profile").catch(() => ({ profile: {} as UserSoundProfile }))
     ]);
+    setSoundPreferences({
+      flip: profileResult.profile.focusFlipSoundEnabled ?? true,
+      focusStart: profileResult.profile.focusStartSoundEnabled ?? true,
+      breakStart: profileResult.profile.breakStartSoundEnabled ?? true,
+      breakEnd: profileResult.profile.breakEndSoundEnabled ?? true,
+      focusEnd: profileResult.profile.focusEndSoundEnabled ?? true
+    });
     const additionalTaskIds = [...new Set([
       current.session?.taskId,
       preferredTaskId
@@ -131,13 +186,18 @@ export function FocusWorkspace({
         .then((result) => result.task)
         .catch(() => null)
     ));
-    const visible = list.tasks.filter(
-        (task) =>
-          task.lifecycleStatus !== "closed" &&
-          task.lifecycleStatus !== "cancelled",
-      );
-    for (const task of additionalTasks) {
-      if (task && !visible.some((visibleTask) => visibleTask.id === task.id)) visible.push(task);
+    const currentSessionTask = current.session
+      ? additionalTasks.find((task) => task?.id === current.session?.taskId) ?? null
+      : null;
+    const preferredTask = preferredTaskId
+      ? additionalTasks.find((task) => task?.id === preferredTaskId) ?? null
+      : null;
+    const visible = list.tasks.filter(isFocusStartEligibleTask);
+    if (currentSessionTask?.recordKind === "formal" && !visible.some((task) => task.id === currentSessionTask.id)) {
+      visible.push(currentSessionTask);
+    }
+    if (isFocusStartEligibleTask(preferredTask) && !visible.some((task) => task.id === preferredTask.id)) {
+      visible.push(preferredTask);
     }
     visible.sort((left, right) => {
       const leftTime = left.startAt ? new Date(left.startAt).getTime() : Number.MAX_SAFE_INTEGER;
@@ -146,16 +206,24 @@ export function FocusWorkspace({
     });
     setTasks(visible);
     setSession(current.session);
-    setSelectedId((currentId) => currentId ?? current.session?.taskId ?? visible[0]?.id ?? null);
+    const visibleIds = new Set(visible.map((task) => task.id));
+    const sessionTaskId = current.session?.taskId && visibleIds.has(current.session.taskId)
+      ? current.session.taskId
+      : null;
+    const preferredEligibleId = isFocusStartEligibleTask(preferredTask) && visibleIds.has(preferredTask.id)
+      ? preferredTask.id
+      : null;
+    setSelectedId((currentId) => sessionTaskId
+      ?? preferredEligibleId
+      ?? (currentId && visibleIds.has(currentId) ? currentId : null)
+      ?? visible[0]?.id
+      ?? null);
   }, [preferredTaskId]);
   useEffect(() => {
     void load().catch(() =>
       setError("无法恢复专注会话，请确认 API 正在运行。"),
     );
   }, [load]);
-  useEffect(() => {
-    if (preferredTaskId) setSelectedId(preferredTaskId);
-  }, [preferredTaskId]);
   const selected = useMemo(
     () => tasks.find((task) => task.id === selectedId) ?? null,
     [tasks, selectedId],
@@ -215,72 +283,33 @@ export function FocusWorkspace({
   useEffect(() => {
     if (!session) return;
     const update = () => {
-      if (session.state === "running" && session.activeSinceAt)
-        setElapsed(
-          session.rawActiveSeconds +
-            Math.max(
-              0,
-              Math.floor(
-                (Date.now() - new Date(session.activeSinceAt).getTime()) / 1000,
-              ),
-            ),
-        );
-      else setElapsed(session.rawActiveSeconds);
+      setNowMs(Date.now());
     };
     update();
     const timer = window.setInterval(update, 1000);
     return () => window.clearInterval(timer);
   }, [session]);
   useEffect(() => {
-    if (!session || session.state !== "preparing" || !session.preparingEndsAt)
-      return;
-    const left = new Date(session.preparingEndsAt).getTime() - Date.now();
-    if (left <= 0) {
-      void transition("begin");
-      return;
-    }
-    const timer = window.setTimeout(() => void transition("begin"), left + 30);
-    return () => window.clearTimeout(timer);
-  }, [session]);
-  useEffect(() => {
-    if (session?.state !== "reminded" && session?.state !== "scheduled" && session?.state !== "running") return;
+    if (!session || !["reminded", "scheduled", "preparing", "armed", "awaiting_late_start", "running"].includes(session.state)) return;
     const timer = window.setInterval(() => void load().catch(() => undefined), 15_000);
     return () => window.clearInterval(timer);
   }, [load, session?.state]);
   useEffect(() => {
     if (session?.state !== "scheduled" || !session.plannedStartAt) return;
-    const left = Math.max(0, new Date(session.plannedStartAt).getTime() - Date.now());
+    const left = Math.max(0, new Date(session.plannedStartAt).getTime() - 60_000 - Date.now());
     const timer = window.setTimeout(() => void load().catch(() => undefined), left + 50);
     return () => window.clearTimeout(timer);
   }, [load, session?.plannedStartAt, session?.state]);
-  useEffect(() => {
-    if (session) return;
-    const now = Date.now();
-    const candidate = tasks
-      .filter((task) => task.lifecycleStatus === "open" && task.startAt)
-      .sort((left, right) => (left.startAt ?? "").localeCompare(right.startAt ?? ""))
-      .find((task) => {
-        const delta = new Date(task.startAt!).getTime() - now;
-        return delta >= 0 && delta <= 15 * 60_000;
-      });
-    if (!candidate) return;
-    let cancelled = false;
-    void request<{ session: Session }>("/api/v1/focus-sessions", "POST", {
-      taskId: candidate.id,
-      expectedTaskVersion: candidate.version,
-      mode: "remind"
-    }).then((result) => { if (!cancelled) setSession(result.session); }).catch(() => undefined);
-    return () => { cancelled = true; };
-  }, [session, tasks]);
-
-  async function saveStructure(segments: FocusSegment[], source: "manual" | "template"): Promise<void> {
-    if (!selected || selected.scheduleKind !== "exact" || !selected.startAt || !selected.endAt) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const breakMinutes = segments.find((segment) => segment.segmentType === "break")?.durationMinutes ?? 0;
-      const continuous = segments.filter((segment) => segment.segmentType === "focus").length === 1;
-      const candidate = await request<{ focusStructure: FocusStructureRecord }>(
+  async function createStructureCandidate(
+    segments: FocusSegment[],
+    source: "manual" | "template"
+  ): Promise<FocusStructureRecord> {
+    if (!selected || selected.scheduleKind !== "exact" || !selected.startAt || !selected.endAt) {
+      throw new Error("focus_structure_task_unavailable");
+    }
+    const breakMinutes = segments.find((segment) => segment.segmentType === "break")?.durationMinutes ?? 0;
+    const continuous = segments.filter((segment) => segment.segmentType === "focus").length === 1;
+    const candidate = await request<{ focusStructure: FocusStructureRecord }>(
       "/api/v1/focus-structures/candidates",
       "POST",
       {
@@ -294,8 +323,16 @@ export function FocusWorkspace({
         breakMinutes,
         ...(continuous ? {} : { segments })
       }
-      );
-      setCandidateStructure(candidate.focusStructure);
+    );
+    return candidate.focusStructure;
+  }
+
+  async function saveStructure(segments: FocusSegment[], source: "manual" | "template"): Promise<void> {
+    if (!selected || selected.scheduleKind !== "exact" || !selected.startAt || !selected.endAt) return;
+    setBusy(true);
+    setError(null);
+    try {
+      setCandidateStructure(await createStructureCandidate(segments, source));
     } catch (error: any) {
       setError(error.body?.error === "focus_structure_task_conflict"
         ? "任务排期已经变化，请刷新后重新安排结构。"
@@ -349,6 +386,29 @@ export function FocusWorkspace({
     }
   }
 
+  async function confirmStructureDraft(segments: FocusSegment[]): Promise<void> {
+    if (!selected) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const candidate = await createStructureCandidate(segments, "manual");
+      const confirmed = await request<{ focusStructure: FocusStructureRecord }>(
+        `/api/v1/focus-structures/${candidate.id}/confirm`, "POST", {
+          expectedVersion: candidate.version,
+          expectedTaskVersion: selected.version,
+          expectedTaskScheduleRevision: selected.scheduleRevision
+        });
+      setActiveStructure(confirmed.focusStructure);
+      setCandidateStructure(null);
+    } catch (error: any) {
+      setError(error.body?.error?.includes("conflict")
+        ? "任务排期已经变化，请刷新后重新确认。"
+        : "这份结构没有确认成功，请重试。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function discardCandidate(): Promise<void> {
     if (!candidateStructure) return;
     setBusy(true);
@@ -366,18 +426,21 @@ export function FocusWorkspace({
   }
 
   async function begin(mode: "prepare" | "remind" = "prepare") {
-    if (!selected) return;
+    if (!isFocusStartEligibleTask(selected)) {
+      setError("请先把任务拖入时间轴，设置精确的开始和结束时间。");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      if (selected.scheduleKind === "exact" && !activeStructure) {
+      if (!activeStructure) {
         setError("请先保存候选并明确确认专注结构。");
         return;
       }
       const result = await request<{ session: Session }>(
         "/api/v1/focus-sessions",
         "POST",
-        { taskId: selected.id, expectedTaskVersion: selected.version, mode },
+        { taskId: selected.id, expectedTaskVersion: selected.version, mode, commandId: crypto.randomUUID() },
       );
       setSession(result.session);
       await load();
@@ -385,6 +448,8 @@ export function FocusWorkspace({
       setError(
         error.body?.error === "focus_session_already_active"
           ? "已有一段专注正在进行。"
+          : error.body?.error === "focus_task_not_scheduled"
+            ? "请先把任务拖入时间轴，设置精确的开始和结束时间。"
           : "无法开始专注，请刷新后重试。",
       );
     } finally {
@@ -393,8 +458,6 @@ export function FocusWorkspace({
   }
   async function transition(
     action:
-      | "begin"
-      | "end"
       | "skip-preparation"
       | "skip-final-break"
       | "other-arrangement"
@@ -409,19 +472,19 @@ export function FocusWorkspace({
         result = await request(
           `/api/v1/focus-sessions/${session.id}/respond`,
           "POST",
-          { expectedVersion: session.version, decision: "start" },
+          { expectedVersion: session.version, decision: "start", commandId: crypto.randomUUID() },
         );
-      else if (action === "other-arrangement")
+      else if (action === "other-arrangement" && session.state === "reminded")
         result = await request(
           `/api/v1/focus-sessions/${session.id}/respond`,
           "POST",
-          { expectedVersion: session.version, decision: "other_arrangement" },
+          { expectedVersion: session.version, decision: "other_arrangement", commandId: crypto.randomUUID() },
         );
       else
         result = await request(
           `/api/v1/focus-sessions/${session.id}/${action}`,
           "POST",
-          { expectedVersion: session.version },
+          { expectedVersion: session.version, commandId: crypto.randomUUID() },
         );
       setSession(result.session);
       await load();
@@ -439,20 +502,15 @@ export function FocusWorkspace({
       setBusy(false);
     }
   }
-  function chooseOutcome(value: Outcome) {
+  function chooseOutcome(value: FocusOutcome) {
     setOutcome(value);
-    setProgress(
-      value === "complete" ? "100" : value === "not_completed" ? "0" : "50",
-    );
+    setProgress(progressForOutcome(value));
+    setError(null);
   }
   async function evaluate() {
     if (!session) return;
     const value = Number(progress);
-    if (
-      (outcome === "complete" && value !== 100) ||
-      (outcome === "not_completed" && value !== 0) ||
-      (outcome === "partial" && (value < 1 || value > 99))
-    ) {
+    if (!validFocusEvaluation(outcome, progress)) {
       setError("请填写与完成情况一致的客观进度。");
       return;
     }
@@ -461,6 +519,7 @@ export function FocusWorkspace({
     try {
       await request(`/api/v1/focus-sessions/${session.id}/evaluate`, "POST", {
         expectedVersion: session.version,
+        commandId: crypto.randomUUID(),
         outcome,
         progressPercent: value,
         satisfaction,
@@ -477,65 +536,191 @@ export function FocusWorkspace({
   }
   const stage = session?.state ?? "idle";
   const displayTask = session ? sessionTask : selected;
-  const displayStructure = session ? sessionStructure : activeStructure;
+  const displayStructure = sessionStructure ?? activeStructure;
   const prepLeft = session?.preparingEndsAt
     ? Math.ceil(
-        Math.max(0, new Date(session.preparingEndsAt).getTime() - Date.now()) /
+        Math.max(0, new Date(session.preparingEndsAt).getTime() - nowMs) /
           1000,
       )
     : 0;
   const scheduledLeft = session?.state === "scheduled" && session.plannedStartAt
-    ? Math.ceil(Math.max(0, new Date(session.plannedStartAt).getTime() - Date.now()) / 1000)
+    ? Math.ceil(Math.max(0, new Date(session.plannedStartAt).getTime() - nowMs) / 1000)
     : 0;
   const selectedMinutes = displayTask?.startAt && displayTask.endAt
     ? Math.round((new Date(displayTask.endAt).getTime() - new Date(displayTask.startAt).getTime()) / 60_000)
     : null;
+  const fixedWindowTotal = session?.plannedStartAt && session.plannedEndAt
+    ? Math.max(0, Math.round((new Date(session.plannedEndAt).getTime() - new Date(session.plannedStartAt).getTime()) / 1000))
+    : Math.max(0, (selectedMinutes ?? 0) * 60);
+  const fixedWindowRemaining = session?.plannedEndAt && (stage === "running" || stage === "awaiting_late_start")
+    ? Math.ceil(Math.max(0, new Date(session.plannedEndAt).getTime() - nowMs) / 1000)
+    : fixedWindowTotal;
   const currentSegment = displayStructure && session && session.currentSegmentPosition !== null
     ? displayStructure.segments[session.currentSegmentPosition] ?? null
     : null;
   const currentSegmentElapsed = stage === "running" && session?.currentSegmentStartedAt
-    ? Math.max(0, Math.floor((Date.now() - new Date(session.currentSegmentStartedAt).getTime()) / 1000))
+    ? Math.max(0, Math.floor((nowMs - new Date(session.currentSegmentStartedAt).getTime()) / 1000))
     : session?.currentSegmentElapsedSeconds ?? 0;
   const currentSegmentRemaining = currentSegment
     ? Math.max(0, currentSegment.durationMinutes * 60 - currentSegmentElapsed)
     : 0;
   const timerTotal = stage === "preparing"
     ? 60
+    : stage === "armed"
+      ? Math.max(1, prepLeft)
+      : stage === "awaiting_late_start"
+        ? Math.max(1, fixedWindowTotal)
     : stage === "scheduled"
       ? Math.max(1, scheduledLeft)
       : currentSegment
         ? currentSegment.durationMinutes * 60
-        : Math.max(1, (selectedMinutes ?? 0) * 60);
+        : Math.max(1, fixedWindowTotal);
   const timerElapsed = stage === "preparing"
     ? 60 - prepLeft
+    : stage === "armed"
+      ? 60 - prepLeft
+      : stage === "awaiting_late_start"
+        ? Math.max(0, fixedWindowTotal - fixedWindowRemaining)
     : stage === "scheduled"
       ? 0
       : currentSegment
         ? timerTotal - currentSegmentRemaining
-        : elapsed;
+        : fixedWindowTotal > 0
+          ? Math.max(0, timerTotal - fixedWindowRemaining)
+          : 0;
   const isFinalBreak = stage === "running"
     && currentSegment?.segmentType === "break"
     && session?.currentSegmentPosition === (displayStructure?.segments.length ?? 0) - 1;
+  const focusScene = stage === "ended"
+    ? "ended"
+    : stage === "running" && currentSegment?.segmentType === "break"
+      ? "break"
+      : stage === "running"
+        ? "focus"
+        : ["scheduled", "reminded", "preparing", "armed", "awaiting_late_start"].includes(stage)
+          ? "ready"
+          : "idle";
+  const clockValue = stage === "preparing"
+    ? `00:${String(prepLeft).padStart(2, "0")}`
+    : stage === "armed"
+      ? `00:${String(prepLeft).padStart(2, "0")}`
+      : stage === "awaiting_late_start"
+        ? formatFocusClock(fixedWindowRemaining)
+    : stage === "scheduled"
+      ? formatFocusClock(scheduledLeft)
+      : stage === "reminded"
+        ? "·"
+      : currentSegment
+        ? formatFocusClock(currentSegmentRemaining)
+        : displayTask
+          ? formatFocusClock(fixedWindowRemaining)
+          : "";
+  const timerProgress = displayTask || session
+    ? Math.max(0, Math.min(100, timerElapsed / Math.max(1, timerTotal) * 100))
+    : 0;
+  const fixedEndLabel = displayTask?.endAt ? clock(displayTask.endAt, displayTask.timeZone) : null;
+  const segmentTimings = useMemo(() => {
+    if (!displayStructure) return [];
+    let cursor = new Date(displayStructure.totalStartAt).getTime();
+    return displayStructure.segments.map((segment) => {
+      const startsAt = cursor;
+      cursor += segment.durationMinutes * 60_000;
+      return { ...segment, startsAt, endsAt: cursor };
+    });
+  }, [displayStructure]);
+  const currentSegmentTiming = session?.currentSegmentPosition === null || session?.currentSegmentPosition === undefined
+    ? null
+    : segmentTimings[session.currentSegmentPosition] ?? null;
+  const nextSegmentTiming = session?.currentSegmentPosition === null || session?.currentSegmentPosition === undefined
+    ? segmentTimings[0] ?? null
+    : segmentTimings[session.currentSegmentPosition + 1] ?? null;
+  const phaseEndLabel = currentSegmentTiming && displayTask
+    ? clock(new Date(currentSegmentTiming.endsAt).toISOString(), displayTask.timeZone)
+    : fixedEndLabel;
+  const executionStage = ["reminded", "scheduled", "preparing", "armed", "awaiting_late_start", "running"].includes(stage);
+
+  useEffect(() => {
+    const immersive = isWorkspaceCurrent && executionStage;
+    if (immersive) document.documentElement.dataset.focusImmersive = "true";
+    else delete document.documentElement.dataset.focusImmersive;
+    return () => { delete document.documentElement.dataset.focusImmersive; };
+  }, [executionStage, isWorkspaceCurrent]);
+
+  useEffect(() => {
+    if (!session) {
+      previousCueState.current = null;
+      previousFlipMinute.current = null;
+      return;
+    }
+    const next = {
+      sessionId: session.id,
+      state: session.state,
+      segmentPosition: session.currentSegmentPosition,
+      segmentType: currentSegment?.segmentType ?? null
+    };
+    const previous = previousCueState.current;
+    previousCueState.current = next;
+    if (!previous || previous.sessionId !== next.sessionId) return;
+    if (previous.state === next.state && previous.segmentPosition === next.segmentPosition) return;
+    previousFlipMinute.current = null;
+    if (next.state === "ended") void playFocusCue("focusEnd", soundPreferences.focusEnd);
+    else if (next.state === "running" && next.segmentType === "break") void playFocusCue("breakStart", soundPreferences.breakStart);
+    else if (next.state === "running" && previous.segmentType === "break") void playFocusCue("breakEnd", soundPreferences.breakEnd);
+    else if (next.state === "running" && previous.state !== "running") void playFocusCue("focusStart", soundPreferences.focusStart);
+  }, [currentSegment?.segmentType, session?.currentSegmentPosition, session?.id, session?.state, soundPreferences]);
+
+  useEffect(() => {
+    if (stage !== "running" || !currentSegment) {
+      previousFlipMinute.current = null;
+      return;
+    }
+    const minute = Math.ceil(currentSegmentRemaining / 60);
+    const previous = previousFlipMinute.current;
+    previousFlipMinute.current = minute;
+    if (previous !== null && previous !== minute) void playFocusCue("flip", soundPreferences.flip);
+  }, [currentSegment?.position, currentSegmentRemaining, soundPreferences.flip, stage]);
   const locksSelectedStructure = Boolean(
     session
     && selected?.id === session.taskId
-    && ["preparing", "running", "ended"].includes(session.state)
+    && ["preparing", "armed", "awaiting_late_start", "running", "ended"].includes(session.state)
   );
-  const guidance = useMemo(
-    () => displayTask ? getFocusGuidance({ id: displayTask.id, title: displayTask.title }) : null,
-    [displayTask?.id, displayTask?.title],
-  );
-  const showsGuidance = Boolean(
-    guidance
-    && session
-    && ["reminded", "scheduled", "preparing", "running"].includes(stage)
-    && currentSegment?.segmentType !== "break",
-  );
+
+  if (stage === "ended" && session) {
+    return (
+      <section className="focus-workspace page focus-workspace-ended" aria-labelledby="focus-page-evaluation-title">
+        <div className="focus-ended-page">
+          <button className="back-button" onClick={onBack}>
+            <ChevronLeft />
+            回到时间轴
+          </button>
+          <FocusEvaluationForm
+            headingId="focus-page-evaluation-title"
+            taskTitle={displayTask?.title ?? "本次专注"}
+            outcome={outcome}
+            progress={progress}
+            satisfaction={satisfaction}
+            note={note}
+            busy={busy}
+            error={error}
+            onOutcomeChange={chooseOutcome}
+            onProgressChange={(value) => { setProgress(value); setError(null); }}
+            onSatisfactionChange={(value) => { setSatisfaction(value); setError(null); }}
+            onNoteChange={setNote}
+            onSubmit={() => void evaluate()}
+          />
+        </div>
+      </section>
+    );
+  }
+
   return (
-    <section className="focus-workspace page" aria-labelledby="focus-title">
-      <div className="focus-stage">
-        <div className="focus-orbit orbit-one" />
-        <div className="focus-orbit orbit-two" />
+    <section className={`focus-workspace page ${executionStage ? "focus-workspace-executing" : ""}`} aria-labelledby="focus-title">
+      <div className={`focus-stage focus-stage-${stage} focus-scene-${focusScene}`}>
+        <svg className="focus-ink-landscape" viewBox="0 0 1200 760" preserveAspectRatio="none" aria-hidden="true"><path className="focus-mountain-far" d="M-40 558C94 515 169 389 286 426C378 455 406 529 506 486C601 446 638 302 754 338C856 369 902 496 1017 449C1084 421 1140 353 1240 346V760H-40Z"/><path className="focus-mountain-near" d="M-60 644C102 586 188 522 296 552C394 579 442 642 552 593C656 547 739 463 846 508C944 549 1020 628 1260 530V760H-60Z"/><path className="focus-water-line" d="M44 684C248 658 397 690 587 672C781 654 925 681 1154 653"/></svg>
+        <div className="focus-mist mist-one" />
+        <div className="focus-mist mist-two" />
+        <div className="focus-water-ripples" aria-hidden="true"><i/><i/><i/></div>
+        <div className="focus-completion-seal" aria-hidden="true"><span>成</span></div>
         <div className="focus-stage-header">
           <button className="back-button" onClick={onBack}>
             <ChevronLeft />
@@ -544,6 +729,10 @@ export function FocusWorkspace({
           <span>
             {stage === "running"
               ? "正在专注"
+              : stage === "awaiting_late_start"
+                ? "等待确认开始"
+              : stage === "armed"
+                ? "已经确认开始"
               : stage === "scheduled"
                 ? "等待任务时间"
               : stage === "preparing"
@@ -553,235 +742,116 @@ export function FocusWorkspace({
                     : "专注一件事"}
           </span>
         </div>
-        <div className="focus-center">
-          <p className="section-kicker">当前意图</p>
-          <h1 id="focus-title">
-            {displayTask?.title ?? "选择一件任务，留在此刻"}
-          </h1>
-          <p className="focus-meta">
-            {displayTask
-              ? displayTask.startAt && displayTask.endAt
-                ? `${clock(displayTask.startAt, displayTask.timeZone)}–${clock(displayTask.endAt, displayTask.timeZone)} · ${selectedMinutes} 分钟固定时间块`
-                : "这项任务尚未设置精确起止时间"
-              : "从今日时间轴或右侧列表选择任务"}
-          </p>
-          {session && displayStructure && session.currentSegmentPosition !== null && (
-            <p className="focus-segment-status">
-              第 {session.currentSegmentPosition + 1} 段 · {currentSegment?.segmentType === "break" ? "休息" : "专注"}
-              {isFinalBreak ? " · 最后一次休息" : ""}
-            </p>
-          )}
-          <div
-            className={`focus-timer ${stage === "running" ? "running" : ""}`}
-          >
-            <svg viewBox="0 0 180 180">
-              <circle cx="90" cy="90" r="80" />
-              <circle
-                className="timer-progress"
-                cx="90"
-                cy="90"
-                r="80"
-                style={{
-                  strokeDashoffset:
-                    Math.max(0, 503 - (503 * timerElapsed) / timerTotal),
-                }}
-              />
-            </svg>
-            <strong>
-              {stage === "preparing"
-                ? `00:${String(prepLeft).padStart(2, "0")}`
-                : stage === "scheduled"
-                  ? formatFocusClock(scheduledLeft)
-                : currentSegment
-                  ? formatFocusClock(currentSegmentRemaining)
-                  : displayTask
-                    ? formatFocusClock(elapsed)
-                  : "--:--"}
-            </strong>
-          </div>
-          {stage === "preparing" && (
-            <div className="focus-reminder">
-              <strong>整理桌面，深呼吸一次。倒计时结束后自动开始。</strong>
-              <button className="focus-secondary" disabled={busy} onClick={() => void transition("skip-preparation")}>
-                <Play />
-                跳过准备，立即开始
-              </button>
-            </div>
-          )}
-          {stage === "scheduled" && (
-            <p className="focus-prep-copy">
-              已确认开始。到任务时间后进入 1 分钟准备；准备时可以手动跳过倒计时。
-            </p>
-          )}
-          {stage === "reminded" && (
-            <div className="focus-reminder">
-              <strong>现在准备开始这项安排吗？</strong>
-              <div>
-                <button
-                  className="primary-button"
-                  disabled={busy}
-                  onClick={() => void transition("respond-start")}
-                >
-                  <Play />
-                  开始
-                </button>
-                <button
-                  className="focus-secondary"
-                  disabled={busy}
-                  onClick={() => void transition("other-arrangement")}
-                >
-                  另有安排
-                </button>
+        <div className={`focus-center ${executionStage ? "focus-center-executing" : ""}`}>
+          {executionStage ? (
+            <div className="focus-execution" aria-label="当前专注执行状态">
+              <div className="focus-execution-context">
+                <span>{stage === "reminded" ? "等待确认" : stage === "scheduled" ? "等待准备" : stage === "preparing" ? "准备" : stage === "armed" ? "已经确认" : stage === "awaiting_late_start" ? "尚未开始" : currentSegment?.segmentType === "break" ? "休息" : "正在专注"}</span>
+                <h1 id="focus-title">{displayTask?.title ?? "留在此刻"}</h1>
               </div>
+              <div className={`focus-timepiece focus-timepiece-execution ${stage === "running" ? "running" : ""} ${currentSegment?.segmentType === "break" ? "resting" : ""}`}>
+                <span className="focus-timepiece-label">{stage === "reminded" ? "等待开始" : stage === "scheduled" ? "距离准备" : stage === "armed" ? "距离开始" : stage === "awaiting_late_start" ? "可用余时" : currentSegment?.segmentType === "break" ? "休息余时" : stage === "preparing" ? "准备倒计时" : "专注余时"}</span>
+                <InkClepsydra value={clockValue} progress={timerProgress} resting={currentSegment?.segmentType === "break"} empty={false} />
+              </div>
+              <p className="focus-phase-line">
+                {stage === "reminded"
+                  ? "在飞书或此处确认一次即可，不需要重复开始"
+                  : stage === "scheduled"
+                    ? `将在 ${displayTask?.startAt ? clock(displayTask.startAt, displayTask.timeZone) : "任务时间"} 前 1 分钟进入准备`
+                  : stage === "preparing"
+                  ? "只有确认“开始任务”才会进入专注"
+                  : stage === "armed"
+                    ? "已确认，将在固定开始时刻进入计时"
+                  : stage === "awaiting_late_start"
+                    ? "尚未开始；现在确认只记录剩余时段内的实际专注"
+                  : `${currentSegment?.segmentType === "break" ? "休息" : "专注"}${phaseEndLabel ? `至 ${phaseEndLabel}` : ""}`}
+              </p>
+              <p className="focus-next-phase">
+                {stage === "reminded"
+                  ? "确认后由桌面窗口接管准备与计时"
+                  : stage === "scheduled"
+                    ? "准备阶段会出现“开始任务”确认"
+                  : stage === "preparing"
+                  ? "未确认时到点不会自动计时"
+                  : stage === "armed"
+                    ? "正式开始后不可暂停或取消"
+                  : stage === "awaiting_late_start"
+                    ? "到固定截止仍未开始将记为未完成"
+                  : nextSegmentTiming
+                    ? `随后${nextSegmentTiming.segmentType === "break" ? `休息 ${nextSegmentTiming.durationMinutes} 分钟` : `专注 ${nextSegmentTiming.durationMinutes} 分钟`}`
+                    : "这是本次安排的最后一段"}
+              </p>
+
+              <div className="focus-execution-actions">
+                {stage === "reminded" ? (
+                  <>
+                    <button className="focus-execution-primary" disabled={busy} onClick={() => void transition("respond-start")}><Play />开始</button>
+                    <button className="focus-execution-quiet" disabled={busy} onClick={() => void transition("other-arrangement")}><PencilLine />另有安排</button>
+                  </>
+                ) : stage === "scheduled" ? (
+                  <button className="focus-execution-quiet" disabled={busy} onClick={() => void transition("other-arrangement")}><PencilLine />取消本次并调整</button>
+                ) : stage === "preparing" || stage === "awaiting_late_start" ? (
+                  <>
+                  <button className="focus-execution-primary" disabled={busy} onClick={() => void transition("skip-preparation")}><Play />{stage === "preparing" ? "开始任务" : "现在开始"}</button>
+                    <button className="focus-execution-quiet" disabled={busy} onClick={() => void transition("other-arrangement")}><PencilLine />取消本次</button>
+                  </>
+                ) : stage === "armed" ? (
+                  <span className="focus-execution-locked">已确认开始，等待固定时刻</span>
+                ) : (
+                  isFinalBreak
+                    ? <button className="focus-execution-quiet" disabled={busy} onClick={() => void transition("skip-final-break")}><CheckCircle2 />跳过最后休息并记录</button>
+                    : <span className="focus-execution-locked">专注进行中，不可暂停或提前结束</span>
+                )}
+              </div>
+
+              {displayStructure && (
+                <div className="focus-execution-disclosure">
+                  <button type="button" aria-expanded={arrangementOpen} onClick={() => { setArrangementOpen((value) => !value); setEditArrangementOpen(false); }}><Eye />查看专注安排</button>
+                  {stage !== "running" ? <button type="button" aria-expanded={editArrangementOpen} onClick={() => { setEditArrangementOpen((value) => !value); setArrangementOpen(false); }}><PencilLine />编辑安排</button> : null}
+                </div>
+              )}
+              {arrangementOpen && displayStructure && (
+                <aside className="focus-arrangement-sheet" aria-label="完整专注安排">
+                  {segmentTimings.map((segment) => <div className={segment.position === session?.currentSegmentPosition ? "current" : ""} key={segment.position}><span>{clock(new Date(segment.startsAt).toISOString(), displayTask?.timeZone ?? "Asia/Shanghai")}–{clock(new Date(segment.endsAt).toISOString(), displayTask?.timeZone ?? "Asia/Shanghai")}</span><strong>{segment.segmentType === "break" ? "休息" : "专注"}</strong><small>{segment.durationMinutes} 分钟</small></div>)}
+                </aside>
+              )}
+              {editArrangementOpen && displayTask && (
+                <aside className="focus-arrangement-edit" aria-label="编辑专注安排确认">
+                  <p>正式开始前可以退回计划调整；开始后结构锁定且不可修改。</p>
+                  <button type="button" disabled={busy} onClick={() => void transition("other-arrangement")}><PencilLine />退回计划调整</button>
+                </aside>
+              )}
             </div>
+          ) : (
+            <>
+              <p className="section-kicker">当前意图</p>
+              <h1 id="focus-title">{displayTask?.title ?? "选择一件任务，留在此刻"}</h1>
+              <p className="focus-meta">{displayTask ? displayTask.startAt && displayTask.endAt ? `${clock(displayTask.startAt, displayTask.timeZone)}–${clock(displayTask.endAt, displayTask.timeZone)} · ${selectedMinutes} 分钟固定时间块` : "这项任务尚未设置精确起止时间" : "从今日时间轴或右侧列表选择任务"}</p>
+              <div className={`focus-timepiece ${currentSegment?.segmentType === "break" ? "resting" : ""}`}>
+                <span className="focus-timepiece-label">专注余时</span>
+                <InkClepsydra value={clockValue} progress={timerProgress} resting={currentSegment?.segmentType === "break"} empty={!displayTask} />
+                <small>{fixedEndLabel ? `固定结束于 ${fixedEndLabel}` : "选择任务后显示固定结束时间。"}</small>
+              </div>
+              {selected?.scheduleKind === "exact" && selected.startAt && selected.endAt && !locksSelectedStructure && (loadedStructureKey !== structureKey ? <p className="focus-structure-loading">正在恢复已保存的专注结构…</p> : <FocusStructureEditor task={{ id: selected.id, startAt: selected.startAt, endAt: selected.endAt, timeZone: selected.timeZone }} active={activeStructure} candidate={candidateStructure} busy={busy} onSave={saveStructure} onPlanAi={planAiStructure} onConfirm={confirmStructure} onConfirmDraft={confirmStructureDraft} onDiscard={discardCandidate} />)}
+              <div className="focus-controls">
+                {stage === "idle" && <button className="focus-main-action" disabled={!isFocusStartEligibleTask(selected) || busy || !activeStructure} onClick={() => void begin()}><Play />{selected && !activeStructure ? "先确认专注结构" : candidateStructure && activeStructure ? "按已确认结构开始" : "开始专注"}</button>}
+              </div>
+            </>
           )}
-          {showsGuidance && guidance && (
-            <aside className="focus-guidance" aria-label="本次专注提示">
-              <article>
-                <Compass aria-hidden="true" />
-                <div>
-                  <span>方法提示 · {guidance.label}</span>
-                  <p>{guidance.method}</p>
-                </div>
-              </article>
-              <article>
-                <Sparkles aria-hidden="true" />
-                <div>
-                  <span>一句鼓励</span>
-                  <p>{guidance.encouragement}</p>
-                </div>
-              </article>
-            </aside>
-          )}
-          {selected?.scheduleKind === "exact" && selected.startAt && selected.endAt && !locksSelectedStructure && (
-            loadedStructureKey !== structureKey
-              ? <p className="focus-structure-loading">正在恢复已保存的专注结构…</p>
-              : <FocusStructureEditor
-                  task={{ id: selected.id, startAt: selected.startAt, endAt: selected.endAt, timeZone: selected.timeZone }}
-                  active={activeStructure}
-                  candidate={candidateStructure}
-                  busy={busy}
-                  onSave={saveStructure}
-                  onPlanAi={planAiStructure}
-                  onConfirm={confirmStructure}
-                  onDiscard={discardCandidate}
-                />
-          )}
-          <div className="focus-controls">
-            {stage === "running" && (
-              <>
-                <button
-                  className="focus-main-action"
-                  disabled={busy}
-                  onClick={() => void transition(isFinalBreak ? "skip-final-break" : "end")}
-                >
-                  <CheckCircle2 />
-                  {isFinalBreak ? "跳过休息并记录" : "结束并记录"}
-                </button>
-              </>
-            )}
-            {stage === "idle" && (
-              <button
-                className="focus-main-action"
-                disabled={!selected || busy || (selected.scheduleKind === "exact" && !activeStructure)}
-                onClick={() => void begin()}
-              >
-                <Play />
-                {selected?.scheduleKind === "exact" && !activeStructure ? "先确认专注结构" : candidateStructure && activeStructure ? "按已确认结构开始" : "开始专注"}
-              </button>
-            )}
-            {stage === "ended" && (
-              <p className="focus-stopped">专注已结束，请记录本次结果。</p>
-            )}
-          </div>
         </div>
         {(stage === "stopped_for_change" || stage === "stopped_no_response") && (
           <p className="focus-stopped">{session?.stoppedReason ?? "这次提醒已停止。"}，任务仍保留在你的安排中。</p>
         )}
-        {stage === "ended" && (
-          <section className="focus-evaluation">
-            <p className="section-kicker">结束这一段</p>
-            <h2>完成情况与体验，都值得被记录。</h2>
-            <div className="focus-outcome-options">
-              {(["complete", "partial", "not_completed"] as Outcome[]).map(
-                (value) => (
-                  <button
-                    key={value}
-                    className={outcome === value ? "selected" : ""}
-                    onClick={() => chooseOutcome(value)}
-                  >
-                    {value === "complete" ? (
-                      <CheckCircle2 />
-                    ) : value === "partial" ? (
-                      <CircleDashed />
-                    ) : (
-                      <XCircle />
-                    )}
-                    {value === "complete"
-                      ? "完成"
-                      : value === "partial"
-                        ? "部分完成"
-                        : "未完成"}
-                  </button>
-                ),
-              )}
-            </div>
-            <label>
-              客观进度
-              <input
-                type="number"
-                min="0"
-                max="100"
-                disabled={outcome !== "partial"}
-                value={progress}
-                onChange={(event) => setProgress(event.target.value)}
-              />
-              <em>%</em>
-            </label>
-            <div className="satisfaction-options">
-              {(["satisfied", "neutral", "dissatisfied"] as Satisfaction[]).map(
-                (value) => (
-                  <button
-                    key={value}
-                    className={satisfaction === value ? "chosen" : ""}
-                    onClick={() => setSatisfaction(value)}
-                  >
-                    {value === "satisfied"
-                      ? "满意"
-                      : value === "neutral"
-                        ? "一般"
-                        : "不满意"}
-                  </button>
-                ),
-              )}
-            </div>
-            <textarea
-              aria-label="专注过程备注"
-              placeholder="过程反馈（可选）"
-              value={note}
-              onChange={(event) => setNote(event.target.value)}
-              rows={3}
-            />
-            <button
-              className="primary-button"
-              disabled={busy}
-              onClick={() => void evaluate()}
-            >
-              <Check />
-              保存本次专注
-            </button>
-          </section>
-        )}
       </div>
-      <aside className="focus-picker" aria-label="今日任务">
-        <p className="section-kicker">今日任务</p>
-        <div>
+      {!executionStage && <aside className="focus-picker" aria-label="今日任务">
+        <div className="focus-picker-heading"><p className="section-kicker">今日题签</p><span>此刻只做一件</span></div>
+        <div className="focus-task-slips">
           {tasks.length === 0 ? (
-            <p>今天还没有可开始的任务。</p>
+            <p>今天还没有可开始的已排期任务。</p>
           ) : (
             (pickerExpanded ? tasks : tasks.slice(0, 3)).map((task) => (
               <button
-                className={task.id === selected?.id ? "selected" : ""}
+                className={`focus-task-slip ${task.id === selected?.id ? "selected" : ""}`}
                 onClick={() => setSelectedId(task.id)}
                 key={task.id}
               >
@@ -799,7 +869,7 @@ export function FocusWorkspace({
           )}
         </div>
         {tasks.length > 3 && <button className="focus-picker-toggle" type="button" onClick={() => setPickerExpanded((value) => !value)}>{pickerExpanded ? "收起其他任务" : `查看其他 ${tasks.length - 3} 项`}<ChevronDown className={pickerExpanded ? "expanded" : ""} /></button>}
-      </aside>
+      </aside>}
       {error && (
         <div className="focus-error" role="alert">
           {error}

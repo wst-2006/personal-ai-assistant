@@ -1,0 +1,41 @@
+.review-radar-editor-shell { display: grid; grid-template-columns: minmax(260px, 1fr) minmax(150px, .55fr); align-items: center; gap: 12px 24px; }
+.review-radar-chart { display: block; width: min(100%, 380px); min-width: 250px; overflow: visible; }
+.review-radar-chart.compact { width: min(100%, 300px); }
+.review-radar-grid polygon { fill: none; stroke: rgba(82,100,90,.16); stroke-width: 1; }
+.review-radar-grid line { stroke: rgba(82,100,90,.14); stroke-width: 1; stroke-dasharray: 2 4; }
+.review-radar-axis-hit { fill: none; stroke: transparent; stroke-width: 18; stroke-linecap: round; cursor: grab; pointer-events: stroke; }
+.review-radar-axis-hit.active { stroke: rgba(177,69,48,.1); }
+.review-radar-axis-hit:active { cursor: grabbing; }
+.review-radar-area { fill: rgba(82,100,90,.18); stroke: none; }
+.review-radar-outline { fill: none; stroke: rgba(55,79,66,.82); stroke-width: 1.8; stroke-linejoin: round; }
+.review-radar-axis text { fill: var(--canvas-pine); font: 500 11px/1 var(--font-ui); letter-spacing: .04em; }
+.review-radar-axis .review-radar-value { fill: var(--canvas-vermilion); font-family: var(--font-data); font-size: 10px; }
+.review-radar-handle { fill: var(--canvas-paper); stroke: var(--canvas-pine); stroke-width: 1.5; }
+.review-radar-handle.editable { cursor: grab; touch-action: none; transition: r 160ms ease, fill 160ms ease, stroke 160ms ease; }
+.review-radar-handle.editable:hover, .review-radar-handle.editable:focus-visible, .review-radar-handle.editable.active { fill: var(--canvas-vermilion); stroke: var(--canvas-vermilion); outline: none; }
+.review-radar-handle.editable:active { cursor: grabbing; }
+.review-radar-center { fill: var(--canvas-vermilion); opacity: .62; }
+.review-radar-score-list { display: grid; gap: 9px; align-self: stretch; align-content: center; padding: 4px 0; }
+.review-radar-score-list div { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; padding-bottom: 7px; border-bottom: 1px solid rgba(37,39,34,.09); }
+.review-radar-score-list span { color: var(--canvas-blue-gray); font-size: 11px; }
+.review-radar-score-list strong { color: var(--canvas-ink); font: 500 17px/1 var(--font-data); }
+.review-radar-editor-footer { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-top: 10px; border-top: 1px solid rgba(37,39,34,.1); }
+.review-radar-editor-footer > span { color: var(--canvas-blue-gray); font-size: 11px; }
+.review-radar-editor-footer .primary-button { min-height: 34px; padding: 0 14px; font-size: 12px; }
+.review-radar-snapshot { display: grid; grid-template-columns: minmax(240px, 330px) minmax(0, 1fr); align-items: center; gap: 20px; padding-top: 12px; }
+.review-radar-snapshot-copy { display: grid; gap: 9px; }
+.review-radar-snapshot-copy strong { color: var(--canvas-pine); font-family: var(--font-display); font-size: 18px; font-weight: 500; }
+.review-radar-snapshot-copy p { margin: 0; color: var(--canvas-blue-gray); font-size: 12px; line-height: 1.75; }
+.review-radar-snapshot-meta { display: flex; flex-wrap: wrap; gap: 8px 14px; color: var(--canvas-blue-gray); font-size: 10px; }
+.review-radar-empty { margin: 0; padding: 22px 0; color: var(--canvas-blue-gray); font-size: 12px; }
+.review-radar-archive { margin-top: 28px; padding: 22px 0 8px; border-top: 1px solid rgba(37,39,34,.11); }
+.review-radar-archive-heading { display: flex; align-items: end; justify-content: space-between; gap: 20px; }
+.review-radar-archive-heading h2 { margin: 5px 0 0; color: var(--canvas-ink); font-family: var(--font-display); font-size: clamp(22px, 2.7vw, 31px); font-weight: 500; }
+.review-radar-archive-heading > span { color: var(--canvas-blue-gray); font-size: 11px; }
+.growth-radar-error { margin: 12px 0 0; color: var(--canvas-vermilion); font-size: 11px; }
+@media (max-width: 680px) {
+  .review-radar-editor-shell, .review-radar-snapshot { grid-template-columns: 1fr; }
+  .review-radar-chart { justify-self: center; }
+  .review-radar-score-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .review-radar-editor-footer { align-items: stretch; flex-direction: column; }
+}

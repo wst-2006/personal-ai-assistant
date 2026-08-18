@@ -8,6 +8,12 @@ const job: ReminderJob = {
   scheduleRevision: 4, scheduledAt: new Date("2026-07-29T02:00:00.000Z"), payload: {}
 };
 
+const enabledSettings = {
+  desktopFocusEnabled: true,
+  feishuTaskCardsEnabled: true,
+  feishuT15Enabled: true,
+};
+
 describe("ReminderWorker", () => {
   it("normalizes PostgreSQL string timestamps before delivery", async () => {
     const stringJob = { ...job, scheduledAt: job.scheduledAt.toISOString() };
@@ -15,10 +21,10 @@ describe("ReminderWorker", () => {
       .mockResolvedValueOnce({ rows: [stringJob] })
       .mockResolvedValueOnce({ rows: [{
         scheduleRevision: 4, lifecycleStatus: "open", scheduleKind: "exact",
-        startAt: job.scheduledAt.toISOString(), endAt: "2026-07-29T03:00:00.000Z", deletedAt: null
+        recordKind: "formal", startAt: job.scheduledAt.toISOString(), endAt: "2026-07-29T03:00:00.000Z", deletedAt: null
       }] })
       .mockResolvedValueOnce({ rows: [] });
-    const provider: ReminderDeliveryProvider = { deliver: vi.fn().mockResolvedValue(undefined) };
+    const provider: ReminderDeliveryProvider = { deliver: vi.fn().mockResolvedValue({ remoteMessageId: "om_initial" }) };
     const worker = new ReminderWorker({ execute } as unknown as AppDatabase);
 
     await expect(worker.processNext(provider, now)).resolves.toBe("sent");
@@ -41,15 +47,15 @@ describe("ReminderWorker", () => {
       .mockResolvedValueOnce({ rows: [job] })
       .mockResolvedValueOnce({ rows: [{
         scheduleRevision: 4, lifecycleStatus: "open", scheduleKind: "exact",
-        startAt: job.scheduledAt, endAt: new Date("2026-07-29T03:00:00.000Z"), deletedAt: null
+        recordKind: "formal", startAt: job.scheduledAt, endAt: new Date("2026-07-29T03:00:00.000Z"), deletedAt: null
       }] })
       .mockResolvedValueOnce({ rows: [] });
-    const provider: ReminderDeliveryProvider = { deliver: vi.fn().mockResolvedValue(undefined) };
+    const provider: ReminderDeliveryProvider = { deliver: vi.fn().mockResolvedValue({ remoteMessageId: "om_initial" }) };
     const worker = new ReminderWorker({ execute } as unknown as AppDatabase);
 
     await expect(worker.processNext(provider, now)).resolves.toBe("sent");
     expect(provider.deliver).toHaveBeenCalledWith(job, { now, timing: "upcoming" });
-    expect(execute).toHaveBeenCalledTimes(3);
+    expect(execute).toHaveBeenCalledTimes(4);
   });
 
   it("marks a delayed but still active reminder as in progress", async () => {
@@ -58,14 +64,46 @@ describe("ReminderWorker", () => {
       .mockResolvedValueOnce({ rows: [job] })
       .mockResolvedValueOnce({ rows: [{
         scheduleRevision: 4, lifecycleStatus: "open", scheduleKind: "exact",
-        startAt: job.scheduledAt, endAt: new Date("2026-07-29T03:00:00.000Z"), deletedAt: null
+        recordKind: "formal", startAt: job.scheduledAt, endAt: new Date("2026-07-29T03:00:00.000Z"), deletedAt: null
       }] })
       .mockResolvedValueOnce({ rows: [] });
-    const provider: ReminderDeliveryProvider = { deliver: vi.fn().mockResolvedValue(undefined) };
+    const provider: ReminderDeliveryProvider = { deliver: vi.fn().mockResolvedValue({ remoteMessageId: "om_initial" }) };
     const worker = new ReminderWorker({ execute } as unknown as AppDatabase);
 
     await expect(worker.processNext(provider, delayedNow)).resolves.toBe("sent");
     expect(provider.deliver).toHaveBeenCalledWith(job, { now: delayedNow, timing: "in_progress" });
+  });
+
+  it("delivers the queued started-card update after desktop confirmation", async () => {
+    const startedJob: ReminderJob = {
+      ...job,
+      id: "job-started-card",
+      kind: "task_start_lapsed",
+      payload: { cardState: "started" }
+    };
+    const execute = vi.fn()
+      .mockResolvedValueOnce({ rows: [startedJob] })
+      .mockResolvedValueOnce({ rows: [{
+        scheduleRevision: 4,
+        lifecycleStatus: "active",
+        scheduleKind: "exact",
+        recordKind: "formal",
+        startAt: job.scheduledAt,
+        endAt: new Date("2026-07-29T03:00:00.000Z"),
+        deletedAt: null
+      }] })
+      .mockResolvedValueOnce({ rows: [enabledSettings] })
+      .mockResolvedValueOnce({ rows: [{ remoteMessageId: "om_initial" }] })
+      .mockResolvedValueOnce({ rows: [] });
+    const provider: ReminderDeliveryProvider = { deliver: vi.fn().mockResolvedValue({ remoteMessageId: "om_initial" }) };
+    const worker = new ReminderWorker({ execute } as unknown as AppDatabase);
+
+    await expect(worker.processNext(provider, now)).resolves.toBe("sent");
+    expect(provider.deliver).toHaveBeenCalledWith(startedJob, {
+      now,
+      timing: "upcoming",
+      remoteMessageId: "om_initial"
+    });
   });
 
   it("cancels a stale schedule revision without contacting Feishu", async () => {
@@ -73,7 +111,7 @@ describe("ReminderWorker", () => {
       .mockResolvedValueOnce({ rows: [job] })
       .mockResolvedValueOnce({ rows: [{
         scheduleRevision: 5, lifecycleStatus: "open", scheduleKind: "exact",
-        startAt: job.scheduledAt, endAt: new Date("2026-07-29T03:00:00.000Z"), deletedAt: null
+        recordKind: "formal", startAt: job.scheduledAt, endAt: new Date("2026-07-29T03:00:00.000Z"), deletedAt: null
       }] })
       .mockResolvedValueOnce({ rows: [] });
     const provider: ReminderDeliveryProvider = { deliver: vi.fn() };
@@ -89,7 +127,7 @@ describe("ReminderWorker", () => {
       .mockResolvedValueOnce({ rows: [job] })
       .mockResolvedValueOnce({ rows: [{
         scheduleRevision: 4, lifecycleStatus: "open", scheduleKind: "exact",
-        startAt: job.scheduledAt, endAt: new Date("2026-07-29T03:00:00.000Z"), deletedAt: null
+        recordKind: "formal", startAt: job.scheduledAt, endAt: new Date("2026-07-29T03:00:00.000Z"), deletedAt: null
       }] })
       .mockResolvedValueOnce({ rows: [] });
     const provider: ReminderDeliveryProvider = { deliver: vi.fn() };
@@ -99,17 +137,18 @@ describe("ReminderWorker", () => {
     expect(provider.deliver).not.toHaveBeenCalled();
   });
 
-  it("records one durable not-completed outcome when the task start has no response for five minutes", async () => {
-    const followUpNow = new Date("2026-07-29T02:05:00.000Z");
-    const followUpJob: ReminderJob = { ...job, id: "job-follow-up", kind: "task_follow_up" };
+  it("records one durable not-completed outcome only at the fixed end and updates the original card", async () => {
+    const expiryNow = new Date("2026-07-29T03:00:00.000Z");
+    const expiryJob: ReminderJob = { ...job, id: "job-expire", kind: "task_start_expire" };
     const execute = vi.fn()
-      .mockResolvedValueOnce({ rows: [followUpJob] })
+      .mockResolvedValueOnce({ rows: [expiryJob] })
       .mockResolvedValueOnce({ rows: [{
         scheduleRevision: 4, lifecycleStatus: "open", scheduleKind: "exact",
-        startAt: followUpJob.scheduledAt, endAt: new Date("2026-07-29T03:00:00.000Z"), deletedAt: null
+        recordKind: "formal", startAt: expiryJob.scheduledAt, endAt: expiryNow, deletedAt: null
       }] })
+      .mockResolvedValueOnce({ rows: [enabledSettings] })
       .mockResolvedValueOnce({ rows: [{
-        id: "task-1", startAt: followUpJob.scheduledAt, endAt: new Date("2026-07-29T03:00:00.000Z")
+        id: "task-1", startAt: expiryJob.scheduledAt, endAt: expiryNow
       }] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ id: "session-no-response" }] })
@@ -117,6 +156,56 @@ describe("ReminderWorker", () => {
       .mockResolvedValueOnce({ rows: [{ id: "task-1" }] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ remoteMessageId: "om_initial" }] })
+      .mockResolvedValueOnce({ rows: [] });
+    const database = {
+      execute,
+      transaction: async (callback: (db: unknown) => unknown) => callback({ execute })
+    } as unknown as AppDatabase;
+    const provider: ReminderDeliveryProvider = { deliver: vi.fn().mockResolvedValue({ remoteMessageId: "om_initial" }) };
+    const worker = new ReminderWorker(database);
+
+    await expect(worker.processNext(provider, expiryNow)).resolves.toBe("sent");
+    expect(provider.deliver).toHaveBeenCalledWith(expiryJob, {
+      now: expiryNow,
+      timing: "in_progress",
+      remoteMessageId: "om_initial"
+    });
+    expect(execute).toHaveBeenCalledTimes(12);
+  });
+
+  it("cancels T-15 delivery while keeping the T-1 confirmation path available", async () => {
+    const execute = vi.fn()
+      .mockResolvedValueOnce({ rows: [job] })
+      .mockResolvedValueOnce({ rows: [{
+        scheduleRevision: 4, lifecycleStatus: "open", scheduleKind: "exact",
+        recordKind: "formal", startAt: job.scheduledAt, endAt: new Date("2026-07-29T03:00:00.000Z"), deletedAt: null
+      }] })
+      .mockResolvedValueOnce({ rows: [{ ...enabledSettings, feishuT15Enabled: false }] })
+      .mockResolvedValueOnce({ rows: [] });
+    const provider: ReminderDeliveryProvider = { deliver: vi.fn() };
+    const worker = new ReminderWorker({ execute } as unknown as AppDatabase);
+
+    await expect(worker.processNext(provider, now)).resolves.toBe("cancelled");
+    expect(provider.deliver).not.toHaveBeenCalled();
+  });
+
+  it("advances desktop preparation without sending a card when Feishu task cards are disabled", async () => {
+    const readyJob: ReminderJob = { ...job, id: "job-ready-desktop-only", kind: "task_start_ready" };
+    const execute = vi.fn()
+      .mockResolvedValueOnce({ rows: [readyJob] })
+      .mockResolvedValueOnce({ rows: [{
+        scheduleRevision: 4, lifecycleStatus: "open", scheduleKind: "exact",
+        recordKind: "formal", startAt: job.scheduledAt, endAt: new Date("2026-07-29T03:00:00.000Z"), deletedAt: null
+      }] })
+      .mockResolvedValueOnce({ rows: [{ ...enabledSettings, feishuTaskCardsEnabled: false }] })
+      .mockResolvedValueOnce({ rows: [{
+        id: "task-1",
+        startAt: job.scheduledAt,
+        endAt: new Date("2026-07-29T03:00:00.000Z"),
+        scheduleRevision: 4,
+      }] })
+      .mockResolvedValueOnce({ rows: [{ id: "existing-preparation-session" }] })
       .mockResolvedValueOnce({ rows: [] });
     const database = {
       execute,
@@ -125,8 +214,28 @@ describe("ReminderWorker", () => {
     const provider: ReminderDeliveryProvider = { deliver: vi.fn() };
     const worker = new ReminderWorker(database);
 
-    await expect(worker.processNext(provider, followUpNow)).resolves.toBe("sent");
+    await expect(worker.processNext(provider, now)).resolves.toBe("sent");
     expect(provider.deliver).not.toHaveBeenCalled();
-    expect(execute).toHaveBeenCalledTimes(10);
+  });
+
+  it("cancels the complete focus pipeline in memo mode", async () => {
+    const readyJob: ReminderJob = { ...job, id: "job-ready-memo", kind: "task_start_ready" };
+    const execute = vi.fn()
+      .mockResolvedValueOnce({ rows: [readyJob] })
+      .mockResolvedValueOnce({ rows: [{
+        scheduleRevision: 4, lifecycleStatus: "open", scheduleKind: "exact",
+        recordKind: "formal", startAt: job.scheduledAt, endAt: new Date("2026-07-29T03:00:00.000Z"), deletedAt: null
+      }] })
+      .mockResolvedValueOnce({ rows: [{
+        desktopFocusEnabled: false,
+        feishuTaskCardsEnabled: false,
+        feishuT15Enabled: false,
+      }] })
+      .mockResolvedValueOnce({ rows: [] });
+    const provider: ReminderDeliveryProvider = { deliver: vi.fn() };
+    const worker = new ReminderWorker({ execute } as unknown as AppDatabase);
+
+    await expect(worker.processNext(provider, now)).resolves.toBe("cancelled");
+    expect(provider.deliver).not.toHaveBeenCalled();
   });
 });

@@ -14,8 +14,11 @@ export const focusSessionStateSchema = z.enum([
   "scheduled",
   "reminded",
   "preparing",
+  "armed",
+  "awaiting_late_start",
   "awaiting_start",
   "running",
+  "paused",
   "ended",
   "evaluated",
   "stopped_no_response",
@@ -46,8 +49,8 @@ export const focusSegmentSchema = z.object({
   segmentType: focusSegmentTypeSchema,
   durationMinutes: z.number().int().positive()
 }).strict().superRefine((segment, context) => {
-  if (segment.segmentType === "focus" && segment.durationMinutes < 30) {
-    context.addIssue({ code: z.ZodIssueCode.custom, path: ["durationMinutes"], message: "Focus segments must be at least 30 minutes" });
+  if (segment.segmentType === "focus" && segment.durationMinutes < 25) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["durationMinutes"], message: "Focus segments must be at least 25 minutes" });
   }
   if (segment.segmentType === "break" && (segment.durationMinutes < 5 || segment.durationMinutes > 15)) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ["durationMinutes"], message: "Break segments must be between 5 and 15 minutes" });
@@ -69,11 +72,13 @@ export const focusStructureInputSchema = z.object({
 export const createFocusSessionSchema = z.object({
   taskId: z.string().uuid(),
   expectedTaskVersion: z.number().int().positive(),
-  mode: z.enum(["remind", "prepare"]).default("prepare")
+  mode: z.enum(["remind", "prepare"]).default("prepare"),
+  commandId: z.string().uuid().optional()
 }).strict();
 
 export const focusSessionVersionSchema = z.object({
-  expectedVersion: z.number().int().positive()
+  expectedVersion: z.number().int().positive(),
+  commandId: z.string().uuid().optional()
 }).strict();
 
 export const respondToFocusReminderSchema = focusSessionVersionSchema.extend({
@@ -227,17 +232,13 @@ export function allocateContinuousFocusStructure(input: {
     throw new Error("Focus task duration must be a positive multiple of 30 minutes");
   }
 
-  const requestedBreak = input.breakMinutes ?? 5;
-  if (!Number.isInteger(requestedBreak) || requestedBreak < 0 || requestedBreak > 15) {
-    throw new Error("Break duration must be between 0 and 15 minutes");
+  const defaultBreak = totalMinutes >= 120 ? 15 : totalMinutes >= 90 ? 10 : 5;
+  const breakMinutes = input.breakMinutes ?? defaultBreak;
+  if (!Number.isInteger(breakMinutes) || breakMinutes < 5 || breakMinutes > 15) {
+    throw new Error("Every task requires a 5-15 minute final break");
   }
-  if (totalMinutes > 30 && requestedBreak < 5) {
-    throw new Error("Tasks longer than 30 minutes require a 5-15 minute final break");
-  }
-
-  const breakMinutes = totalMinutes <= 30 ? 0 : requestedBreak;
   const focusMinutes = totalMinutes - breakMinutes;
-  if (focusMinutes < 30) throw new Error("The selected break leaves less than 30 minutes of focus");
+  if (focusMinutes < 25) throw new Error("The selected break leaves less than 25 minutes of focus");
 
   const segments: FocusSegment[] = [{ segmentType: "focus", durationMinutes: focusMinutes }];
   if (breakMinutes > 0) segments.push({ segmentType: "break", durationMinutes: breakMinutes });
@@ -276,7 +277,7 @@ export function allocateTemplateFocusStructure(input: {
   }
 
   const focusMinutes = totalMinutes - input.focusCount * breakMinutes;
-  const minimumFocusMinutes = input.focusCount * 30;
+  const minimumFocusMinutes = input.focusCount * 25;
   if (focusMinutes < minimumFocusMinutes) {
     throw new Error("The task interval cannot contain the requested number of focus segments");
   }
@@ -375,10 +376,8 @@ function validateFocusStructureInput(input: FocusStructureInputShape, context: z
   }
   if (input.mode === "continuous") {
     if (input.segments !== undefined) context.addIssue({ code: z.ZodIssueCode.custom, path: ["segments"], message: "Continuous structures are allocated by the server" });
-    if (input.breakMinutes > 15 || (totalMinutes > 30 && input.breakMinutes < 5)) {
-      context.addIssue({ code: z.ZodIssueCode.custom, path: ["breakMinutes"], message: totalMinutes > 30
-        ? "Tasks longer than 30 minutes require a 5-15 minute final break"
-        : "Break duration must be between 0 and 15 minutes" });
+    if (input.breakMinutes < 5 || input.breakMinutes > 15) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ["breakMinutes"], message: "Every task requires a 5-15 minute final break" });
     }
   } else if (!input.segments) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ["segments"], message: "Segmented structures require segments" });
@@ -424,6 +423,6 @@ function distributeStepped(total: number, count: number, direction: "increasing"
 
 function segmentDurationRange(segmentType: "focus" | "break") {
   return segmentType === "focus"
-    ? { minimum: 30, maximum: Number.POSITIVE_INFINITY }
+    ? { minimum: 25, maximum: Number.POSITIVE_INFINITY }
     : { minimum: 5, maximum: 15 };
 }

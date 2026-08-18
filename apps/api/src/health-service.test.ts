@@ -4,6 +4,7 @@ import { loadDatabaseConfig } from "@personal-ai/db/config";
 import { healthDailyReferences, healthSleepAnalyses, healthWeekPlans } from "@personal-ai/db/schema";
 import type { HealthPlanContent } from "@personal-ai/domain/health";
 import { eq, inArray } from "drizzle-orm";
+import { HealthPlanningOutputError } from "./ai/health-planner.js";
 import { HealthPlanBaseChangedError, HealthService } from "./health-service.js";
 
 const connection = await connectVerifiedDatabase(loadDatabaseConfig());
@@ -98,6 +99,31 @@ describe("health reference persistence", () => {
         const planIds = [candidate.plan.id, ...(replacementId ? [replacementId] : [])];
         await transaction.delete(healthDailyReferences).where(inArray(healthDailyReferences.healthWeekPlanId, planIds));
         await transaction.delete(healthWeekPlans).where(inArray(healthWeekPlans.id, planIds));
+      });
+    }
+  });
+
+  it("keeps the active reference and saved week intact when generated content fails validation", async () => {
+    const weekStart = "2099-02-22";
+    const base = await createManual(weekStart, "校验失败前已经生效的参考");
+    const active = await service.confirm(base.plan.id, base.plan.version);
+    try {
+      await expect(service.createAiCandidate(weekStart, null, {
+        async plan() {
+          throw new HealthPlanningOutputError(
+            "第 2 天的“分时饮水建议”缺少必填字段",
+            [{ path: "days.1.hydrationGuidance", reason: "缺少必填字段" }]
+          );
+        }
+      })).rejects.toBeInstanceOf(HealthPlanningOutputError);
+
+      const unchanged = await service.getWeek(weekStart);
+      expect(unchanged.active?.plan.id).toBe(active.plan.id);
+      expect(unchanged.candidate).toBeNull();
+    } finally {
+      await connection.db.transaction(async (transaction) => {
+        await transaction.delete(healthDailyReferences).where(eq(healthDailyReferences.healthWeekPlanId, base.plan.id));
+        await transaction.delete(healthWeekPlans).where(eq(healthWeekPlans.id, base.plan.id));
       });
     }
   });

@@ -1,15 +1,23 @@
 import type { AppDatabase } from "@personal-ai/db/client";
-import { feishuIntakeCandidates, inboxEntries, tasks } from "@personal-ai/db/schema";
+import { feishuIntakeCandidates, inboxEntries, reminderJobs, tasks } from "@personal-ai/db/schema";
 import {
   localDateAtTimeZone,
   naturalLanguageTaskCandidateSchema,
   type NaturalLanguageTaskCandidate,
   type TaskInput
 } from "@personal-ai/domain/task";
-import { and, eq, sql } from "drizzle-orm";
+import { and, desc, eq, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { TaskParser } from "./ai/task-parser.js";
+import type { FocusService } from "./focus-service.js";
+import {
+  HealthConversationNoPendingReplyError,
+  HealthConversationReplyUnavailableError,
+  type HealthConversationResponder,
+  type HealthConversationService
+} from "./health-conversation-service.js";
+import type { BriefService } from "./brief-service.js";
 import {
   ConflictSetChangedError,
   TaskScheduleWindowError,
@@ -17,8 +25,8 @@ import {
   type TaskService
 } from "./task-service.js";
 
-export type FeishuIntakeConfig = { targetOpenId: string; timeZone: "Asia/Shanghai" };
-export type FeishuIntakeState = "parsing" | "pending" | "confirming" | "confirmed" | "cancelled" | "needs_desktop" | "failed";
+export type FeishuIntakeConfig = { targetOpenId: string; timeZone: "Asia/Shanghai"; workBuddySenderIds?: string[] };
+export type FeishuIntakeState = "parsing" | "awaiting_duration" | "pending" | "confirming" | "confirmed" | "cancelled" | "needs_desktop" | "failed";
 export type StoredFeishuIntakeCandidate = typeof feishuIntakeCandidates.$inferSelect;
 
 export type FeishuTextMessage = {
@@ -32,7 +40,8 @@ export type FeishuTextMessage = {
 export type FeishuIntakeReply =
   | { kind: "none" }
   | { kind: "text"; text: string }
-  | { kind: "card"; card: object };
+  | { kind: "card"; card: object }
+  | { kind: "card_update"; messageId: string; card: object; text: string };
 
 export type FeishuIntakeAction = {
   action: "intake_confirm" | "intake_cancel";
@@ -41,6 +50,10 @@ export type FeishuIntakeAction = {
 };
 
 export type FeishuIntakeActionResult = { type: "success" | "error"; message: string };
+export type FeishuHealthConversationBridge = {
+  service: HealthConversationService;
+  responder: HealthConversationResponder;
+};
 
 const actionSchema = z.object({
   action: z.enum(["intake_confirm", "intake_cancel"]),
@@ -56,16 +69,67 @@ export class FeishuIntakeService {
     private readonly config: FeishuIntakeConfig,
     private readonly db: AppDatabase,
     private readonly taskService: TaskService,
-    private readonly parser: TaskParser
+    private readonly parser: TaskParser,
+    private readonly focusService?: FocusService,
+    private readonly healthConversation?: FeishuHealthConversationBridge,
+    private readonly briefService?: BriefService
   ) {}
 
   async receive(message: FeishuTextMessage): Promise<FeishuIntakeReply> {
-    if (message.operatorOpenId !== this.config.targetOpenId) return { kind: "none" };
-    if (message.messageType !== "text") {
+    const isOwner = message.operatorOpenId === this.config.targetOpenId;
+    const isWorkBuddy = Boolean(this.config.workBuddySenderIds?.includes(message.operatorOpenId));
+    if (!isOwner && !isWorkBuddy) return { kind: "none" };
+    if (message.messageType !== "text" && message.messageType !== "post") {
       return { kind: "text", text: "目前飞书快捷录入只处理文本消息。" };
     }
     const text = message.text.trim();
     if (!text) return { kind: "text", text: "没有读到可整理的文本，请直接发送任务、想法或问题。" };
+    const manualBrief = isOwner ? text.match(/^(?:今日|每日)?简报\s*[:：]\s*([\s\S]+)$/u) : null;
+    if (isWorkBuddy || manualBrief) {
+      if (!this.briefService) return { kind: "text", text: "外部简报导入尚未启用；原始消息没有写入软件。" };
+      const imported = await this.briefService.importExternal({
+        provider: isWorkBuddy ? "work_buddy" : "feishu_manual",
+        sourceMessageId: message.messageId,
+        localDate: localDateAtTimeZone(new Date(), this.config.timeZone),
+        text: isWorkBuddy ? text : manualBrief?.[1] ?? text
+      });
+      return imported.created
+        ? { kind: "text", text: "每日简报已导入软件并标记为待确认；它不会自动进入复盘或赛博日记。" }
+        : { kind: "text", text: "这份每日简报已经导入过，不会重复保存。" };
+    }
+    if (!isOwner) return { kind: "none" };
+    if (await this.hasProcessedMessage(message.messageId)) return { kind: "none" };
+
+    const healthPrefix = text.match(/^健康\s*[:：]\s*(.*)$/su);
+    if (healthPrefix) {
+      const healthText = healthPrefix[1]?.trim() ?? "";
+      if (!healthText) return { kind: "text", text: "请在“健康：”后面写下需要补充的内容。" };
+      return this.receiveHealthMessage(message, healthText);
+    }
+
+    if (this.focusService && /(?:我(?:现在)?开始了|现在开始|开始(?:这个|这项|该)?任务)/u.test(text)) {
+      const session = await this.focusService.startAwaitingCurrent();
+      if (!session) return { kind: "text", text: "当前没有仍处于有效时段、可确认开始的任务。" };
+      const messageId = await this.startedReminderMessageId(session.taskId);
+      const responseText = "任务已经开始。系统将从现在起记录实际专注时间，固定截止时间不变。";
+      return messageId
+        ? { kind: "card_update", messageId, card: startedTaskCard(responseText), text: responseText }
+        : { kind: "text", text: responseText };
+    }
+
+    const awaitingDuration = await this.findAwaitingDuration(message.chatId, message.operatorOpenId);
+    if (awaitingDuration) {
+      if (awaitingDuration.lastSourceMessageId === message.messageId) return { kind: "none" };
+      if (/^(?:取消|算了|不用了|放弃)$/u.test(text)) {
+        const cancelled = await this.transition(awaitingDuration.id, awaitingDuration.version, "awaiting_duration", "cancelled", {
+          resolvedAt: new Date()
+        });
+        return cancelled
+          ? { kind: "text", text: "已放弃这条排期候选，没有创建任务。" }
+          : { kind: "none" };
+      }
+      return this.completeDurationFollowUp(awaitingDuration, message, text);
+    }
 
     const received = await this.createReceived(message, text);
     if (!received) return { kind: "none" };
@@ -76,9 +140,12 @@ export class FeishuIntakeService {
         referenceDate: localDateAtTimeZone(new Date(), this.config.timeZone),
         timeZone: this.config.timeZone
       });
-      const state = requiresDesktop(candidate) ? "needs_desktop" : "pending";
+      const state = needsDuration(candidate) ? "awaiting_duration" : requiresDesktop(candidate) ? "needs_desktop" : "pending";
       const stored = await this.saveParsed(received.id, candidate, state);
       if (!stored) return { kind: "none" };
+      if (state === "awaiting_duration") {
+        return { kind: "text", text: "已经记下开始时间。准备做多久？例如：30 分钟、1 小时或 1 个半小时。" };
+      }
       if (state === "needs_desktop") {
         return { kind: "text", text: "这条内容已整理为待完善候选；请在桌面软件中补全日期或排期后再创建，当前没有自动写入任务。" };
       }
@@ -86,6 +153,73 @@ export class FeishuIntakeService {
     } catch (error) {
       await this.markFailed(received.id, intakeFailureDetail(error));
       return { kind: "text", text: "AI 暂时无法整理这条内容，原始消息没有被写入任务；请稍后重发，或在桌面软件中手动录入。" };
+    }
+  }
+
+  private async receiveHealthMessage(message: FeishuTextMessage, content: string): Promise<FeishuIntakeReply> {
+    if (!this.healthConversation) return { kind: "text", text: "健康页的飞书同步尚未启用；请先在桌面软件的健康栏目中继续交流。" };
+    if (await this.healthConversation.service.hasExternalMessage(message.messageId)) return { kind: "none" };
+    const localDate = localDateAtTimeZone(new Date(), this.config.timeZone);
+    const weekStart = healthWeekStartFor(localDate);
+    const opened = await this.healthConversation.service.getOrOpen(weekStart);
+    await this.healthConversation.service.saveUserMessage(opened.conversation.id, content, "feishu", message.messageId);
+    try {
+      const replied = await this.healthConversation.service.retryLast(opened.conversation.id, this.healthConversation.responder);
+      const assistant = [...replied.messages].reverse().find((item) => item.role === "assistant");
+      return { kind: "text", text: assistant?.content ?? "补充已经保存到本周健康交流。请回到健康栏目生成候选。" };
+    } catch (error) {
+      if (error instanceof HealthConversationReplyUnavailableError) {
+        return { kind: "text", text: "你的补充已经保存到本周健康交流，但 DeepSeek 暂时没有回应。回到健康栏目即可直接重试，不需要重新输入。" };
+      }
+      if (error instanceof HealthConversationNoPendingReplyError) return { kind: "none" };
+      throw error;
+    }
+  }
+
+  private async completeDurationFollowUp(
+    current: StoredFeishuIntakeCandidate,
+    message: FeishuTextMessage,
+    text: string
+  ): Promise<FeishuIntakeReply> {
+    try {
+      const candidate = await this.parser.parse({
+        text: `原始安排：${current.rawText}\n用户补充时长：${text}\n请保留原任务内容和开始时间，只根据补充回答计算固定结束时间。`,
+        referenceDate: localDateAtTimeZone(new Date(), this.config.timeZone),
+        timeZone: this.config.timeZone
+      });
+      const state = needsDuration(candidate) ? "awaiting_duration" : requiresDesktop(candidate) ? "needs_desktop" : "pending";
+      const [updated] = await this.db.update(feishuIntakeCandidates).set({
+        candidate,
+        state,
+        rawText: `${current.rawText}\n时长补充：${text}`,
+        lastSourceMessageId: message.messageId,
+        version: current.version + 1,
+        updatedAt: new Date()
+      }).where(and(
+        eq(feishuIntakeCandidates.id, current.id),
+        eq(feishuIntakeCandidates.version, current.version),
+        eq(feishuIntakeCandidates.state, "awaiting_duration")
+      )).returning();
+      if (!updated) return { kind: "none" };
+      if (state === "awaiting_duration") {
+        return { kind: "text", text: "我还没有读出明确时长。请直接回复“30 分钟”“1 小时”或“1 个半小时”。" };
+      }
+      if (state === "needs_desktop") {
+        return { kind: "text", text: "时长已收到，但日期或具体开始时间仍不完整；当前没有自动创建任务。" };
+      }
+      return { kind: "card", card: candidateCard(updated, candidate) };
+    } catch {
+      await this.db.update(feishuIntakeCandidates).set({
+        lastSourceMessageId: message.messageId,
+        lastError: "无法从补充消息解析任务时长",
+        version: current.version + 1,
+        updatedAt: new Date()
+      }).where(and(
+        eq(feishuIntakeCandidates.id, current.id),
+        eq(feishuIntakeCandidates.version, current.version),
+        eq(feishuIntakeCandidates.state, "awaiting_duration")
+      ));
+      return { kind: "text", text: "我还没有读出明确时长。请直接回复“30 分钟”“1 小时”或“1 个半小时”。" };
     }
   }
 
@@ -204,7 +338,7 @@ export class FeishuIntakeService {
 
   private async needsDesktop(current: StoredFeishuIntakeCandidate, reason: string): Promise<FeishuIntakeActionResult> {
     await this.transition(current.id, current.version, "confirming", "needs_desktop", { lastError: reason, resolvedAt: new Date() });
-    return { type: "error", message: "这条任务需要在桌面软件中补全或明确保留冲突；飞书不会替你自动保存。" };
+    return { type: "error", message: "这条任务需要在桌面软件中补全或调整时间冲突；飞书不会替你自动保存。" };
   }
 
   private async require(id: string): Promise<StoredFeishuIntakeCandidate> {
@@ -219,11 +353,37 @@ export class FeishuIntakeService {
       chatId: message.chatId,
       operatorOpenId: message.operatorOpenId,
       sourceMessageId: message.messageId,
+      lastSourceMessageId: message.messageId,
       rawText: text,
       state: "parsing",
       version: 1
     }).onConflictDoNothing().returning();
     return created ?? null;
+  }
+
+  private async findAwaitingDuration(chatId: string, operatorOpenId: string): Promise<StoredFeishuIntakeCandidate | null> {
+    const [candidate] = await this.db.select().from(feishuIntakeCandidates).where(and(
+      eq(feishuIntakeCandidates.chatId, chatId),
+      eq(feishuIntakeCandidates.operatorOpenId, operatorOpenId),
+      eq(feishuIntakeCandidates.state, "awaiting_duration")
+    )).orderBy(desc(feishuIntakeCandidates.updatedAt)).limit(1);
+    return candidate ?? null;
+  }
+
+  private async hasProcessedMessage(messageId: string): Promise<boolean> {
+    const [candidate] = await this.db.select({ id: feishuIntakeCandidates.id }).from(feishuIntakeCandidates).where(or(
+      eq(feishuIntakeCandidates.sourceMessageId, messageId),
+      eq(feishuIntakeCandidates.lastSourceMessageId, messageId)
+    )).limit(1);
+    return Boolean(candidate);
+  }
+
+  private async startedReminderMessageId(taskId: string): Promise<string | null> {
+    const [job] = await this.db.select({ remoteMessageId: reminderJobs.remoteMessageId }).from(reminderJobs).where(and(
+      eq(reminderJobs.taskId, taskId),
+      eq(reminderJobs.kind, "task_start")
+    )).orderBy(desc(reminderJobs.updatedAt)).limit(1);
+    return job?.remoteMessageId ?? null;
   }
 
   private async get(id: string): Promise<StoredFeishuIntakeCandidate | null> {
@@ -241,7 +401,7 @@ export class FeishuIntakeService {
     return entry ?? null;
   }
 
-  private async saveParsed(id: string, candidate: NaturalLanguageTaskCandidate, state: "pending" | "needs_desktop") {
+  private async saveParsed(id: string, candidate: NaturalLanguageTaskCandidate, state: "awaiting_duration" | "pending" | "needs_desktop") {
     const [saved] = await this.db.update(feishuIntakeCandidates).set({
       candidate,
       state,
@@ -298,12 +458,26 @@ export class FeishuIntakeService {
 
 export function loadFeishuIntakeConfig(env: NodeJS.ProcessEnv): FeishuIntakeConfig | null {
   const targetOpenId = env.FEISHU_TARGET_OPEN_ID?.trim();
-  return targetOpenId ? { targetOpenId, timeZone: "Asia/Shanghai" } : null;
+  const workBuddySenderIds = [...new Set((env.FEISHU_WORK_BUDDY_SENDER_IDS ?? "").split(",").map((value) => value.trim()).filter(Boolean))];
+  return targetOpenId ? { targetOpenId, timeZone: "Asia/Shanghai", workBuddySenderIds } : null;
+}
+
+function healthWeekStartFor(localDate: string): string {
+  const date = new Date(`${localDate}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() - date.getUTCDay());
+  return date.toISOString().slice(0, 10);
 }
 
 function requiresDesktop(candidate: NaturalLanguageTaskCandidate): boolean {
   if (candidate.entryType !== "task") return false;
   return !candidateToTaskInput(candidate, "Asia/Shanghai");
+}
+
+function needsDuration(candidate: NaturalLanguageTaskCandidate): boolean {
+  return candidate.entryType === "task"
+    && candidate.schedulePrecision === "exact"
+    && Boolean(candidate.startAt)
+    && !candidate.endAt;
 }
 
 function intakeFailureDetail(error: unknown): string {
@@ -390,11 +564,20 @@ function daypartLabel(value: "morning" | "afternoon" | "evening"): string {
 }
 
 function stateMessage(state: string): string {
+  if (state === "awaiting_duration") return "这条任务还在等待你补充时长。";
   if (state === "confirmed") return "这条候选已经保存。";
   if (state === "cancelled") return "这条候选已经放弃。";
   if (state === "needs_desktop") return "这条内容需要在桌面软件中补全或处理冲突，飞书没有自动创建任务。";
   if (state === "failed") return "这条候选未能保存，请在桌面软件中手动录入。";
   return "这条候选正在处理，请稍后查看软件。";
+}
+
+function startedTaskCard(message: string) {
+  return {
+    config: { wide_screen_mode: true },
+    header: { template: "green", title: { tag: "plain_text", content: "任务已经开始" } },
+    elements: [{ tag: "div", text: { tag: "lark_md", content: message } }]
+  };
 }
 
 function confirmedMessage(candidate: StoredFeishuIntakeCandidate): FeishuIntakeActionResult {

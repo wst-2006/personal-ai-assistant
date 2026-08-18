@@ -25,7 +25,9 @@ export class FeishuWebhookService {
     const actionContainer = object(event.action ?? body.action);
     try {
       const result = await this.actions.handle(openId, actionContainer.value);
-      return toast(result.type, result.message);
+      return result.card
+        ? { toast: { type: result.type, content: result.message }, card: result.card }
+        : toast(result.type, result.message);
     } catch (error) {
       if (error instanceof FeishuActionAuthError) throw new FeishuWebhookAuthError(error.message);
       if (error instanceof FeishuActionPayloadError) throw new FeishuWebhookPayloadError(error.message);

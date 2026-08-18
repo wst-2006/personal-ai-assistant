@@ -45,6 +45,7 @@ export class FocusStructureService {
     return this.runSerializable(async (transaction) => {
       const task = await this.requireTask(transaction, parsed.taskId);
       this.assertTaskVersion(task, parsed.taskVersion, parsed.taskScheduleRevision);
+      if (task.recordKind !== "formal") throw new InvalidFocusStructureError("事实补录不支持专注结构。");
       if (task.lifecycleStatus !== "open") throw new InvalidFocusStructureError("Only open tasks can receive a focus structure candidate.");
       if (task.scheduleKind !== "exact" || !task.startAt || !task.endAt) {
         throw new InvalidFocusStructureError("Focus structures require an exact task interval.");
@@ -81,6 +82,7 @@ export class FocusStructureService {
         taskScheduleRevision: task.scheduleRevision,
         state: "candidate",
         source: parsed.source,
+        mode: allocation.mode,
         version: 1,
         totalStartAt: allocation.totalStartAt,
         totalEndAt: allocation.totalEndAt,
@@ -110,6 +112,7 @@ export class FocusStructureService {
   }, planner: FocusStructurePlanner): Promise<FocusStructureWithSegments> {
     const task = await this.requireTask(this.db, input.taskId);
     this.assertTaskVersion(task, input.taskVersion, input.taskScheduleRevision);
+    if (task.recordKind !== "formal") throw new InvalidFocusStructureError("事实补录不支持专注结构。");
     if (task.lifecycleStatus !== "open" || task.scheduleKind !== "exact" || !task.startAt || !task.endAt) {
       throw new InvalidFocusStructureError("AI focus planning requires an open task with an exact interval.");
     }
@@ -172,6 +175,7 @@ export class FocusStructureService {
 
       const task = await this.requireTask(transaction, current.structure.taskId);
       this.assertTaskVersion(task, expectedTaskVersion, expectedTaskScheduleRevision);
+      if (task.recordKind !== "formal") throw new InvalidFocusStructureError("事实补录不支持专注结构。");
       if (current.structure.taskScheduleRevision !== task.scheduleRevision) {
         throw new FocusStructureTaskConflictError(task);
       }

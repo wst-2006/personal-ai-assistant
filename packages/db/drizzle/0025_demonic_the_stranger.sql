@@ -1,0 +1,1 @@
+CREATE INDEX "task_outcomes_focus_session_id_idx" ON "task_outcomes" USING btree ("focus_session_id");

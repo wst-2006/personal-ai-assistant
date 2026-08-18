@@ -75,6 +75,10 @@ export class FeishuLongConnectionService {
       this.logger.info(`Feishu card action received: ${event.value && typeof event.value === "object" && "action" in event.value ? String((event.value as { action?: unknown }).action) : "unknown"}.`);
       try {
         const result = await this.actions.handle(event.operatorOpenId, event.value);
+        if (result.card) {
+          await channel.updateCard(event.messageId, result.card);
+          return;
+        }
         if (result.terminal === false) {
           // Navigation is not a terminal decision. Keep the reminder controls
           // available so the user can still choose “开始” or “另有安排”.
@@ -112,6 +116,10 @@ export class FeishuLongConnectionService {
         const response = await this.intake.receive(event);
         if (response.kind === "text") await channel.sendText(event.chatId, response.text);
         if (response.kind === "card") await channel.sendCard(event.chatId, response.card);
+        if (response.kind === "card_update") {
+          await channel.updateCard(response.messageId, response.card);
+          await channel.sendText(event.chatId, response.text);
+        }
       } catch (error) {
         this.logger.warn(`Feishu intake handling failed: ${errorMessage(error)}`);
         try {

@@ -23,10 +23,12 @@ if (!existsSync(envTemplateSource)) {
   throw new Error("桌面独立发行版需要仓库根目录的 .env.example；未找到该文件，已停止打包。");
 }
 
-const pnpmCommand = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+// Use the repository-pinned pnpm through Corepack. A global pnpm installation
+// is intentionally not required for a clean Windows release build.
+const pnpmCommand = process.platform === "win32" ? "corepack.cmd" : "corepack";
 const pnpmEnvironment = { ...process.env, CI: "true" };
 const runPnpm = (args) =>
-  execFileSync(pnpmCommand, args, {
+  execFileSync(pnpmCommand, ["pnpm", ...args], {
     cwd: repositoryRoot,
     env: pnpmEnvironment,
     stdio: "inherit",
@@ -119,6 +121,18 @@ const copyFlatService = (service) => {
 
 copyFlatService("api");
 copyFlatService("worker");
+
+// `pnpm deploy` may omit package-owned files that are not part of the compiled
+// output. The installed app runs guarded migrations before starting its API,
+// so keep the complete Drizzle journal beside every deployed db package.
+const migrationSource = join(repositoryRoot, "packages", "db", "drizzle");
+for (const service of ["api", "worker"]) {
+  const deployedDbPackage = join(runtimeRoot, service, "node_modules", "@personal-ai", "db");
+  if (!existsSync(deployedDbPackage)) {
+    throw new Error(`deployed ${service} runtime is missing @personal-ai/db`);
+  }
+  copyTreeDereferenced(migrationSource, join(deployedDbPackage, "drizzle"));
+}
 
 // The runtime is intentionally copied from the machine used to build this private
 // single-user release, so the installed app does not depend on a system Node install.

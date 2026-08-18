@@ -1,0 +1,5 @@
+ALTER TABLE "health_week_auto_generations" DROP CONSTRAINT "health_week_auto_generations_status_check";--> statement-breakpoint
+ALTER TABLE "health_week_auto_generations" DROP CONSTRAINT "health_week_auto_generations_result_check";--> statement-breakpoint
+ALTER TABLE "health_week_auto_generations" ALTER COLUMN "status" SET DEFAULT 'reserved';--> statement-breakpoint
+ALTER TABLE "health_week_auto_generations" ADD CONSTRAINT "health_week_auto_generations_status_check" CHECK ("health_week_auto_generations"."status" in ('reserved', 'completed', 'failed', 'skipped'));--> statement-breakpoint
+ALTER TABLE "health_week_auto_generations" ADD CONSTRAINT "health_week_auto_generations_result_check" CHECK (("health_week_auto_generations"."status" = 'completed' and "health_week_auto_generations"."plan_id" is not null and "health_week_auto_generations"."failure_code" is null) or ("health_week_auto_generations"."status" = 'failed' and "health_week_auto_generations"."plan_id" is null and "health_week_auto_generations"."failure_code" is not null) or ("health_week_auto_generations"."status" in ('reserved', 'skipped') and "health_week_auto_generations"."plan_id" is null));

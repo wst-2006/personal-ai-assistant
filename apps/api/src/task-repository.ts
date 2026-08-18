@@ -22,6 +22,7 @@ export type NewTaskRecord = {
   title: string;
   sourceInboxEntryId: string | null;
   sourceLongRangePlanId: string | null;
+  recordKind: "formal" | "backfill";
   lifecycleStatus: TaskLifecycle;
   scheduleKind: TaskScheduleKind;
   currentOutcome: TaskOutcome | null;
@@ -90,6 +91,7 @@ export interface TaskStoreTransaction {
   insertFeedback(record: TaskFeedbackRecord): Promise<StoredTaskFeedback>;
   invalidateFocusStructures(taskId: string, currentScheduleRevision: number, reason: string): Promise<void>;
   syncReminderForTask(task: StoredTask): Promise<void>;
+  purgeDeletedTasks(): Promise<number>;
 }
 
 export interface TaskStore {
@@ -166,6 +168,7 @@ class PostgresTaskTransaction implements TaskStoreTransaction {
     const conditions = [
       isNull(tasks.deletedAt),
       eq(tasks.scheduleKind, "exact"),
+      eq(tasks.recordKind, "formal"),
       inArray(tasks.lifecycleStatus, lifecycleStatuses),
       lt(tasks.startAt, endAt),
       gt(tasks.endAt, startAt)
@@ -226,6 +229,29 @@ class PostgresTaskTransaction implements TaskStoreTransaction {
 
   async syncReminderForTask(task: StoredTask): Promise<void> {
     await syncTaskStartReminder(this.db, task);
+  }
+
+  async purgeDeletedTasks(): Promise<number> {
+    const candidates = await this.db.execute(sql`
+      SELECT id FROM tasks WHERE deleted_at IS NOT NULL FOR UPDATE
+    `);
+    const taskIds = candidates.rows.map((row) => String((row as { id: string }).id));
+    if (taskIds.length === 0) return 0;
+    const taskIdList = sql.join(taskIds.map((taskId) => sql`${taskId}::uuid`), sql`, `);
+    await this.db.execute(sql`DELETE FROM task_conflict_acceptances WHERE task_id_low IN (${taskIdList}) OR task_id_high IN (${taskIdList})`);
+    await this.db.execute(sql`DELETE FROM reminder_jobs WHERE task_id IN (${taskIdList})`);
+    await this.db.execute(sql`DELETE FROM task_feedback WHERE task_id IN (${taskIdList})`);
+    await this.db.execute(sql`DELETE FROM task_outcomes WHERE task_id IN (${taskIdList})`);
+    await this.db.execute(sql`DELETE FROM task_lifecycle_events WHERE task_id IN (${taskIdList})`);
+    await this.db.execute(sql`DELETE FROM focus_session_operations WHERE focus_session_id IN (SELECT id FROM focus_sessions WHERE task_id IN (${taskIdList}))`);
+    await this.db.execute(sql`DELETE FROM focus_timer_jobs WHERE focus_session_id IN (SELECT id FROM focus_sessions WHERE task_id IN (${taskIdList}))`);
+    await this.db.execute(sql`DELETE FROM focus_session_segment_runs WHERE focus_session_id IN (SELECT id FROM focus_sessions WHERE task_id IN (${taskIdList}))`);
+    await this.db.execute(sql`DELETE FROM focus_sessions WHERE task_id IN (${taskIdList})`);
+    await this.db.execute(sql`DELETE FROM focus_structure_segments WHERE focus_structure_id IN (SELECT id FROM focus_structures WHERE task_id IN (${taskIdList}))`);
+    await this.db.execute(sql`DELETE FROM focus_structures WHERE task_id IN (${taskIdList})`);
+    await this.db.execute(sql`DELETE FROM task_legacy_metadata WHERE task_id IN (${taskIdList})`);
+    await this.db.execute(sql`DELETE FROM tasks WHERE id IN (${taskIdList}) AND deleted_at IS NOT NULL`);
+    return taskIds.length;
   }
 }
 

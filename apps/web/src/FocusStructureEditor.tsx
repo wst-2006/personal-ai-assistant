@@ -34,6 +34,7 @@ type Props = {
   onSave: (segments: FocusSegment[], source: "manual" | "template") => Promise<void>;
   onPlanAi: (instructions: string | null) => Promise<void>;
   onConfirm: () => Promise<void>;
+  onConfirmDraft: (segments: FocusSegment[]) => Promise<void>;
   onDiscard: () => Promise<void>;
 };
 
@@ -44,7 +45,7 @@ const distributions: Array<{ value: FocusDistribution | "custom"; label: string 
   { value: "custom", label: "自定义" }
 ];
 
-export function FocusStructureEditor({ task, active, candidate, busy, onSave, onPlanAi, onConfirm, onDiscard }: Props) {
+export function FocusStructureEditor({ task, active, candidate, busy, onSave, onPlanAi, onConfirm, onConfirmDraft, onDiscard }: Props) {
   const totalMinutes = Math.round((new Date(task.endAt).getTime() - new Date(task.startAt).getTime()) / 60_000);
   const [focusCount, setFocusCount] = useState(1);
   const [distribution, setDistribution] = useState<FocusDistribution | "custom">("equal");
@@ -241,24 +242,23 @@ export function FocusStructureEditor({ task, active, candidate, busy, onSave, on
         </div>
       )}
 
-      <div className="structure-ai-planner">
-        <div>
-          <Sparkles />
-          <span><strong>AI 安排候选</strong><small>只使用任务时间与本次要求，不会自动确认。</small></span>
+      <details className="structure-ai-disclosure">
+        <summary><Sparkles /><span><strong>需要 AI 帮你拆分？</strong><small>按需展开，不影响当前结构。</small></span></summary>
+        <div className="structure-ai-planner">
+          <textarea
+            aria-label="AI 专注结构临时要求"
+            rows={2}
+            maxLength={1000}
+            placeholder="例如：拆成 3 段，前短后长，休息都用 5 分钟"
+            disabled={busy}
+            value={aiInstructions}
+            onChange={(event) => setAiInstructions(event.target.value)}
+          />
+          <button type="button" className="focus-secondary" disabled={busy} onClick={() => void onPlanAi(aiInstructions.trim() || null)}>
+            <Sparkles />{candidate?.source === "ai" ? "重新安排" : "生成候选"}
+          </button>
         </div>
-        <textarea
-          aria-label="AI 专注结构临时要求"
-          rows={2}
-          maxLength={1000}
-          placeholder="可选，例如：拆成 3 段，前短后长，休息都用 5 分钟"
-          disabled={busy}
-          value={aiInstructions}
-          onChange={(event) => setAiInstructions(event.target.value)}
-        />
-        <button type="button" className="focus-secondary" disabled={busy} onClick={() => void onPlanAi(aiInstructions.trim() || null)}>
-          <Sparkles />{candidate?.source === "ai" ? "重新安排" : "生成 AI 候选"}
-        </button>
-      </div>
+      </details>
 
       <div className="structure-timeline" aria-label="专注结构时间带">
         {timeline.map((segment, index) => (
@@ -328,10 +328,10 @@ export function FocusStructureEditor({ task, active, candidate, busy, onSave, on
       <footer className="structure-actions">
         {active && <button type="button" className="focus-secondary" disabled={busy} onClick={restoreActive}><RotateCcw />恢复已确认</button>}
         {candidate && <button type="button" className="focus-secondary danger" disabled={busy} onClick={() => void onDiscard()}><Trash2 />放弃候选</button>}
-        <button type="button" className="focus-secondary" disabled={busy || !validation.valid || candidateMatchesDraft} onClick={() => void save()}><Save />保存为候选</button>
-        <button type="button" className="primary-button" disabled={busy || !candidate || !candidateMatchesDraft} onClick={() => void onConfirm()}><Check />确认并使用</button>
+        <button type="button" className="focus-secondary" disabled={busy || !validation.valid || candidateMatchesDraft} onClick={() => void save()}><Save />暂存候选</button>
+        <button type="button" className="primary-button" disabled={busy || !validation.valid} onClick={() => void (candidateMatchesDraft ? onConfirm() : onConfirmDraft(segments))}><Check />确认并使用</button>
       </footer>
-      <p className="structure-note">候选只会保存，不会自动执行。确认后才替换当前结构，任务的开始和结束时间始终不变。</p>
+      <p className="structure-note">确认后按这份结构执行；任务的固定开始和结束时间不会改变。</p>
     </section>
   );
 }

@@ -41,22 +41,26 @@ try {
   }
 
   const reminder = await connection.client.query<{
-    kind: "task_start" | "task_follow_up";
+    kind: "task_start" | "task_start_ready" | "task_start_lapsed" | "task_start_expire";
     schedule_revision: number;
     scheduled_at: Date;
     available_at: Date;
     payload: { title?: string; scheduleRevision?: number };
   }>(`SELECT kind, schedule_revision, scheduled_at, available_at, payload FROM reminder_jobs WHERE task_id = $1 ORDER BY kind`, [createdTaskId]);
   const startReminder = reminder.rows.find((job) => job.kind === "task_start");
-  const followUp = reminder.rows.find((job) => job.kind === "task_follow_up");
+  const readyReminder = reminder.rows.find((job) => job.kind === "task_start_ready");
+  const lapsedReminder = reminder.rows.find((job) => job.kind === "task_start_lapsed");
+  const expiryReminder = reminder.rows.find((job) => job.kind === "task_start_expire");
   const validContract = (job: typeof reminder.rows[number] | undefined) => Boolean(job
     && job.schedule_revision === 1
     && job.payload.title === "database-persistence-verification"
     && job.payload.scheduleRevision === 1);
-  if (!validContract(startReminder) || !validContract(followUp)
+  if (![startReminder, readyReminder, lapsedReminder, expiryReminder].every(validContract)
     || startReminder!.scheduled_at.getTime() - startReminder!.available_at.getTime() !== 15 * 60 * 1000
-    || followUp!.available_at.getTime() - followUp!.scheduled_at.getTime() !== 5 * 60 * 1000) {
-    throw new Error("Task reminder and no-response follow-up were not persisted with the exact schedule contract.");
+    || readyReminder!.scheduled_at.getTime() - readyReminder!.available_at.getTime() !== 60 * 1000
+    || lapsedReminder!.available_at.getTime() !== lapsedReminder!.scheduled_at.getTime()
+    || expiryReminder!.available_at.getTime() - expiryReminder!.scheduled_at.getTime() !== 60 * 60 * 1000) {
+    throw new Error("The four staged task reminders were not persisted with the exact schedule contract.");
   }
 
   const deleteResponse = await app.inject({
@@ -107,10 +111,10 @@ try {
     status: string;
   }>(`SELECT schedule_revision, status FROM reminder_jobs WHERE task_id = $1`, [createdTaskId]);
   if (
-    restoredReminders.rows.length !== 2
+    restoredReminders.rows.length !== 4
     || restoredReminders.rows.some((job) => job.schedule_revision !== restoredTask.scheduleRevision || job.status !== "pending")
   ) {
-    throw new Error("Restoring the task did not re-arm both revision-bound reminders.");
+    throw new Error("Restoring the task did not re-arm all four revision-bound reminders.");
   }
 
   console.log("Task creation, reminders, trash, restore, and exact test-record cleanup were verified in PostgreSQL.");

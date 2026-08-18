@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import type { AppDatabase } from "@personal-ai/db/client";
-import { healthDailyReferences, healthProfiles, healthSleepAnalyses, healthWeekPlans, tasks } from "@personal-ai/db/schema";
+import { healthDailyReferences, healthProfiles, healthSleepAnalyses, healthWeekAutoGenerations, healthWeekPlans, tasks } from "@personal-ai/db/schema";
 import {
   healthPlanContentSchema,
   sleepImageAnalysisRequestSchema,
@@ -18,6 +18,11 @@ export const primaryHealthProfileId = "3a1c7d0c-86ed-4e5f-b9fb-4b7df5bf93e1";
 export type HealthPlanWithDays = {
   plan: typeof healthWeekPlans.$inferSelect;
   days: Array<typeof healthDailyReferences.$inferSelect>;
+};
+
+export type HealthWeekAutoGeneration = {
+  status: "not_sunday" | "profile_required" | "already_generated" | "generated" | "generation_failed";
+  plan: HealthPlanWithDays | null;
 };
 
 export type HealthPlanner = {
@@ -69,6 +74,8 @@ export class SleepAnalysisOutsideWeekError extends Error {}
 export class SleepImageValidationError extends Error {}
 
 export class HealthService {
+  private readonly aiCandidateInFlight = new Map<string, Promise<HealthPlanWithDays>>();
+
   constructor(private readonly db: AppDatabase, private readonly weatherProvider?: HealthWeatherProvider) {}
 
   async getProfile() {
@@ -154,7 +161,17 @@ export class HealthService {
     });
   }
 
-  async createAiCandidate(weekStart: string, specialContext: string | null, planner: HealthPlanner): Promise<HealthPlanWithDays> {
+  async createAiCandidate(weekStart: string, specialContext: string | null, planner: HealthPlanner, collaborationContext: string | null = null): Promise<HealthPlanWithDays> {
+    const existing = this.aiCandidateInFlight.get(weekStart);
+    if (existing) return existing;
+    const pending = this.createAiCandidateOnce(weekStart, specialContext, planner, collaborationContext).finally(() => {
+      if (this.aiCandidateInFlight.get(weekStart) === pending) this.aiCandidateInFlight.delete(weekStart);
+    });
+    this.aiCandidateInFlight.set(weekStart, pending);
+    return pending;
+  }
+
+  private async createAiCandidateOnce(weekStart: string, specialContext: string | null, planner: HealthPlanner, collaborationContext: string | null = null): Promise<HealthPlanWithDays> {
     const [profileRecord, scheduledActivities, basePlan] = await Promise.all([
       this.requireProfile(this.db),
       this.weekActivities(weekStart),
@@ -163,7 +180,15 @@ export class HealthService {
     const profile = profileRecord.profile as HealthProfile;
     const solarTerm = solarTermFor(weekStart);
     const weather = await this.weatherContext(profile.city, weekStart);
-    const content = healthPlanContentSchema.parse(await planner.plan({ profile, weekStart, solarTerm, scheduledActivities, specialContext, sleepAnalysis: null, weather }));
+    const content = healthPlanContentSchema.parse(await planner.plan({
+      profile,
+      weekStart,
+      solarTerm,
+      scheduledActivities,
+      specialContext: [collaborationContext ? `本周健康页协商记录：\n${collaborationContext}` : "", specialContext ?? ""].filter(Boolean).join("\n\n") || null,
+      sleepAnalysis: null,
+      weather
+    }));
     return this.storeCandidate({
       weekStart,
       profileVersion: profileRecord.version,
@@ -176,6 +201,34 @@ export class HealthService {
       basedOnPlanVersion: basePlan?.plan.version,
       revisionReason: basePlan ? "基于当前生效版本生成 AI 修订候选；确认前，原本周参考保持不变。" : undefined
     });
+  }
+
+  async autoGenerateSundayCandidate(localDate: string, planner: HealthPlanner): Promise<HealthWeekAutoGeneration> {
+    if (!isSunday(localDate)) return { status: "not_sunday", plan: null };
+    const weekStart = weekStartForDate(localDate);
+    const reservation = await this.reserveAutoGeneration(weekStart);
+    if (!reservation.created) return { status: reservation.status, plan: reservation.plan };
+
+    const existingWeek = await this.getWeek(weekStart);
+    if (existingWeek.candidate) {
+      await this.finishAutoGeneration(weekStart, "skipped", null, null);
+      return { status: "already_generated", plan: existingWeek.candidate };
+    }
+
+    const profile = await this.getProfile();
+    if (!profile) {
+      await this.finishAutoGeneration(weekStart, "skipped", null, "health_profile_required");
+      return { status: "profile_required", plan: null };
+    }
+
+    try {
+      const plan = await this.createAiCandidate(weekStart, null, planner);
+      await this.finishAutoGeneration(weekStart, "completed", plan.plan.id, null);
+      return { status: "generated", plan };
+    } catch (error) {
+      await this.finishAutoGeneration(weekStart, "failed", null, autoGenerationFailureCode(error));
+      throw error;
+    }
   }
 
   async createSleepRevisionCandidate(input: { weekStart: string; sleepAnalysisId: string; specialContext?: string | null }, planner: HealthPlanner): Promise<HealthPlanWithDays> {
@@ -334,10 +387,36 @@ export class HealthService {
     return plan ? { plan, days: await this.daysForPlan(this.db, plan.id) } : null;
   }
 
+  private async reserveAutoGeneration(weekStart: string): Promise<{ created: boolean; status: HealthWeekAutoGeneration["status"]; plan: HealthPlanWithDays | null }> {
+    const [created] = await this.db.insert(healthWeekAutoGenerations).values({ weekStart, status: "reserved", startedAt: new Date(), updatedAt: new Date() })
+      .onConflictDoNothing({ target: healthWeekAutoGenerations.weekStart }).returning();
+    if (created) return { created: true, status: "generated", plan: null };
+    const [existing] = await this.db.select().from(healthWeekAutoGenerations).where(eq(healthWeekAutoGenerations.weekStart, weekStart)).limit(1);
+    if (!existing) return { created: false, status: "already_generated", plan: null };
+    const status = existing.status === "failed"
+      ? "generation_failed"
+      : existing.status === "skipped" && existing.failureCode === "health_profile_required"
+        ? "profile_required"
+        : "already_generated";
+    if (!existing.planId) return { created: false, status, plan: null };
+    const plan = await this.requirePlan(this.db, existing.planId);
+    return {
+      created: false,
+      status,
+      plan: plan.plan.state === "candidate" || plan.plan.state === "active" ? plan : null
+    };
+  }
+
+  private async finishAutoGeneration(weekStart: string, status: "completed" | "failed" | "skipped", planId: string | null, failureCode: string | null) {
+    const now = new Date();
+    await this.db.update(healthWeekAutoGenerations).set({ status, planId, failureCode, completedAt: now, updatedAt: now })
+      .where(eq(healthWeekAutoGenerations.weekStart, weekStart));
+  }
+
   private async weekActivities(weekStart: string): Promise<Array<{ localDate: string; title: string }>> {
     const dates = localDatesForHealthWeek(weekStart);
     return this.db.select({ localDate: tasks.localDate, title: tasks.title }).from(tasks)
-      .where(and(inArray(tasks.localDate, dates), inArray(tasks.lifecycleStatus, ["open", "active", "awaiting_outcome"]), isNull(tasks.deletedAt)))
+      .where(and(eq(tasks.recordKind, "formal"), inArray(tasks.localDate, dates), inArray(tasks.lifecycleStatus, ["open", "active", "awaiting_outcome"]), isNull(tasks.deletedAt)))
       .orderBy(asc(tasks.localDate), asc(tasks.createdAt))
       .then((rows) => rows.filter((row): row is { localDate: string; title: string } => row.localDate !== null));
   }
@@ -435,4 +514,14 @@ function weekStartForDate(localDate: string): string {
   const current = new Date(`${localDate}T00:00:00.000Z`);
   current.setUTCDate(current.getUTCDate() - current.getUTCDay());
   return current.toISOString().slice(0, 10);
+}
+
+function isSunday(localDate: string): boolean {
+  return new Date(`${localDate}T00:00:00.000Z`).getUTCDay() === 0;
+}
+
+function autoGenerationFailureCode(error: unknown): string {
+  if (error instanceof HealthProfileNotFoundError) return "health_profile_required";
+  if (error instanceof HealthProfileVersionConflictError) return "health_profile_version_conflict";
+  return "health_plan_generation_failed";
 }

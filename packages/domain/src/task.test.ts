@@ -108,6 +108,19 @@ describe("AI candidate validation", () => {
     expect(naturalLanguageTaskCandidateSchema.safeParse({ ...candidate, plannedEffortMinutes: 45 }).success).toBe(false);
   });
 
+  it("allows an exact candidate to wait for a declared missing duration", () => {
+    expect(naturalLanguageTaskCandidateSchema.safeParse({
+      ...candidate,
+      endAt: null,
+      missingFields: ["endAt"]
+    }).success).toBe(true);
+    expect(naturalLanguageTaskCandidateSchema.safeParse({
+      ...candidate,
+      endAt: null,
+      missingFields: []
+    }).success).toBe(false);
+  });
+
   it("keeps ideas and questions free of task-only fields", () => {
     const idea = { ...candidate, entryType: "idea", date: null, startAt: null, endAt: null, schedulePrecision: null, missingFields: [] };
     expect(naturalLanguageTaskCandidateSchema.safeParse(idea).success).toBe(true);

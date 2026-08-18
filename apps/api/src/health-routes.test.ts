@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { connectVerifiedDatabase } from "@personal-ai/db/client";
 import { loadDatabaseConfig } from "@personal-ai/db/config";
-import { healthDailyReferences, healthSleepAnalyses, healthWeekPlans } from "@personal-ai/db/schema";
+import { healthDailyReferences, healthSleepAnalyses, healthWeekAutoGenerations, healthWeekPlans } from "@personal-ai/db/schema";
 import { eq, inArray } from "drizzle-orm";
 import { buildApp } from "./app.js";
 import { HealthService } from "./health-service.js";
@@ -57,15 +57,39 @@ afterAll(async () => {
 });
 
 describe("sleep screenshot routes", () => {
+  it("never calls DeepSeek merely because the Health page opened on Sunday", async () => {
+    let calls = 0;
+    const autoApp = buildApp({
+      healthService: service,
+      healthPlanner: {
+        async plan() {
+          calls += 1;
+          return testContent("不应被调用。");
+        }
+      }
+    });
+    try {
+      const first = await autoApp.inject({ method: "POST", url: "/api/v1/health/weeks/sunday-open", payload: { localDate: "2099-05-03" } });
+      expect(first.statusCode).toBe(200);
+      expect(first.json()).toEqual({ status: "explicit_generation_required", plan: null });
+      const second = await autoApp.inject({ method: "POST", url: "/api/v1/health/weeks/sunday-open", payload: { localDate: "2099-05-03" } });
+      expect(second.statusCode).toBe(200);
+      expect(second.json()).toEqual({ status: "explicit_generation_required", plan: null });
+      expect(calls).toBe(0);
+    } finally {
+      await autoApp.close();
+    }
+  });
+
   it("reports visual-analysis capability explicitly", async () => {
     const available = await app.inject({ method: "GET", url: "/api/v1/health/capabilities" });
     expect(available.statusCode).toBe(200);
-    expect(available.json()).toEqual({ sleepImageAnalysis: true, sleepImageAnalysisReason: null });
+    expect(available.json()).toEqual({ sleepImageAnalysis: true, sleepImageAnalysisReason: null, feishuClarificationSync: false });
 
     const withoutVision = buildApp({ healthService: service });
     try {
       const unavailable = await withoutVision.inject({ method: "GET", url: "/api/v1/health/capabilities" });
-      expect(unavailable.json()).toEqual({ sleepImageAnalysis: false, sleepImageAnalysisReason: "vision_model_not_configured" });
+      expect(unavailable.json()).toEqual({ sleepImageAnalysis: false, sleepImageAnalysisReason: "vision_model_not_configured", feishuClarificationSync: false });
       const upload = await withoutVision.inject({ method: "POST", url: "/api/v1/health/sleep-analyses", payload: {} });
       expect(upload.statusCode).toBe(503);
       expect(upload.json()).toMatchObject({ error: "sleep_image_analysis_unavailable" });

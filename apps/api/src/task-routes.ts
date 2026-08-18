@@ -40,6 +40,14 @@ export const taskRoutes: FastifyPluginAsync<TaskRoutesOptions> = async (app, opt
     return { tasks: await options.taskService.listDeleted(query.data.date) };
   });
 
+  app.post("/tasks/trash/empty", async (_request, reply) => {
+    try {
+      return await options.taskService.emptyTrash();
+    } catch (error) {
+      return taskError(reply, error);
+    }
+  });
+
   app.get("/tasks/:id", async (request, reply) => {
     const params = taskParamsSchema.safeParse(request.params);
     if (!params.success) return invalid(reply, "invalid_task_id", params.error);

@@ -1,10 +1,9 @@
 import { taskInputSchema, taskPatchSchema } from "@personal-ai/domain/task";
 import { describe, expect, it } from "vitest";
-import type { ConflictAcceptanceRecord } from "./task-repository.js";
 import {
-  ConflictSetChangedError,
   InboxEntryConflictError,
   InvalidTaskTransitionError,
+  TaskNotFoundError,
   TaskScheduleBoundsError,
   TaskService,
   TaskTimeConflictError,
@@ -142,29 +141,46 @@ describe("TaskService lifecycle and revisions", () => {
     });
     expect(await service.listDeleted("2026-07-27")).toHaveLength(0);
   });
+
+  it("permanently empties only soft-deleted tasks", async () => {
+    const store = new MemoryTaskStore();
+    const service = new TaskService(store);
+    const deleted = (await service.create(unscheduled("Purge me"))).task;
+    const kept = (await service.create(unscheduled("Keep me"))).task;
+    await service.softDelete(deleted.id, deleted.version);
+
+    await expect(service.emptyTrash()).resolves.toEqual({ purgedCount: 1 });
+    await expect(service.get(deleted.id)).rejects.toBeInstanceOf(TaskNotFoundError);
+    await expect(service.get(kept.id)).resolves.toMatchObject({ task: { id: kept.id, title: "Keep me" } });
+    await expect(service.emptyTrash()).resolves.toEqual({ purgedCount: 0 });
+  });
 });
 
 describe("TaskService reminder scheduling", () => {
-  it("creates a 15-minute reminder and keeps it aligned with task edits", async () => {
+  it("creates all four staged reminders and keeps them aligned with task edits", async () => {
     const store = new MemoryTaskStore();
     const service = new TaskService(store);
     const created = (await service.create(exact("Read paper", "14:00", "15:30"))).task;
 
-    expect(store.reminderJobs).toHaveLength(2);
+    expect(store.reminderJobs).toHaveLength(4);
     const startReminder = store.reminderJobs.find((job) => job.kind === "task_start");
-    const followUp = store.reminderJobs.find((job) => job.kind === "task_follow_up");
+    const readyReminder = store.reminderJobs.find((job) => job.kind === "task_start_ready");
+    const lapsedReminder = store.reminderJobs.find((job) => job.kind === "task_start_lapsed");
+    const expiryReminder = store.reminderJobs.find((job) => job.kind === "task_start_expire");
     expect(startReminder).toMatchObject({
       taskId: created.id,
       scheduleRevision: created.scheduleRevision,
       status: "pending"
     });
     expect(startReminder!.availableAt.toISOString()).toBe("2026-07-27T05:45:00.000Z");
-    expect(followUp).toMatchObject({
+    expect(readyReminder).toMatchObject({
       taskId: created.id,
       scheduleRevision: created.scheduleRevision,
       status: "pending"
     });
-    expect(followUp!.availableAt.toISOString()).toBe("2026-07-27T06:05:00.000Z");
+    expect(readyReminder!.availableAt.toISOString()).toBe("2026-07-27T05:59:00.000Z");
+    expect(lapsedReminder!.availableAt.toISOString()).toBe("2026-07-27T06:00:00.000Z");
+    expect(expiryReminder!.availableAt.toISOString()).toBe("2026-07-27T07:30:00.000Z");
 
     startReminder!.status = "sent";
 
@@ -184,7 +200,9 @@ describe("TaskService reminder scheduling", () => {
     }))).task;
     expect(store.reminderJobs.every((job) => job.scheduleRevision === moved.scheduleRevision && job.status === "pending")).toBe(true);
     expect(store.reminderJobs.find((job) => job.kind === "task_start")!.availableAt.toISOString()).toBe("2026-07-27T07:45:00.000Z");
-    expect(store.reminderJobs.find((job) => job.kind === "task_follow_up")!.availableAt.toISOString()).toBe("2026-07-27T08:05:00.000Z");
+    expect(store.reminderJobs.find((job) => job.kind === "task_start_ready")!.availableAt.toISOString()).toBe("2026-07-27T07:59:00.000Z");
+    expect(store.reminderJobs.find((job) => job.kind === "task_start_lapsed")!.availableAt.toISOString()).toBe("2026-07-27T08:00:00.000Z");
+    expect(store.reminderJobs.find((job) => job.kind === "task_start_expire")!.availableAt.toISOString()).toBe("2026-07-27T09:30:00.000Z");
   });
 
   it("cancels pending delivery when a task leaves reminder eligibility and restores it on reopen", async () => {
@@ -212,7 +230,38 @@ describe("TaskService reminder scheduling", () => {
 });
 
 describe("TaskService conflict semantics", () => {
-  it("allows touching boundaries and atomically accepts every current overlap", async () => {
+  it("keeps factual backfill outside formal conflict lanes in both directions", async () => {
+    const store = new MemoryTaskStore();
+    const service = new TaskService(store);
+    await store.insertTask({
+      id: "00000000-0000-4000-8000-000000000101",
+      title: "Already happened",
+      sourceInboxEntryId: null,
+      sourceLongRangePlanId: null,
+      recordKind: "backfill",
+      lifecycleStatus: "closed",
+      scheduleKind: "exact",
+      currentOutcome: "complete",
+      localDate: "2026-07-27",
+      daypart: null,
+      startAt: new Date("2026-07-27T01:00:00.000Z"),
+      endAt: new Date("2026-07-27T02:00:00.000Z"),
+      timeZone: "Asia/Shanghai",
+      notes: null,
+      version: 1,
+      scheduleRevision: 1
+    });
+
+    const formal = await service.create(exact("Still schedulable", "09:30", "10:30"));
+    expect(formal.task.recordKind).toBe("formal");
+    expect(formal.historicalOverlaps).toEqual([]);
+    expect(store.acceptances).toHaveLength(0);
+    const listed = await service.list("2026-07-27");
+    expect(listed.blockingConflicts).toEqual([]);
+    expect(listed.historicalOverlaps).toEqual([]);
+  });
+
+  it("allows touching boundaries but never permits a formal overlap", async () => {
     const store = new MemoryTaskStore();
     const service = new TaskService(store);
     await service.create(exact("First", "09:00", "10:00"));
@@ -220,14 +269,12 @@ describe("TaskService conflict semantics", () => {
 
     const conflict = await rejectedConflict(service.create(exact("Bridge", "09:30", "10:30")));
     expect(conflict.conflicts).toHaveLength(2);
-    const bridge = await service.create(exact("Bridge", "09:30", "10:30", {
+    await expect(service.create(exact("Bridge", "09:30", "10:30", {
       decision: "keep",
       fingerprint: conflict.conflictSetFingerprint
-    }));
-    expect(bridge.task.title).toBe("Bridge");
-    expect(store.acceptances).toHaveLength(2);
-    expect((await service.list("2026-07-27")).blockingConflicts).toHaveLength(2);
-    expect((await service.list("2026-07-27")).blockingConflicts.every((pair) => pair.accepted)).toBe(true);
+    }))).rejects.toBeInstanceOf(TaskTimeConflictError);
+    expect(store.tasks.map((task) => task.title)).toEqual(["First", "Second"]);
+    expect(store.acceptances).toHaveLength(0);
   });
 
   it("returns closed overlaps as historical warnings instead of blocking", async () => {
@@ -243,7 +290,7 @@ describe("TaskService conflict semantics", () => {
     expect(listed.historicalOverlaps).toHaveLength(1);
   });
 
-  it("rejects stale conflict fingerprints without writing acceptances", async () => {
+  it("keeps rejecting an overlap even when an old client submits a conflict fingerprint", async () => {
     const store = new MemoryTaskStore();
     const service = new TaskService(store);
     await service.create(exact("Existing", "09:00", "10:00"));
@@ -251,26 +298,8 @@ describe("TaskService conflict semantics", () => {
     await service.create(exact("Changed set", "10:00", "11:00"));
     await expect(service.create(exact("Incoming", "09:30", "10:30", {
       decision: "keep", fingerprint: conflict.conflictSetFingerprint
-    }))).rejects.toBeInstanceOf(ConflictSetChangedError);
-    expect(store.acceptances).toHaveLength(0);
-  });
-
-  it("rolls back all acceptance and task writes when batch insertion fails", async () => {
-    class FailingAcceptanceStore extends MemoryTaskStore {
-      override async insertConflictAcceptances(records: ConflictAcceptanceRecord[]): Promise<void> {
-        await super.insertConflictAcceptances(records.slice(0, 1));
-        throw new Error("acceptance write failed");
-      }
-    }
-    const store = new FailingAcceptanceStore();
-    const service = new TaskService(store);
-    await service.create(exact("First", "09:00", "10:00"));
-    await service.create(exact("Second", "10:00", "11:00"));
-    const conflict = await rejectedConflict(service.create(exact("Bridge", "09:30", "10:30")));
-    await expect(service.create(exact("Bridge", "09:30", "10:30", {
-      decision: "keep", fingerprint: conflict.conflictSetFingerprint
-    }))).rejects.toThrow("acceptance write failed");
-    expect(store.tasks.map((task) => task.title)).toEqual(["First", "Second"]);
+    }))).rejects.toBeInstanceOf(TaskTimeConflictError);
+    expect(store.tasks.map((task) => task.title)).toEqual(["Existing", "Changed set"]);
     expect(store.acceptances).toHaveLength(0);
   });
 });

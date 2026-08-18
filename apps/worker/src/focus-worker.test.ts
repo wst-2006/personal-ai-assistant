@@ -9,15 +9,16 @@ describe("FocusTimerWorker", () => {
     expect(focusTimerLeaseExpiredBefore(now)).toEqual(new Date("2026-07-29T01:55:00.000Z"));
   });
 
-  it("moves a scheduled session into the one-minute preparation at task time", async () => {
+  it("moves a scheduled session into preparation one minute before the fixed start", async () => {
+    const preparationNow = new Date("2026-07-29T01:59:00.000Z");
     const job: FocusTimerJob = {
       id: "job-scheduled", focusSessionId: "session-scheduled", kind: "preparation_start",
-      expectedSessionVersion: 1, dueAt: now, attempts: 1
+      expectedSessionVersion: 1, dueAt: preparationNow, attempts: 1
     };
     const execute = vi.fn()
       .mockResolvedValueOnce({ rows: [job] })
       .mockResolvedValueOnce({ rows: [{ id: "session-scheduled", taskId: "task-scheduled", state: "scheduled", version: 1 }] })
-      .mockResolvedValueOnce({ rows: [{ id: "task-scheduled", lifecycleStatus: "open", endAt: new Date("2026-07-29T04:00:00.000Z"), scheduleRevision: 3 }] })
+      .mockResolvedValueOnce({ rows: [{ id: "task-scheduled", lifecycleStatus: "open", recordKind: "formal", startAt: now, endAt: new Date("2026-07-29T04:00:00.000Z"), scheduleRevision: 3 }] })
       .mockResolvedValueOnce({ rows: [{ id: "structure-scheduled", version: 2, taskScheduleRevision: 3, totalStartAt: now }] })
       .mockResolvedValueOnce({ rows: [
         { position: 0, segmentType: "focus", durationMinutes: 55 },
@@ -30,11 +31,11 @@ describe("FocusTimerWorker", () => {
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
     const worker = new FocusTimerWorker({ execute, transaction: async (callback: (db: unknown) => unknown) => callback({ execute }) } as unknown as AppDatabase);
-    await expect(worker.processNext(now)).resolves.toBe("completed");
+    await expect(worker.processNext(preparationNow)).resolves.toBe("completed");
     expect(execute).toHaveBeenCalledTimes(11);
   });
 
-  it("stops an unanswered reminder exactly once", async () => {
+  it("moves an unconfirmed task into late-start waiting without recording failure", async () => {
     const job: FocusTimerJob = {
       id: "job-1", focusSessionId: "session-1", kind: "confirmation_timeout",
       expectedSessionVersion: 1, dueAt: now, attempts: 1
@@ -51,18 +52,18 @@ describe("FocusTimerWorker", () => {
       .mockResolvedValueOnce({ rows: [] });
     const worker = new FocusTimerWorker({ execute, transaction: async (callback: (db: unknown) => unknown) => callback({ execute }) } as unknown as AppDatabase);
     await expect(worker.processNext(now)).resolves.toBe("completed");
-    expect(execute).toHaveBeenCalledTimes(8);
+    expect(execute).toHaveBeenCalledTimes(4);
   });
 
-  it("starts a prepared session and activates its task", async () => {
+  it("starts only an explicitly armed session and activates its task", async () => {
     const job: FocusTimerJob = {
       id: "job-2", focusSessionId: "session-2", kind: "preparation_complete",
       expectedSessionVersion: 2, dueAt: now, attempts: 1
     };
     const execute = vi.fn()
       .mockResolvedValueOnce({ rows: [job] })
-      .mockResolvedValueOnce({ rows: [{ id: "session-2", taskId: "task-2", state: "preparing", version: 2, startedAt: null, activeSinceAt: null }] })
-      .mockResolvedValueOnce({ rows: [{ id: "task-2", lifecycleStatus: "open", endAt: new Date("2026-07-29T03:00:00.000Z") }] })
+      .mockResolvedValueOnce({ rows: [{ id: "session-2", taskId: "task-2", state: "armed", version: 2, startedAt: null, activeSinceAt: null, focusStructureId: null }] })
+      .mockResolvedValueOnce({ rows: [{ id: "task-2", lifecycleStatus: "open", recordKind: "formal", startAt: now, endAt: new Date("2026-07-29T03:00:00.000Z") }] })
       .mockResolvedValueOnce({ rows: [{ id: "session-2" }] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
@@ -121,12 +122,44 @@ describe("FocusTimerWorker", () => {
       .mockResolvedValueOnce({ rows: [{ position: 0, segmentType: "focus", durationMinutes: 55 }, { position: 1, segmentType: "break", durationMinutes: 5 }] })
       .mockResolvedValueOnce({ rows: [{ startedAt: new Date("2026-07-29T01:55:00.000Z"), plannedDurationSeconds: 5 * 60 }] })
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ focusSeconds: 55 * 60 }] })
       .mockResolvedValueOnce({ rows: [{ id: "session-final" }] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
     const worker = new FocusTimerWorker({ execute, transaction: async (callback: (db: unknown) => unknown) => callback({ execute }) } as unknown as AppDatabase);
     await expect(worker.processNext(now)).resolves.toBe("completed");
-    expect(execute).toHaveBeenCalledTimes(10);
+    expect(execute).toHaveBeenCalledTimes(11);
+  });
+
+  it("closes the task objectively without subjective feedback when evaluation is disabled", async () => {
+    const job: FocusTimerJob = {
+      id: "job-final-no-evaluation", focusSessionId: "session-final-no-evaluation", kind: "segment_transition",
+      expectedSessionVersion: 7, dueAt: now, attempts: 1
+    };
+    const execute = vi.fn()
+      .mockResolvedValueOnce({ rows: [job] })
+      .mockResolvedValueOnce({ rows: [{ id: "session-final-no-evaluation", taskId: "task-final-no-evaluation", state: "running", version: 7,
+        startedAt: new Date("2026-07-29T01:00:00.000Z"), activeSinceAt: new Date("2026-07-29T01:00:00.000Z"),
+        plannedEndAt: new Date("2026-07-29T02:00:00.000Z"), rawActiveSeconds: 0,
+        focusStructureId: "structure-final-no-evaluation", currentSegmentPosition: 1 }] })
+      .mockResolvedValueOnce({ rows: [{ totalStartAt: new Date("2026-07-29T01:00:00.000Z") }] })
+      .mockResolvedValueOnce({ rows: [{ position: 0, segmentType: "focus", durationMinutes: 55 }, { position: 1, segmentType: "break", durationMinutes: 5 }] })
+      .mockResolvedValueOnce({ rows: [{ startedAt: new Date("2026-07-29T01:55:00.000Z"), plannedDurationSeconds: 5 * 60 }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ focusSeconds: 55 * 60 }] })
+      .mockResolvedValueOnce({ rows: [{ id: "session-final-no-evaluation", version: 8 }] })
+      .mockResolvedValueOnce({ rows: [{ id: "task-final-no-evaluation" }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ desktopFocusEnabled: true, focusEvaluationEnabled: false }] })
+      .mockResolvedValueOnce({ rows: [{ id: "session-final-no-evaluation" }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: "task-final-no-evaluation" }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+    const worker = new FocusTimerWorker({ execute, transaction: async (callback: (db: unknown) => unknown) => callback({ execute }) } as unknown as AppDatabase);
+
+    await expect(worker.processNext(now)).resolves.toBe("completed");
+    expect(execute).toHaveBeenCalledTimes(16);
   });
 });

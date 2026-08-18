@@ -17,7 +17,7 @@ import type {
 type MemoryReminderJob = {
   id: string;
   taskId: string;
-  kind: "task_start" | "task_follow_up";
+  kind: "task_start" | "task_start_ready" | "task_start_lapsed" | "task_start_expire";
   scheduleRevision: number;
   status: "pending" | "sent" | "cancelled";
   scheduledAt: Date;
@@ -146,6 +146,7 @@ export class MemoryTaskStore implements TaskStore, TaskStoreTransaction {
   ): Promise<StoredTask[]> {
     return this.tasks.filter((task) => !task.deletedAt
       && task.id !== excludeTaskId
+      && task.recordKind === "formal"
       && task.scheduleKind === "exact"
       && lifecycleStatuses.includes(task.lifecycleStatus as TaskLifecycle)
       && Boolean(task.startAt && task.endAt)
@@ -202,6 +203,7 @@ export class MemoryTaskStore implements TaskStore, TaskStoreTransaction {
   async syncReminderForTask(task: StoredTask): Promise<void> {
     const taskJobs = this.reminderJobs.filter((job) => job.taskId === task.id);
     const shouldSchedule = !task.deletedAt
+      && task.recordKind === "formal"
       && task.lifecycleStatus === "open"
       && task.scheduleKind === "exact"
       && Boolean(task.startAt && task.endAt);
@@ -215,7 +217,7 @@ export class MemoryTaskStore implements TaskStore, TaskStoreTransaction {
       return;
     }
     const scheduledAt = task.startAt!;
-    for (const kind of ["task_start", "task_follow_up"] as const) {
+    for (const kind of ["task_start", "task_start_ready", "task_start_lapsed", "task_start_expire"] as const) {
       const index = this.reminderJobs.findIndex((job) => job.taskId === task.id && job.kind === kind);
       const existing = index >= 0 ? this.reminderJobs[index]! : null;
       const next: MemoryReminderJob = {
@@ -227,7 +229,11 @@ export class MemoryTaskStore implements TaskStore, TaskStoreTransaction {
         scheduledAt,
         availableAt: kind === "task_start"
           ? new Date(scheduledAt.getTime() - 15 * 60 * 1000)
-          : new Date(scheduledAt.getTime() + 5 * 60 * 1000),
+          : kind === "task_start_ready"
+            ? new Date(scheduledAt.getTime() - 60 * 1000)
+            : kind === "task_start_lapsed"
+              ? scheduledAt
+              : task.endAt!,
         payload: {
           taskId: task.id,
           title: task.title,
@@ -240,6 +246,18 @@ export class MemoryTaskStore implements TaskStore, TaskStoreTransaction {
       if (index >= 0) this.reminderJobs[index] = next;
       else this.reminderJobs.push(next);
     }
+  }
+
+  async purgeDeletedTasks(): Promise<number> {
+    const deletedIds = new Set(this.tasks.filter((task) => Boolean(task.deletedAt)).map((task) => task.id));
+    if (deletedIds.size === 0) return 0;
+    this.tasks = this.tasks.filter((task) => !deletedIds.has(task.id));
+    this.outcomes = this.outcomes.filter((item) => !deletedIds.has(item.taskId));
+    this.feedback = this.feedback.filter((item) => !deletedIds.has(item.taskId));
+    this.lifecycleEvents = this.lifecycleEvents.filter((item) => !deletedIds.has(item.taskId));
+    this.acceptances = this.acceptances.filter((item) => !deletedIds.has(item.taskIdLow) && !deletedIds.has(item.taskIdHigh));
+    this.reminderJobs = this.reminderJobs.filter((item) => !deletedIds.has(item.taskId));
+    return deletedIds.size;
   }
 }
 

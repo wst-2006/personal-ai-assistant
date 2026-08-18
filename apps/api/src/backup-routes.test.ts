@@ -9,7 +9,7 @@ const backupService: BackupExporter = {
       formatVersion: logicalBackupFormatVersion,
       exportedAt: "2026-08-02T12:34:56.789Z",
       data: {
-        inboxEntries: [], feishuIntakeCandidates: [], healthProfiles: [], healthWeekPlans: [], healthDailyReferences: [], healthSleepAnalyses: [], tasks: [], taskLegacyMetadata: [], taskOutcomes: [], taskFeedback: [], taskLifecycleEvents: [], taskConflictAcceptances: [], reminderJobs: [], desktopCommandRequests: [], focusStructures: [], focusStructureSegments: [], focusSessions: [], focusSessionSegmentRuns: [], focusTimerJobs: [], longRangePlans: [], longRangePlanMilestones: [], longRangePlanTaskTreeCandidates: [], userProfiles: [], reviewSessions: [], reviewMessages: [], appConversations: [], appConversationMessages: [], dailyBriefs: [], cyberDiaries: []
+        inboxEntries: [], feishuIntakeCandidates: [], healthProfiles: [], healthWeekConversations: [], healthWeekConversationMessages: [], healthWeekPlans: [], healthDailyReferences: [], healthSleepAnalyses: [], healthWeekAutoGenerations: [], tasks: [], taskLegacyMetadata: [], taskOutcomes: [], taskFeedback: [], taskLifecycleEvents: [], taskConflictAcceptances: [], reminderJobs: [], desktopCommandRequests: [], focusStructures: [], focusStructureSegments: [], focusSessions: [], focusSessionSegmentRuns: [], focusTimerJobs: [], longRangePlans: [], longRangePlanMilestones: [], longRangePlanTaskTreeCandidates: [], userProfiles: [], unscheduledTaskDayEndRuns: [], reviewSessions: [], reviewMessages: [], appConversations: [], appConversationMessages: [], dailyBriefs: [], cyberDiaries: []
       }
     };
   }
@@ -30,7 +30,7 @@ describe("logical backup export route", () => {
     expect(response.json()).toMatchObject({
       format: logicalBackupFormat,
       formatVersion: logicalBackupFormatVersion,
-      data: { tasks: [], longRangePlans: [], longRangePlanMilestones: [], longRangePlanTaskTreeCandidates: [], userProfiles: [], appConversations: [], appConversationMessages: [], cyberDiaries: [] }
+      data: { healthWeekConversations: [], healthWeekConversationMessages: [], tasks: [], longRangePlans: [], longRangePlanMilestones: [], longRangePlanTaskTreeCandidates: [], userProfiles: [], unscheduledTaskDayEndRuns: [], appConversations: [], appConversationMessages: [], cyberDiaries: [] }
     });
     expect(response.json()).not.toHaveProperty("databaseUrl");
     expect(response.json()).not.toHaveProperty("apiKey");

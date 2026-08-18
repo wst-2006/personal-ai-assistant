@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Check, CheckCircle2, Clock3, Download, Flame, MapPin, MessageCircle, RefreshCw, Send, Sparkles } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { Check, Download, MapPin, MessageCircle, RefreshCw } from "lucide-react";
+import { RadarChart, type RadarValues } from "./ReviewRadar";
 
 type Review = { id: string; localDate: string; state: string };
 type Message = {
@@ -8,10 +9,13 @@ type Message = {
   source: string;
   createdAt: string;
 };
+type RadarSnapshot = { id: string; reviewSessionId: string; radar: RadarValues; createdAt: string };
 type Context = {
   tasks: Array<{
     id: string;
+    recordKind?: string;
     lifecycleStatus: string;
+    currentOutcome: string | null;
     startAt: string | null;
     endAt: string | null;
   }>;
@@ -41,6 +45,7 @@ type BriefContent = {
   weather?: { temperatureCelsius:number; apparentTemperatureCelsius:number; weatherCode:number; observedAt:string|null } | null;
 };
 type Brief = { id:string; state:"draft"|"confirmed"; content:BriefContent; sources:Array<{kind:string;label:string;url?:string;provider?:string;retrievedAt?:string}> };
+type GrowthDay = { localDate: string; focusMinutes: number; closedTasks: number; points: number };
 const API = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:3000";
 const localDate = () =>
   new Intl.DateTimeFormat("en-CA", {
@@ -80,26 +85,50 @@ function briefText(brief: Brief) {
   return `${brief.content.title}\n\n${location}${weather}\n## 复盘摘要\n${brief.content.reflection}\n\n## 任务摘要\n${brief.content.taskSummary}\n\n${sections}${sources}\n`;
 }
 
-export function ReviewWorkspace() {
+const chineseDigits = ["零", "一", "二", "三", "四", "五", "六", "七", "八", "九"];
+function chineseNumber(value: number) {
+  if (value < 10) return chineseDigits[value] ?? String(value);
+  if (value < 20) return `十${value === 10 ? "" : chineseDigits[value % 10]}`;
+  if (value < 100) return `${chineseDigits[Math.floor(value / 10)]}十${value % 10 === 0 ? "" : chineseDigits[value % 10]}`;
+  return String(value);
+}
+
+function reviewDateLabel(value: string) {
+  const date = new Date(`${value}T12:00:00+08:00`);
+  const weekday = new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", weekday: "short" }).format(date);
+  return `${chineseNumber(Number(value.slice(5, 7)))}月${chineseNumber(Number(value.slice(8, 10)))} · ${weekday}`;
+}
+
+export function ReviewWorkspace({ isWorkspaceCurrent = true }: { isWorkspaceCurrent?: boolean }) {
   const [review, setReview] = useState<Review | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [radarSnapshot, setRadarSnapshot] = useState<RadarSnapshot | null>(null);
   const [context, setContext] = useState<Context | null>(null);
   const [brief, setBrief] = useState<Brief | null>(null);
   const [briefEditing, setBriefEditing] = useState(false);
   const [locationName, setLocationName] = useState("");
+  const [recentGrowthDays, setRecentGrowthDays] = useState<GrowthDay[]>([]);
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const reviewInputRef = useRef<HTMLTextAreaElement>(null);
+  const [emptyPromptActive, setEmptyPromptActive] = useState(false);
   const load = useCallback(async () => {
+    const growthRequest = fetch(`${API}/api/v1/growth/summary?endDate=${localDate()}&days=30`)
+      .then(async (response) => response.ok ? (await response.json() as { summary: { days: GrowthDay[] } }).summary.days : [])
+      .catch(() => [] as GrowthDay[]);
     const data = await request<{
       session: Review;
       messages: Message[];
+      radarSnapshot: RadarSnapshot | null;
       context: Context;
       briefs: Brief[];
     }>(`/api/v1/reviews/${localDate()}`);
     setReview(data.session);
     setMessages(data.messages);
+    setRadarSnapshot(data.radarSnapshot);
     setContext(data.context);
+    setRecentGrowthDays(await growthRequest);
     const latestBrief = data.briefs.at(-1) ?? null;
     setBrief(latestBrief);
     setBriefEditing(false);
@@ -110,12 +139,8 @@ export function ReviewWorkspace() {
       setError("无法加载今日复盘，请确认 API 正在运行。"),
     );
   }, [load]);
-  const planned = useMemo(
-    () =>
-      context?.tasks.reduce((sum, task) => {
-        if (!task.startAt || !task.endAt) return sum;
-        return sum + Math.max(0, Math.round((new Date(task.endAt).getTime() - new Date(task.startAt).getTime()) / 60000));
-      }, 0) ?? 0,
+  const plannedTaskCount = useMemo(
+    () => context?.tasks.filter((task) => task.recordKind !== "backfill" && task.lifecycleStatus !== "cancelled").length ?? 0,
     [context],
   );
   const effective = useMemo(
@@ -128,11 +153,30 @@ export function ReviewWorkspace() {
       ),
     [context],
   );
+  const completed = useMemo(
+    () => context?.tasks.filter((task) => task.currentOutcome === "complete").length ?? 0,
+    [context],
+  );
   const userMessageCount = useMemo(
     () => messages.filter((message) => message.source === "app").length,
     [messages],
   );
-  async function save(askAi: boolean) {
+  const conversationMessages = useMemo(() => messages.filter((message) => message.source === "app" || message.source === "ai"), [messages]);
+  const lastConversationMessage = conversationMessages.at(-1);
+  const streakDays = useMemo(() => {
+    const currentDate = review?.localDate ?? localDate();
+    const days = [...recentGrowthDays].sort((left, right) => left.localDate.localeCompare(right.localDate));
+    let streak = 0;
+    for (let index = days.length - 1; index >= 0; index -= 1) {
+      const day = days[index]!;
+      const currentReviewActivity = day.localDate === currentDate && userMessageCount > 0;
+      const hasRealActivity = day.focusMinutes > 0 || day.closedTasks > 0 || day.points > 0 || currentReviewActivity;
+      if (!hasRealActivity) break;
+      streak += 1;
+    }
+    return streak;
+  }, [recentGrowthDays, review?.localDate, userMessageCount]);
+  async function save() {
     if (!review || !draft.trim()) return;
     setSaving(true);
     setError(null);
@@ -151,26 +195,10 @@ export function ReviewWorkspace() {
       setSaving(false);
       return;
     }
-    if (!askAi) {
-      setSaving(false);
-      return;
-    }
-    try {
-      const result = await request<{ session: Review; messages: Message[] }>(
-        `/api/v1/reviews/${review.id}/reply-last`,
-        "POST",
-      );
-      setReview(result.session);
-      setMessages(result.messages);
-    } catch {
-      setError("复盘文字已经保存，AI 暂时没有回复；可以稍后点击“请 AI 回应最近一条”。");
-      await load().catch(() => undefined);
-    } finally {
-      setSaving(false);
-    }
+    setSaving(false);
   }
   async function replyToLast() {
-    if (!review || messages.at(-1)?.source !== "app") return;
+    if (!review || lastConversationMessage?.source !== "app") return;
     setSaving(true);
     setError(null);
     try {
@@ -206,6 +234,14 @@ export function ReviewWorkspace() {
           : "至少保存一条由你写下的复盘后，才能生成今日简报。");
     }
     finally { setSaving(false); }
+  }
+  function returnToReviewInput() {
+    setEmptyPromptActive(true);
+    window.setTimeout(() => {
+      reviewInputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+      window.setTimeout(() => reviewInputRef.current?.focus({ preventScroll: true }), 420);
+      setEmptyPromptActive(false);
+    }, 170);
   }
   async function confirmBrief() {
     if (!brief) return;
@@ -248,95 +284,92 @@ export function ReviewWorkspace() {
           <span>条我的复盘</span>
         </div>
       </div>
-      <div className="review-layout">
-        <section className="review-checkin">
+      <section className="review-colophon" aria-label="今日题记">
+        <div className="review-colophon-heading">
           <p className="section-kicker">今日回看</p>
-          <div className="review-stat-row">
-            <span>
-              <CheckCircle2 />
-              已安排
-            </span>
-            <strong>{context?.tasks.length ?? 0}</strong>
-          </div>
-          <div className="review-stat-row">
-            <span>
-              <Clock3 />
-              计划时长
-            </span>
-            <strong>{planned}m</strong>
-          </div>
-          <div className="review-stat-row">
-            <span>
-              <Flame />
-              有效专注
-            </span>
-            <strong>{effective}m</strong>
-          </div>
-          <div className="garden-mini">
-            <span className="garden-stem" />
-            <span className="garden-leaf leaf-a" />
-            <span className="garden-leaf leaf-b" />
-            <span className="garden-bud" />
-          </div>
-        </section>
-        <section className="review-composer">
-          <p className="section-kicker">留下一句话</p>
-          <h2>今天有什么值得被看见？</h2>
+          <time dateTime={review?.localDate ?? localDate()}>{reviewDateLabel(review?.localDate ?? localDate())}</time>
+        </div>
+        <div className="review-completion-mark">
+          <strong>{chineseNumber(completed)}</strong>
+          <span>今日完成</span>
+        </div>
+        <dl className="review-colophon-metrics">
+          <div><dt>计划</dt><dd>{plannedTaskCount}<small>项</small></dd></div>
+          <div><dt>专注</dt><dd>{effective}m</dd></div>
+        </dl>
+        <div
+          className="review-growth-plant"
+          data-growth-stage={effective >= 60 ? "two-leaf" : effective >= 20 ? "sprout" : "seed"}
+          data-reviewed={userMessageCount > 0 ? "true" : "false"}
+          style={{ "--review-streak-growth": `${Math.min(streakDays, 7) * 6}px` } as CSSProperties}
+          aria-label={`今日植物：有效专注 ${effective} 分钟${userMessageCount > 0 ? "，已完成主动复盘" : ""}${streakDays > 0 ? `，连续留下记录 ${streakDays} 天` : ""}`}
+        >
+          <i className="review-seed" /><i className="review-stem" /><i className="review-leaf leaf-one" /><i className="review-leaf leaf-two" /><i className="review-new-leaf" />
+        </div>
+      </section>
+      <section className="review-sheet" aria-labelledby="review-fragment-title">
+        <header>
+          <div><p className="section-kicker">今日片段</p><h2 id="review-fragment-title">让一句话，直接落在纸上。</h2></div>
+          <span>{userMessageCount ? `已留下 ${userMessageCount} 笔` : "纸面尚空"}</span>
+        </header>
+        <div className="review-writing-field" aria-live="polite">
+          {conversationMessages.length === 0 ? (
+            <div className="stream-empty"><MessageCircle /><p>第一句话，会在这里亮起。</p></div>
+          ) : (
+            <div className="review-fragment-list">
+              {conversationMessages.map((message, index) => (
+                <article className={message.source === "ai" ? "ai" : "app"} key={message.id}>
+                  <span>{message.source === "ai" ? "AI 回应" : `第 ${chineseNumber(index + 1)} 笔`}</span>
+                  <p>{message.content}</p>
+                </article>
+              ))}
+            </div>
+          )}
           <textarea
+            ref={reviewInputRef}
             aria-label="复盘正文"
+            disabled={!isWorkspaceCurrent || !review}
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
-            placeholder="可以写完成了什么、卡在哪里，或只是此刻的感受。"
+            placeholder="今天下午忽然觉得……"
             rows={6}
             maxLength={2000}
           />
-          <div className="composer-footer">
-            <span>{draft.length}/2000</span>
-            <div className="review-composer-actions">
-              <button className="quiet-button" disabled={!draft.trim() || saving} onClick={() => void save(false)}>
-                <Send />
-                只保存片段
-              </button>
-              <button className="primary-button" disabled={!draft.trim() || saving} onClick={() => void save(true)}>
-                <Sparkles />
-                保存并请 AI 回应
-              </button>
-            </div>
+        </div>
+        <footer className="review-sheet-footer">
+          <span>{draft.length}/2000</span>
+          <div className="review-composer-actions"><button className="primary-button review-save-button" disabled={!isWorkspaceCurrent || !draft.trim() || saving} onClick={() => void save()}><Check />保存</button></div>
+        </footer>
+        {lastConversationMessage?.source === "app" && (
+          <button className="text-button review-reply-last" type="button" disabled={saving} onClick={() => void replyToLast()}><RefreshCw />{saving ? "正在等待 AI" : "请 AI 回应最近一条"}</button>
+        )}
+        <div className="review-roll-actions">
+          <section className="review-location-caption" aria-label="所在地点">
+            <div className="review-location-copy"><strong><MapPin />所在地点</strong><small>可选填写</small><label><span>今天在哪里留下这段记录</span><input aria-label="所在地点" disabled={!isWorkspaceCurrent || !review} value={locationName} onChange={(event)=>setLocationName(event.target.value)} placeholder="例如：杭州" maxLength={120}/></label></div>
+            <div className="review-location-art" role="img" aria-label="淡化的千里江山图局部" />
+          </section>
+          <button className="review-close-scroll" aria-label="收卷并生成今日简报" disabled={userMessageCount===0||saving} onClick={()=>void generateBrief()}>
+            <span>收卷</span><i aria-hidden="true">成</i><small>生成今日简报</small>
+          </button>
+        </div>
+      </section>
+      <section className="review-radar-archive" aria-labelledby="review-radar-title">
+        <div className="review-radar-archive-heading">
+          <div><p className="section-kicker">今日六维</p><h2 id="review-radar-title">把体验留成一张图。</h2></div>
+          <span>{radarSnapshot ? "已保存" : "尚未保存"}</span>
+        </div>
+        {radarSnapshot ? <div className="review-radar-snapshot">
+          <RadarChart values={radarSnapshot.radar} ariaLabel="今日六维回看快照" />
+          <div className="review-radar-snapshot-copy">
+            <strong>今日体验快照</strong>
+            <p>这张图来自你在成长页最后一次确认的六维评分。它固定保留在今天的复盘里，不会被之后的统计范围切换改写。</p>
+            <div className="review-radar-snapshot-meta"><span>保存于 {new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(radarSnapshot.createdAt))}</span><span>六项均为 0–100 分</span></div>
           </div>
-        </section>
-        <section className="review-stream" aria-live="polite">
-          <p className="section-kicker">今日片段</p>
-          {messages.length === 0 ? (
-            <div className="stream-empty">
-              <MessageCircle />
-              第一句话会在这里亮起。
-            </div>
-          ) : (
-            messages.map((message, index) => (
-              <article className={message.source === "ai" ? "ai" : "app"} key={message.id}>
-                <span>{message.source === "ai" ? "AI" : "我"} · {String(index + 1).padStart(2, "0")}</span>
-                <p>{message.content}</p>
-              </article>
-            ))
-          )}
-          {messages.at(-1)?.source === "app" && (
-            <button className="text-button review-reply-last" type="button" disabled={saving} onClick={() => void replyToLast()}>
-              <RefreshCw />
-              {saving ? "正在等待 AI" : "请 AI 回应最近一条"}
-            </button>
-          )}
-          <div className="review-brief-actions">
-            <label className="review-location-field">
-              <span><MapPin />今日地点（可选）</span>
-              <input aria-label="今日地点" value={locationName} onChange={(event)=>setLocationName(event.target.value)} placeholder="例如：上海、杭州、西安" maxLength={120}/>
-            </label>
-            <button className="primary-button review-brief-trigger" disabled={userMessageCount===0||saving} onClick={()=>void generateBrief()}><Sparkles />结束今日复盘并生成简报</button>
-          </div>
-        </section>
-      </div>
+        </div> : <p className="review-radar-empty">今天还没有保存六维体验。去成长页拖动六个顶点，确认后它会出现在这里。</p>}
+      </section>
       <section className="review-software-conversations" aria-labelledby="review-software-conversations-title">
         <div><p className="section-kicker">软件内对话</p><h2 id="review-software-conversations-title">今天与 AI 商量过的内容</h2><small>它与复盘正文分开保存，不会替代你在复盘页留下的一句话。</small></div>
-        {context?.conversationMessages.length ? <div className="review-software-conversation-list">{context.conversationMessages.slice(-4).map((message) => <article key={message.id} className={message.role}><span>{message.role === "user" ? "我" : "AI"}</span><p>{message.content}</p></article>)}</div> : <p className="review-software-conversation-empty">今天还没有软件内对话。需要时可从右上角的 AI 侧层主动发起。</p>}
+        {context?.conversationMessages.length ? <div className="review-software-conversation-list">{context.conversationMessages.slice(-4).map((message) => <article key={message.id} className={message.role}><time>{new Intl.DateTimeFormat("zh-CN",{timeZone:"Asia/Shanghai",hour:"2-digit",minute:"2-digit",hour12:false}).format(new Date(message.createdAt))}</time><div><strong>{message.role === "user" ? "我提出的商量" : "AI 留下的回应"}</strong><p>{message.content}</p></div></article>)}</div> : <div className="review-software-conversation-empty"><strong>今日尚未起笔</strong><div aria-hidden="true"><i/><i/><i/></div><small>回到上方，留下一句今日复盘</small><button className={`review-empty-seal ${emptyPromptActive?"active":""}`} type="button" onClick={returnToReviewInput} aria-label="回到复盘输入区并开始书写"><span aria-hidden="true">待</span></button></div>}
       </section>
       {brief && <section className="review-brief-editor">
         <div>

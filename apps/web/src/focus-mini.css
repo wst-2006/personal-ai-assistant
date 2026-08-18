@@ -1,0 +1,269 @@
+html:has(.focus-mini),
+html:has(.focus-mini) body,
+html:has(.focus-mini) #root {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: #f3f0e7;
+}
+
+.focus-mini {
+  position: relative;
+  display: grid;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  align-content: center;
+  overflow: hidden;
+  padding-top: 32px;
+  border: 1px solid rgba(82, 100, 90, .24);
+  color: #252722;
+  background: #f3f0e7;
+  cursor: default;
+  user-select: none;
+}
+
+.focus-mini-grain {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: .14;
+  background-image: radial-gradient(circle at 1px 1px, rgba(37, 39, 34, .13) .45px, transparent .6px);
+  background-size: 5px 5px;
+}
+
+.focus-mini-titlebar {
+  position: absolute;
+  z-index: 20;
+  top: 0;
+  right: 0;
+  left: 0;
+  display: flex;
+  height: 32px;
+  align-items: center;
+  justify-content: space-between;
+  padding-left: 12px;
+  border-bottom: 1px solid rgba(82, 100, 90, .14);
+  color: #6f7972;
+  background: rgba(246, 243, 235, .96);
+  cursor: grab;
+}
+
+.focus-mini-titlebar:active { cursor: grabbing; }
+.focus-mini-titlebar > span { font: 600 10px/1 system-ui, sans-serif; letter-spacing: .14em; }
+.focus-mini-window-controls { display: flex; height: 100%; }
+.focus-mini-titlebar button {
+  display: grid;
+  width: 34px;
+  height: 100%;
+  place-items: center;
+  border: 0;
+  color: #6f7972;
+  background: transparent;
+}
+.focus-mini-titlebar button:hover,
+.focus-mini-titlebar button:focus-visible { color: #252722; background: rgba(82, 100, 90, .1); }
+.focus-mini-titlebar button.active { color: #8f493d; background: rgba(161, 79, 63, .09); }
+.focus-mini-titlebar button:last-child:hover { color: #fff; background: #a14f3f; }
+.focus-mini-titlebar svg { width: 13px; height: 13px; }
+
+.focus-mini-heading {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  gap: 3px;
+  padding: 0 28px;
+  text-align: center;
+}
+.focus-mini-heading span { color: #8c978f; font: 500 10px/1.3 system-ui, sans-serif; letter-spacing: .16em; }
+.focus-mini-heading strong {
+  max-width: 250px;
+  overflow: hidden;
+  font: 500 14px/1.4 "Noto Serif SC", "Songti SC", STSong, serif;
+  letter-spacing: .04em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.focus-mini-clock {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  width: 270px;
+  margin: 8px auto 34px;
+  place-items: center;
+  gap: 8px;
+}
+.focus-mini-clock > strong { font: 300 48px/1 ui-monospace, "SFMono-Regular", Consolas, monospace; letter-spacing: -.04em; font-variant-numeric: tabular-nums; }
+.focus-mini-progress { position: relative; display: block; width: 100%; height: 10px; }
+.focus-mini-progress::before { position: absolute; top: 5px; right: 0; left: 0; height: 1px; background: rgba(140, 151, 143, .35); content: ""; }
+.focus-mini-progress i { position: relative; display: block; height: 10px; transition: width .75s linear; }
+.focus-mini-progress i::before { position: absolute; top: 5px; right: 0; left: 0; height: 1px; background: #52645a; content: ""; }
+.focus-mini-progress b { position: absolute; top: 1px; right: -4px; width: 8px; height: 8px; border-radius: 48%; background: #a14f3f; box-shadow: 0 0 0 3px rgba(161, 79, 63, .07); }
+.focus-mini-clock small { color: #7d877f; font: 500 10px/1.4 system-ui, sans-serif; letter-spacing: .06em; }
+.focus-mini.paused .focus-mini-clock > strong { color: rgba(37, 39, 34, .58); }
+
+.focus-mini-controls {
+  position: absolute;
+  z-index: 2;
+  right: 11px;
+  bottom: 10px;
+  left: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.focus-mini-controls button {
+  display: inline-flex;
+  min-width: 72px;
+  height: 29px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 1px solid rgba(82, 100, 90, .18);
+  border-radius: 4px;
+  color: #5f6b63;
+  background: rgba(255, 255, 255, .42);
+  font: 600 10px/1 system-ui, sans-serif;
+}
+.focus-mini-controls button.primary { color: #f7f4eb; border-color: #52645a; background: #52645a; }
+.focus-mini-controls button:hover { color: #252722; border-color: rgba(82, 100, 90, .35); background: rgba(82, 100, 90, .11); }
+.focus-mini-controls button.primary:hover { color: #fff; background: #43564c; }
+.focus-mini-controls button:disabled { opacity: .5; }
+.focus-mini-controls svg { width: 12px; height: 12px; }
+
+.focus-mini-confirm-hint {
+  position: absolute;
+  z-index: 2;
+  right: 12px;
+  bottom: 45px;
+  left: 12px;
+  margin: 0;
+  color: rgba(82, 100, 90, .64);
+  font: 500 9px/1.3 system-ui, sans-serif;
+  letter-spacing: .04em;
+  text-align: center;
+}
+
+.focus-mini-auto {
+  position: absolute;
+  z-index: 2;
+  right: 12px;
+  top: 40px;
+  padding: 0;
+  border: 0;
+  color: rgba(140, 151, 143, .46);
+  background: transparent;
+  font: 500 9px/1.2 system-ui, sans-serif;
+  opacity: 0;
+  transition: color .18s ease, opacity .18s ease;
+}
+.focus-mini:hover .focus-mini-auto { opacity: 1; }
+.focus-mini-auto.active { color: rgba(82, 100, 90, .72); }
+
+.focus-mini-empty { position: relative; z-index: 1; display: grid; place-items: center; gap: 12px; color: #8c978f; }
+.focus-mini-empty strong { font: 500 15px/1.4 "Noto Serif SC", "Songti SC", STSong, serif; }
+.focus-mini-empty button { min-height: 30px; padding: 0 12px; border: 1px solid rgba(82, 100, 90, .2); border-radius: 4px; color: #52645a; background: rgba(255, 255, 255, .35); font-size: 11px; }
+
+.focus-mini.focus-mini-evaluation { display: block; overflow: auto; padding: 32px 0 0; }
+.focus-mini-evaluation-body { position: relative; z-index: 1; min-height: calc(100% - 32px); padding: 22px 25px 24px; box-sizing: border-box; }
+
+.focus-evaluation-sheet { display: grid; gap: 20px; width: 100%; color: #252722; }
+.focus-evaluation-heading { display: grid; gap: 5px; padding-bottom: 16px; border-bottom: 1px solid rgba(82, 100, 90, .18); }
+.focus-evaluation-heading p { margin: 0; color: #9a4f40; font: 700 10px/1.2 system-ui, sans-serif; letter-spacing: .18em; }
+.focus-evaluation-heading h1 { margin: 0; color: #252722; font: 500 25px/1.35 "Noto Serif SC", "Songti SC", STSong, serif; letter-spacing: .02em; }
+.focus-evaluation-heading > strong { max-width: 100%; overflow: hidden; color: #68736c; font: 500 12px/1.5 system-ui, sans-serif; text-overflow: ellipsis; white-space: nowrap; }
+
+.focus-evaluation-section { min-width: 0; margin: 0; padding: 0; border: 0; }
+.focus-evaluation-section legend,
+.focus-evaluation-note > span { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; color: #5d675f; font: 650 11px/1.3 system-ui, sans-serif; letter-spacing: .04em; }
+.focus-evaluation-section legend span,
+.focus-evaluation-note b { color: #a14f3f; font: 700 9px/1 system-ui, sans-serif; letter-spacing: .08em; }
+.focus-evaluation-outcomes,
+.focus-evaluation-feelings { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.focus-evaluation-outcomes button {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid rgba(82, 100, 90, .18);
+  border-radius: 4px;
+  color: #657168;
+  background: rgba(255, 255, 255, .38);
+  font: 600 11px/1 system-ui, sans-serif;
+}
+.focus-evaluation-outcomes button svg { width: 14px; height: 14px; }
+.focus-evaluation-outcomes button:hover { border-color: rgba(82, 100, 90, .42); color: #344139; }
+.focus-evaluation-outcomes button.selected { border-color: #52645a; color: #26342c; background: rgba(82, 100, 90, .12); box-shadow: inset 0 -2px #52645a; }
+
+.focus-evaluation-progress { display: grid; grid-template-columns: 1fr 72px auto; align-items: center; gap: 8px; margin-top: 10px; color: #5d675f; font: 500 11px/1.2 system-ui, sans-serif; }
+.focus-evaluation-progress input { width: 100%; min-height: 34px; box-sizing: border-box; padding: 0 8px; border: 1px solid rgba(82, 100, 90, .24); border-radius: 3px; color: #252722; background: rgba(255, 255, 255, .48); text-align: right; }
+.focus-evaluation-progress em { color: #7a847d; font-size: 11px; font-style: normal; }
+
+.focus-evaluation-feelings button {
+  display: grid;
+  min-height: 64px;
+  align-content: center;
+  gap: 5px;
+  padding: 9px 8px;
+  border: 1px solid;
+  border-radius: 4px;
+  text-align: left;
+  transition: transform .18s ease, border-color .18s ease, background .18s ease;
+}
+.focus-evaluation-feelings button strong { font: 650 12px/1.2 system-ui, sans-serif; }
+.focus-evaluation-feelings button small { font: 500 9px/1.35 system-ui, sans-serif; opacity: .74; }
+.focus-evaluation-feelings button:hover { transform: translateY(-1px); }
+.focus-evaluation-feelings .feeling-satisfied { border-color: rgba(79, 113, 88, .42); color: #365941; background: rgba(101, 142, 110, .12); }
+.focus-evaluation-feelings .feeling-neutral { border-color: rgba(171, 128, 42, .44); color: #765a22; background: rgba(203, 161, 67, .14); }
+.focus-evaluation-feelings .feeling-dissatisfied { border-color: rgba(158, 72, 61, .4); color: #7b3f37; background: rgba(183, 91, 76, .12); }
+.focus-evaluation-feelings .feeling-satisfied.selected { border-color: #4f7158; background: rgba(101, 142, 110, .24); box-shadow: inset 0 -3px #4f7158; }
+.focus-evaluation-feelings .feeling-neutral.selected { border-color: #ab802a; background: rgba(203, 161, 67, .26); box-shadow: inset 0 -3px #ab802a; }
+.focus-evaluation-feelings .feeling-dissatisfied.selected { border-color: #9e483d; background: rgba(183, 91, 76, .23); box-shadow: inset 0 -3px #9e483d; }
+
+.focus-evaluation-note { display: grid; }
+.focus-evaluation-note > span em { margin-left: auto; color: #8c978f; font-size: 9px; font-style: normal; font-weight: 500; }
+.focus-evaluation-note textarea {
+  min-height: 88px;
+  resize: vertical;
+  box-sizing: border-box;
+  padding: 10px 11px;
+  border: 0;
+  border-bottom: 1px solid rgba(82, 100, 90, .27);
+  border-radius: 0;
+  color: #252722;
+  background: repeating-linear-gradient(to bottom, transparent 0 25px, rgba(82, 100, 90, .11) 25px 26px);
+  font: 500 11px/26px system-ui, sans-serif;
+}
+.focus-evaluation-note textarea::placeholder { color: rgba(100, 111, 103, .58); }
+
+.focus-evaluation-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-top: 2px; }
+.focus-evaluation-footer p { min-width: 0; margin: 0; color: #7d877f; font: 500 10px/1.45 system-ui, sans-serif; }
+.focus-evaluation-footer p[role="alert"] { color: #9e483d; }
+.focus-evaluation-footer button { display: inline-flex; min-width: 142px; min-height: 39px; align-items: center; justify-content: center; gap: 7px; border: 1px solid #52645a; border-radius: 4px; color: #f7f4eb; background: #52645a; font: 650 11px/1 system-ui, sans-serif; }
+.focus-evaluation-footer button:hover { background: #43564c; }
+.focus-evaluation-footer button:disabled { opacity: .55; }
+.focus-evaluation-footer svg { width: 14px; height: 14px; }
+
+.focus-workspace-ended { display: grid; min-height: calc(100vh - 120px); place-items: center; }
+.focus-ended-page { position: relative; width: min(620px, 100%); box-sizing: border-box; padding: 62px 54px 48px; border: 1px solid rgba(82, 100, 90, .2); background: rgba(243, 240, 231, .95); box-shadow: 0 20px 60px rgba(50, 55, 47, .09); }
+.focus-ended-page > .back-button { position: absolute; top: 19px; left: 24px; color: #657168; }
+.focus-ended-page > .back-button:hover { color: #252722; }
+
+@media (max-width: 560px) {
+  .focus-mini-evaluation-body { padding: 18px 16px 20px; }
+  .focus-evaluation-feelings button small { display: none; }
+  .focus-evaluation-footer { align-items: stretch; flex-direction: column; }
+  .focus-evaluation-footer button { width: 100%; }
+  .focus-ended-page { padding: 62px 22px 32px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .focus-mini-progress i,
+  .focus-evaluation-feelings button { transition: none; }
+}

@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type FormEvent } from "react";
-import { Check, ChevronLeft, ChevronRight, ClipboardPenLine, HeartPulse, Leaf, LoaderCircle, MapPin, MessageCircleQuestion, Quote, Sparkles, Upload, X } from "lucide-react";
+import { useEffect, useRef, useState, type ClipboardEvent, type CSSProperties, type DragEvent, type FormEvent } from "react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ClipboardPenLine, HeartPulse, Leaf, LoaderCircle, MapPin, MessageCircleQuestion, Quote, RefreshCcw, Send, Sparkles, Upload, X } from "lucide-react";
 
 type Profile = {
   city: string | null;
@@ -20,11 +20,22 @@ type DayReference = {
   content: {
     nutritionDirection: string;
     proteinRangeGrams: { minimum: number; maximum: number };
+    nutritionTargets?: {
+      carbohydrateGrams: { minimum: number; maximum: number };
+      fatGrams: { minimum: number; maximum: number };
+      fiberGrams: { minimum: number; maximum: number };
+      hydrationLiters: { minimum: number; maximum: number };
+      macroRatioPercent: { protein: number; carbohydrate: number; fat: number };
+    };
+    hydrationGuidance?: string[];
+    mealExamples?: { breakfast: string[]; lunch: string[]; dinner: string[]; snack: string[] };
+    proteinRotationSources?: string[];
+    foodReference?: { proteinOptions: string[]; fiberOptions: string[]; carbOptions: string[] };
     plateGuidance: string[];
     seasonalVegetables: string[];
     seasonalGuidance?: string | null;
     seasonalPoem?: { title: string; author: string; excerpt: string; relevance: string } | null;
-    movement: { category: "strength" | "volleyball" | "running" | "cycling" | "recovery" | "rest"; durationMinutes: { minimum: number; maximum: number }; intensity: "rest" | "low" | "moderate" | "high"; highIntensity: boolean; safetyReminder: string };
+    movement: { category: "strength" | "volleyball" | "running" | "walking" | "cycling" | "recovery" | "rest"; durationMinutes: { minimum: number; maximum: number }; intensity: "rest" | "low" | "moderate" | "high"; highIntensity: boolean; safetyReminder: string; focus?: string[]; safetyNotes?: string[] };
   };
 };
 type HealthPlan = {
@@ -43,7 +54,16 @@ type HealthPlan = {
   revisionReason: string | null;
   days: DayReference[];
 };
-type ManualPlanDraft = { overview: string; supplements: string; days: Array<DayReference["content"]> };
+type ManualNumber = number | "";
+type ManualNutritionTargets = {
+  carbohydrateGrams: { minimum: ManualNumber; maximum: ManualNumber };
+  fatGrams: { minimum: ManualNumber; maximum: ManualNumber };
+  fiberGrams: { minimum: ManualNumber; maximum: ManualNumber };
+  hydrationLiters: { minimum: ManualNumber; maximum: ManualNumber };
+  macroRatioPercent: { protein: ManualNumber; carbohydrate: ManualNumber; fat: ManualNumber };
+};
+type ManualDayDraft = Omit<DayReference["content"], "nutritionTargets"> & { nutritionTargets?: ManualNutritionTargets };
+type ManualPlanDraft = { overview: string; supplements: string; days: ManualDayDraft[] };
 type SleepAnalysis = {
   id: string;
   localDate: string;
@@ -65,12 +85,28 @@ type SleepAnalysis = {
     limitations: string[];
   };
 };
-type ApiError = Error & { status?: number; body?: { error?: string } };
+type HealthConversationMessage = {
+  id: string;
+  conversationId: string;
+  role: "user" | "assistant";
+  source: "app" | "feishu" | "ai";
+  content: string;
+  needsClarification: boolean | null;
+  externalMessageId: string | null;
+  createdAt: string;
+};
+type HealthConversationState = {
+  conversation: { id: string; weekStart: string; createdAt: string; updatedAt: string };
+  messages: HealthConversationMessage[];
+};
+type HealthAiStage = "idle" | "saving_message" | "replying" | "reply_failed" | "ready" | "preparing_candidate" | "generating_candidate" | "waiting_candidate" | "candidate_ready" | "candidate_failed";
+type ApiError = Error & { status?: number; body?: { error?: string; message?: string } };
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:3000";
 const weekday = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
-const activityLabel: Record<DayReference["content"]["movement"]["category"], string> = { strength: "力量训练", volleyball: "排球", running: "跑步", cycling: "骑行", recovery: "轻量恢复", rest: "休息" };
+const activityLabel: Record<DayReference["content"]["movement"]["category"], string> = { strength: "力量训练", volleyball: "排球", running: "跑步", walking: "步行", cycling: "骑行", recovery: "轻量恢复", rest: "休息" };
 const intensityLabel: Record<DayReference["content"]["movement"]["intensity"], string> = { rest: "休息", low: "低强度", moderate: "中等强度", high: "高强度" };
+const healthDraftStoragePrefix = "personal-ai.health-collaboration-draft.v1";
 
 function shanghaiDate() {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
@@ -92,8 +128,69 @@ function listText(value: string) {
   return value.split(/[\n,，]/).map((item) => item.trim()).filter(Boolean);
 }
 
+function draftLines(value: string) {
+  return value.split("\n");
+}
+
 function sleepMetric(label: string, value: number | string | null, suffix = "") {
   return value === null ? null : <div className="sleep-metric"><span>{label}</span><strong>{value}{suffix}</strong></div>;
+}
+
+function rangeText(range: { minimum: number; maximum: number } | undefined, suffix = "g") {
+  return range ? `${range.minimum}–${range.maximum}${suffix}` : "当前参考未提供";
+}
+
+const REFERENCE_SCALE_LIMITS:Record<string,{minimum:number;maximum:number}> = {
+  protein:{minimum:0,maximum:200}, carb:{minimum:0,maximum:500}, fat:{minimum:0,maximum:150}, fiber:{minimum:0,maximum:60}, water:{minimum:0,maximum:5}
+};
+function referenceScale(label: string, range: { minimum: number; maximum: number } | undefined, tone: string, suffix = "g") {
+  const limits=REFERENCE_SCALE_LIMITS[tone]??{minimum:0,maximum:100};
+  const span=Math.max(1,limits.maximum-limits.minimum);
+  const start=range?Math.max(0,Math.min(100,(range.minimum-limits.minimum)/span*100)):0;
+  const end=range?Math.max(start,Math.min(100,(range.maximum-limits.minimum)/span*100)):0;
+  const midpoint=(start+end)/2;
+  return <div className="health-target-row" data-tone={tone} data-has-range={range?"true":"false"} style={{"--range-start":`${start}%`,"--range-width":`${end-start}%`,"--range-mid":`${midpoint}%`} as CSSProperties}><span>{label}</span><strong>{rangeText(range, suffix)}</strong><i aria-hidden="true"><b /></i><small>{range?"AI 参考范围":"未提供"}</small></div>;
+}
+
+function listOrMissing(items: string[] | undefined, className?: string) {
+  return items?.length ? <ul className={className}>{items.map((item)=><li key={item}>{item}</li>)}</ul> : <p className="health-field-missing">当前参考未提供；重新请求 DeepSeek 候选后可补齐。</p>;
+}
+
+function conversationTime(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit" }).format(date);
+}
+
+function healthAiStatusCopy(stage: HealthAiStage) {
+  switch (stage) {
+    case "saving_message": return "正在保存你的健康说明…";
+    case "replying": return "内容已保存，DeepSeek 正在回应…";
+    case "reply_failed": return "内容已经保存，但 DeepSeek 尚未回应；可直接重试，不要重复输入。";
+    case "ready": return "DeepSeek 已回应。信息足够时，可以根据本页交流生成候选。";
+    case "preparing_candidate": return "正在整理本页交流、健康资料与本周日程…";
+    case "generating_candidate": return "DeepSeek 正在生成完整的七日健康候选，返回前会经过结构校验…";
+    case "waiting_candidate": return "完整七日候选仍在生成，请不要重复点击；本次请求不会因超时自动重复扣费重试。";
+    case "candidate_ready": return "候选已经生成并通过结构校验，已放入下方的待确认区。";
+    case "candidate_failed": return "本次候选没有写入；现有生效参考保持不变。";
+    default: return "交流只保存在当前健康周，不会进入复盘或普通对话。";
+  }
+}
+
+function healthCollaborationSummaryCopy(input: {
+  stage: HealthAiStage;
+  hasDraft: boolean;
+  replyPending: boolean;
+  needsClarification: boolean;
+  userMessageCount: number;
+  hasReadError: boolean;
+}) {
+  if (input.hasReadError) return "交流暂时无法读取，现有参考不受影响";
+  if (input.hasDraft) return "有一份尚未发送的健康说明";
+  if (input.replyPending) return "说明已保存，等待 DeepSeek 回应";
+  if (input.needsClarification) return "DeepSeek 等待你补充这一周的情况";
+  if (["saving_message", "replying", "preparing_candidate", "generating_candidate", "waiting_candidate", "candidate_ready", "candidate_failed", "reply_failed"].includes(input.stage)) return healthAiStatusCopy(input.stage);
+  if (input.userMessageCount > 0) return "本周交流已保存，需要时可展开查看或补充";
+  return "尚未交流，需要时展开说明本周情况";
 }
 
 function revisionChanges(previous: DayReference, next: DayReference): string[] {
@@ -110,10 +207,16 @@ function revisionChanges(previous: DayReference, next: DayReference): string[] {
     changes.push(`蛋白质：${previous.content.proteinRangeGrams.minimum}–${previous.content.proteinRangeGrams.maximum} g -> ${next.content.proteinRangeGrams.minimum}–${next.content.proteinRangeGrams.maximum} g`);
   }
   if (previous.content.plateGuidance.join("\n") !== next.content.plateGuidance.join("\n")) changes.push("餐盘提示已调整");
+  if (JSON.stringify(previous.content.nutritionTargets ?? null) !== JSON.stringify(next.content.nutritionTargets ?? null)) changes.push("营养目标范围已调整");
+  if (JSON.stringify(previous.content.mealExamples ?? null) !== JSON.stringify(next.content.mealExamples ?? null)) changes.push("三餐示例已调整");
+  if (JSON.stringify(previous.content.proteinRotationSources ?? null) !== JSON.stringify(next.content.proteinRotationSources ?? null)) changes.push("蛋白轮换已调整");
+  if (JSON.stringify(previous.content.foodReference ?? null) !== JSON.stringify(next.content.foodReference ?? null)) changes.push("替代食材参考已调整");
   if (previous.content.seasonalVegetables.join("\n") !== next.content.seasonalVegetables.join("\n")) changes.push("时令蔬菜提示已调整");
   if ((previous.content.seasonalGuidance ?? null) !== (next.content.seasonalGuidance ?? null)) changes.push("时令生活提示已调整");
   if (JSON.stringify(previous.content.seasonalPoem ?? null) !== JSON.stringify(next.content.seasonalPoem ?? null)) changes.push("时令诗词已调整");
   if (beforeMovement.safetyReminder !== nextMovement.safetyReminder) changes.push("安全提醒已调整");
+  if (JSON.stringify(beforeMovement.focus ?? null) !== JSON.stringify(nextMovement.focus ?? null)) changes.push("训练重点已调整");
+  if (JSON.stringify(beforeMovement.safetyNotes ?? null) !== JSON.stringify(nextMovement.safetyNotes ?? null)) changes.push("分条注意事项已调整");
   if (beforeMovement.highIntensity !== nextMovement.highIntensity) changes.push(nextMovement.highIntensity ? "调整为高强度日" : "不再标记为高强度日");
   return changes;
 }
@@ -134,12 +237,60 @@ function manualDraftFromPlan(plan: HealthPlan): ManualPlanDraft {
     days: plan.days.map((day) => ({
       ...day.content,
       proteinRangeGrams: { ...day.content.proteinRangeGrams },
+      nutritionTargets: day.content.nutritionTargets ? {
+        carbohydrateGrams: { ...day.content.nutritionTargets.carbohydrateGrams },
+        fatGrams: { ...day.content.nutritionTargets.fatGrams },
+        fiberGrams: { ...day.content.nutritionTargets.fiberGrams },
+        hydrationLiters: { ...day.content.nutritionTargets.hydrationLiters },
+        macroRatioPercent: { ...day.content.nutritionTargets.macroRatioPercent }
+      } : undefined,
+      hydrationGuidance: day.content.hydrationGuidance ? [...day.content.hydrationGuidance] : undefined,
+      mealExamples: day.content.mealExamples ? {
+        breakfast: [...day.content.mealExamples.breakfast], lunch: [...day.content.mealExamples.lunch], dinner: [...day.content.mealExamples.dinner], snack: [...day.content.mealExamples.snack]
+      } : undefined,
+      proteinRotationSources: day.content.proteinRotationSources ? [...day.content.proteinRotationSources] : undefined,
+      foodReference: day.content.foodReference ? {
+        proteinOptions: [...day.content.foodReference.proteinOptions], fiberOptions: [...day.content.foodReference.fiberOptions], carbOptions: [...day.content.foodReference.carbOptions]
+      } : undefined,
       plateGuidance: [...day.content.plateGuidance],
       seasonalVegetables: [...day.content.seasonalVegetables],
       seasonalGuidance: day.content.seasonalGuidance ?? null,
       seasonalPoem: day.content.seasonalPoem ? { ...day.content.seasonalPoem } : null,
-      movement: { ...day.content.movement, durationMinutes: { ...day.content.movement.durationMinutes } }
+      movement: { ...day.content.movement, durationMinutes: { ...day.content.movement.durationMinutes }, focus: day.content.movement.focus ? [...day.content.movement.focus] : undefined, safetyNotes: day.content.movement.safetyNotes ? [...day.content.movement.safetyNotes] : undefined }
     }))
+  };
+}
+
+function emptyManualNutritionTargets(): ManualNutritionTargets {
+  return {
+    carbohydrateGrams: { minimum: "", maximum: "" },
+    fatGrams: { minimum: "", maximum: "" },
+    fiberGrams: { minimum: "", maximum: "" },
+    hydrationLiters: { minimum: "", maximum: "" },
+    macroRatioPercent: { protein: "", carbohydrate: "", fat: "" }
+  };
+}
+
+function manualNumber(value: string): ManualNumber {
+  return value === "" ? "" : Number(value);
+}
+
+function completeManualNutritionTargets(targets: ManualNutritionTargets | undefined) {
+  if (!targets) return undefined;
+  const values = [
+    targets.carbohydrateGrams.minimum, targets.carbohydrateGrams.maximum,
+    targets.fatGrams.minimum, targets.fatGrams.maximum,
+    targets.fiberGrams.minimum, targets.fiberGrams.maximum,
+    targets.hydrationLiters.minimum, targets.hydrationLiters.maximum,
+    targets.macroRatioPercent.protein, targets.macroRatioPercent.carbohydrate, targets.macroRatioPercent.fat
+  ];
+  if (values.some((value) => value === "")) throw new Error("manual_nutrition_targets_incomplete");
+  return {
+    carbohydrateGrams: { minimum: Number(targets.carbohydrateGrams.minimum), maximum: Number(targets.carbohydrateGrams.maximum) },
+    fatGrams: { minimum: Number(targets.fatGrams.minimum), maximum: Number(targets.fatGrams.maximum) },
+    fiberGrams: { minimum: Number(targets.fiberGrams.minimum), maximum: Number(targets.fiberGrams.maximum) },
+    hydrationLiters: { minimum: Number(targets.hydrationLiters.minimum), maximum: Number(targets.hydrationLiters.maximum) },
+    macroRatioPercent: { protein: Number(targets.macroRatioPercent.protein), carbohydrate: Number(targets.macroRatioPercent.carbohydrate), fat: Number(targets.macroRatioPercent.fat) }
   };
 }
 
@@ -164,7 +315,11 @@ export function HealthWorkspace({ onAskHealth, onCreateTask }:{
   const [active, setActive] = useState<HealthPlan | null>(null);
   const [candidate, setCandidate] = useState<HealthPlan | null>(null);
   const [selectedDay, setSelectedDay] = useState(0);
-  const [specialContext, setSpecialContext] = useState("");
+  const [collaboration, setCollaboration] = useState<HealthConversationState | null>(null);
+  const [collaborationDraft, setCollaborationDraft] = useState("");
+  const [collaborationError, setCollaborationError] = useState<string | null>(null);
+  const [collaborationExpanded, setCollaborationExpanded] = useState(false);
+  const [healthAiStage, setHealthAiStage] = useState<HealthAiStage>("idle");
   const [editingProfile, setEditingProfile] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -174,18 +329,52 @@ export function HealthWorkspace({ onAskHealth, onCreateTask }:{
   const [sleepDropActive, setSleepDropActive] = useState(false);
   const [manualDraft, setManualDraft] = useState<ManualPlanDraft | null>(null);
   const [sleepImageAnalysisAvailable, setSleepImageAnalysisAvailable] = useState<boolean | null>(null);
+  const [feishuHealthSyncAvailable, setFeishuHealthSyncAvailable] = useState<boolean | null>(null);
   const sleepFileInputRef = useRef<HTMLInputElement | null>(null);
+  const candidateSectionRef = useRef<HTMLElement | null>(null);
+  const generationAttemptRef = useRef(0);
   const visiblePlan = candidate ?? active;
   const selectedReference = visiblePlan?.days[selectedDay] ?? null;
   const sleepDate = selectedReference?.localDate ?? shanghaiDate();
   const candidateIsUneditedSleepRevision = candidate?.source === "ai" && candidate.sourceSleepAnalysisId !== null;
+  const lastCollaborationMessage = collaboration?.messages.at(-1) ?? null;
+  const replyPending = lastCollaborationMessage?.role === "user";
+  const collaborationUserMessageCount = collaboration?.messages.filter((message) => message.role === "user").length ?? 0;
+  const collaborationSummary = healthCollaborationSummaryCopy({
+    stage: healthAiStage,
+    hasDraft: Boolean(collaborationDraft.trim()),
+    replyPending,
+    needsClarification: lastCollaborationMessage?.role === "assistant" && lastCollaborationMessage.needsClarification === true,
+    userMessageCount: collaborationUserMessageCount,
+    hasReadError: Boolean(collaborationError)
+  });
 
   useEffect(() => { void reload(); }, [weekStart]);
+  useEffect(() => { setCollaborationExpanded(false); }, [weekStart]);
+  useEffect(() => {
+    try {
+      setCollaborationDraft(window.localStorage.getItem(`${healthDraftStoragePrefix}.${weekStart}`) ?? "");
+    } catch {
+      setCollaborationDraft("");
+    }
+  }, [weekStart]);
+  useEffect(() => {
+    const timeout = window.setTimeout(() => {
+      try {
+        const key = `${healthDraftStoragePrefix}.${weekStart}`;
+        if (collaborationDraft) window.localStorage.setItem(key, collaborationDraft);
+        else window.localStorage.removeItem(key);
+      } catch {
+        // Draft persistence is a convenience; the saved conversation remains authoritative.
+      }
+    }, 180);
+    return () => window.clearTimeout(timeout);
+  }, [collaborationDraft, weekStart]);
   useEffect(() => {
     let cancelled = false;
-    void request<{ sleepImageAnalysis: boolean }>("/api/v1/health/capabilities")
-      .then((result) => { if (!cancelled) setSleepImageAnalysisAvailable(result.sleepImageAnalysis); })
-      .catch(() => { if (!cancelled) setSleepImageAnalysisAvailable(false); });
+    void request<{ sleepImageAnalysis: boolean; feishuClarificationSync: boolean }>("/api/v1/health/capabilities")
+      .then((result) => { if (!cancelled) { setSleepImageAnalysisAvailable(result.sleepImageAnalysis); setFeishuHealthSyncAvailable(result.feishuClarificationSync); } })
+      .catch(() => { if (!cancelled) { setSleepImageAnalysisAvailable(false); setFeishuHealthSyncAvailable(false); } });
     return () => { cancelled = true; };
   }, []);
 
@@ -199,14 +388,21 @@ export function HealthWorkspace({ onAskHealth, onCreateTask }:{
 
   async function reload() {
     setLoading(true);
+    setCollaborationError(null);
     try {
-      const [profileResult, weekResult] = await Promise.all([
+      const collaborationRequest = request<HealthConversationState>(`/api/v1/health/weeks/${weekStart}/collaboration`).catch(() => null);
+      const [profileResult, weekResult, collaborationResult] = await Promise.all([
         request<{ profile: StoredProfile | null }>("/api/v1/health/profile"),
-        request<{ active: HealthPlan | null; candidate: HealthPlan | null }>(`/api/v1/health/weeks/${weekStart}`)
+        request<{ active: HealthPlan | null; candidate: HealthPlan | null }>(`/api/v1/health/weeks/${weekStart}`),
+        collaborationRequest
       ]);
       setProfile(profileResult.profile);
       setActive(weekResult.active);
       setCandidate(weekResult.candidate);
+      setCollaboration(collaborationResult);
+      if (!collaborationResult) setCollaborationError("本周健康交流暂时无法读取；现有健康参考仍可查看，数据库迁移完成后可在这里继续交流。");
+      else if (collaborationResult.messages.at(-1)?.role === "user") setHealthAiStage("reply_failed");
+      else setHealthAiStage("idle");
       setSelectedDay(0);
       setError(null);
     } catch {
@@ -216,17 +412,99 @@ export function HealthWorkspace({ onAskHealth, onCreateTask }:{
     }
   }
 
-  async function createCandidate() {
-    setBusy(true); setError(null);
+  async function refreshCollaboration() {
     try {
-      const result = await request<{ plan: HealthPlan }>("/api/v1/health/weeks/ai-candidates", "POST", {
-        weekStart, ...(specialContext.trim() ? { specialContext: specialContext.trim() } : {})
-      });
-      setCandidate(result.plan); setSelectedDay(0);
+      const result = await request<HealthConversationState>(`/api/v1/health/weeks/${weekStart}/collaboration`);
+      setCollaboration(result);
+      return result;
+    } catch {
+      setCollaborationError("本周健康交流暂时无法读取；已经确认的健康参考不会受影响。");
+      return null;
+    }
+  }
+
+  async function sendHealthMessage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const content = collaborationDraft.trim();
+    if (!collaboration || !content || busy || replyPending) return;
+    setBusy(true); setError(null); setCollaborationError(null); setHealthAiStage("saving_message");
+    let saved: HealthConversationState;
+    try {
+      saved = await request<HealthConversationState>(`/api/v1/health/collaborations/${collaboration.conversation.id}/messages`, "POST", { content });
+      setCollaboration(saved);
+      setCollaborationDraft("");
     } catch (requestError) {
       const code = requestError instanceof Error ? (requestError as ApiError).body?.error : undefined;
-      setError(code === "health_profile_required" ? "请先保存健康资料，再生成本周参考。" : "DeepSeek 暂时无法生成候选，现有参考保持不变；系统没有写入固定替代内容。");
-    } finally { setBusy(false); }
+      if (code === "health_collaboration_reply_pending") {
+        await refreshCollaboration();
+        setHealthAiStage("reply_failed");
+        setCollaborationError("上一条说明已经保存，当前只需重试 DeepSeek 回应，不需要再次发送。");
+      } else {
+        setHealthAiStage("idle");
+        setCollaborationError("健康说明没有保存成功，请确认本机 API 正在运行后再试；输入内容仍保留在这里。");
+      }
+      setBusy(false);
+      return;
+    }
+
+    setHealthAiStage("replying");
+    try {
+      const replied = await request<HealthConversationState>(`/api/v1/health/collaborations/${saved.conversation.id}/reply-last`, "POST");
+      setCollaboration(replied);
+      setHealthAiStage("ready");
+    } catch (requestError) {
+      const serverMessage = requestError instanceof Error ? (requestError as ApiError).body?.message : undefined;
+      setHealthAiStage("reply_failed");
+      setCollaborationError(serverMessage ?? "你的健康说明已经保存，但 DeepSeek 暂时没有返回；直接点击“重试回应”即可。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function retryHealthReply() {
+    if (!collaboration || !replyPending || busy) return;
+    setBusy(true); setError(null); setCollaborationError(null); setHealthAiStage("replying");
+    try {
+      const replied = await request<HealthConversationState>(`/api/v1/health/collaborations/${collaboration.conversation.id}/reply-last`, "POST");
+      setCollaboration(replied);
+      setHealthAiStage("ready");
+    } catch (requestError) {
+      const serverMessage = requestError instanceof Error ? (requestError as ApiError).body?.message : undefined;
+      setHealthAiStage("reply_failed");
+      setCollaborationError(serverMessage ?? "DeepSeek 仍未返回回应；你的原文已经保存，不需要重复输入。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createCandidate() {
+    const attempt = generationAttemptRef.current + 1;
+    generationAttemptRef.current = attempt;
+    setBusy(true); setError(null); setCollaborationError(null); setHealthAiStage("preparing_candidate");
+    const generatingTimer = window.setTimeout(() => {
+      if (generationAttemptRef.current === attempt) setHealthAiStage("generating_candidate");
+    }, 700);
+    const waitingTimer = window.setTimeout(() => {
+      if (generationAttemptRef.current === attempt) setHealthAiStage("waiting_candidate");
+    }, 18_000);
+    try {
+      const result = await request<{ plan: HealthPlan }>("/api/v1/health/weeks/ai-candidates", "POST", {
+        weekStart
+      });
+      setCandidate(result.plan); setSelectedDay(0); setHealthAiStage("candidate_ready"); setCollaborationExpanded(false);
+      window.requestAnimationFrame(() => candidateSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    } catch (requestError) {
+      const code = requestError instanceof Error ? (requestError as ApiError).body?.error : undefined;
+      const serverMessage = requestError instanceof Error ? (requestError as ApiError).body?.message : undefined;
+      setHealthAiStage("candidate_failed");
+      setError(code === "health_profile_required"
+        ? "请先保存健康资料，再生成本周参考。"
+        : serverMessage ?? "DeepSeek 暂时无法生成候选，现有参考保持不变；系统没有写入固定替代内容。");
+    } finally {
+      window.clearTimeout(generatingTimer);
+      window.clearTimeout(waitingTimer);
+      setBusy(false);
+    }
   }
 
   async function confirmCandidate() {
@@ -239,7 +517,7 @@ export function HealthWorkspace({ onAskHealth, onCreateTask }:{
       const code = requestError instanceof Error ? (requestError as ApiError).body?.error : undefined;
       if (code === "health_plan_base_changed" || code === "health_profile_version_conflict") {
         await reload();
-        setError(code === "health_plan_base_changed" ? "生效版本已经变化，这份旧候选没有覆盖新内容。请重新生成修订候选。" : "健康资料已经更新，这份旧候选没有生效。请基于最新资料重新生成。 ");
+        setError(code === "health_plan_base_changed" ? "生效版本已经变化，这份旧候选没有覆盖新内容。请重新生成修订候选。" : "健康资料已经更新，这份旧候选没有生效。请基于最新资料重新生成。");
       } else setError("确认失败，候选仍保留。请刷新后重试。");
     }
     finally { setBusy(false); }
@@ -408,11 +686,21 @@ export function HealthWorkspace({ onAskHealth, onCreateTask }:{
     setError(null);
   }
 
-  function updateManualDay(patch: Partial<DayReference["content"]>) {
+  function updateManualDay(patch: Partial<ManualDayDraft>) {
     setManualDraft((current) => {
       if (!current) return current;
       const days = [...current.days];
       days[selectedDay] = { ...days[selectedDay]!, ...patch };
+      return { ...current, days };
+    });
+  }
+
+  function updateManualNutritionTargets(patch: (current: ManualNutritionTargets) => ManualNutritionTargets) {
+    setManualDraft((current) => {
+      if (!current) return current;
+      const days = [...current.days];
+      const day = days[selectedDay]!;
+      days[selectedDay] = { ...day, nutritionTargets: patch(day.nutritionTargets ?? emptyManualNutritionTargets()) };
       return { ...current, days };
     });
   }
@@ -443,6 +731,21 @@ export function HealthWorkspace({ onAskHealth, onCreateTask }:{
         supplements: listText(manualDraft.supplements),
         days: manualDraft.days.map((day) => ({
           ...day,
+          nutritionTargets: completeManualNutritionTargets(day.nutritionTargets),
+          mealExamples: day.mealExamples ? {
+            breakfast: listText(day.mealExamples.breakfast.join("\n")),
+            lunch: listText(day.mealExamples.lunch.join("\n")),
+            dinner: listText(day.mealExamples.dinner.join("\n")),
+            snack: listText(day.mealExamples.snack.join("\n"))
+          } : undefined,
+          proteinRotationSources: day.proteinRotationSources?.length ? listText(day.proteinRotationSources.join("\n")) : undefined,
+          foodReference: day.foodReference ? {
+            proteinOptions: listText(day.foodReference.proteinOptions.join("\n")),
+            fiberOptions: listText(day.foodReference.fiberOptions.join("\n")),
+            carbOptions: listText(day.foodReference.carbOptions.join("\n"))
+          } : undefined,
+          plateGuidance: listText(day.plateGuidance.join("\n")),
+          seasonalVegetables: listText(day.seasonalVegetables.join("\n")),
           seasonalGuidance: day.seasonalGuidance?.trim() || null,
           seasonalPoem: day.seasonalPoem?.excerpt.trim()
             ? {
@@ -451,7 +754,12 @@ export function HealthWorkspace({ onAskHealth, onCreateTask }:{
                 excerpt: day.seasonalPoem.excerpt.trim(),
                 relevance: day.seasonalPoem.relevance.trim()
               }
-            : null
+            : null,
+          movement: {
+            ...day.movement,
+            focus: day.movement.focus?.length ? listText(day.movement.focus.join("\n")) : undefined,
+            safetyNotes: day.movement.safetyNotes?.length ? listText(day.movement.safetyNotes.join("\n")) : undefined
+          }
         }))
       };
       const result = candidate
@@ -459,8 +767,10 @@ export function HealthWorkspace({ onAskHealth, onCreateTask }:{
         : await request<{ plan: HealthPlan }>("/api/v1/health/weeks/manual-candidates", "POST", { weekStart, content });
       setCandidate(result.plan);
       setManualDraft(null);
-    } catch {
-      setError("手动候选保存失败，当前生效参考没有被覆盖。请检查必填内容后重试。");
+    } catch (saveError) {
+      setError(saveError instanceof Error && saveError.message === "manual_nutrition_targets_incomplete"
+        ? "营养目标已启用，请把碳水、脂肪、纤维、饮水和三大营养素比例填写完整；也可以关闭这一组目标。"
+        : "手动候选保存失败，当前生效参考没有被覆盖。请检查范围、必填列表和三大营养素比例后重试。");
     } finally { setBusy(false); }
   }
 
@@ -486,8 +796,8 @@ export function HealthWorkspace({ onAskHealth, onCreateTask }:{
 
   return <section className="health-workspace">
     <header className="health-heading">
-      <div><p className="section-kicker">健康参考</p><h1>把身体照顾在计划之外。</h1><p>只给出本周可查看的饮食与运动范围，不安排任务、不要求打卡。</p></div>
-      <div className="health-week-switcher"><button type="button" aria-label="上一周健康参考" onClick={() => setWeekStart(addDays(weekStart, -7))}><ChevronLeft /></button><div><strong>{weekStart} 起</strong><small>周日到周六</small></div><button type="button" aria-label="下一周健康参考" onClick={() => setWeekStart(addDays(weekStart, 7))}><ChevronRight /></button></div>
+      <div><p className="section-kicker">健康参考</p><h1>周笺定方向，日处方给参考。</h1><p>把本周目标落到今天可以怎样吃、怎样动；不安排任务、不要求打卡，也不冒充医疗建议。</p></div>
+      <div className="health-week-switcher"><button type="button" disabled={busy} aria-label="上一周健康参考" onClick={() => setWeekStart(addDays(weekStart, -7))}><ChevronLeft /></button><div><strong>{weekStart} 起</strong><small>周日到周六</small></div><button type="button" disabled={busy} aria-label="下一周健康参考" onClick={() => setWeekStart(addDays(weekStart, 7))}><ChevronRight /></button></div>
     </header>
     {error && <div className="error-banner" role="alert"><X />{error}<button type="button" aria-label="关闭错误提示" onClick={() => setError(null)}><X /></button></div>}
     {loading ? <div className="health-loading"><LoaderCircle className="spin" /><span>正在读取本周健康参考</span></div> : <>
@@ -528,10 +838,35 @@ export function HealthWorkspace({ onAskHealth, onCreateTask }:{
         <label className="wide"><span>补充说明（可选）</span><textarea name="notes" rows={2} defaultValue={profile.profile.notes ?? ""} maxLength={2000} /></label>
         <footer className="wide"><button className="primary-button" disabled={busy} type="submit">{busy ? <LoaderCircle className="spin" /> : <Check />}保存我主动填写的资料</button></footer>
       </form>}
+      <section className={`health-collaboration ${collaborationExpanded ? "is-expanded" : "is-collapsed"}`} aria-label="本周健康交流">
+        <button className="health-collaboration-toggle" type="button" aria-expanded={collaborationExpanded} aria-controls="health-collaboration-panel" onClick={() => setCollaborationExpanded((expanded) => !expanded)}>
+          <span className="health-collaboration-title"><span className="section-kicker">本周笔谈</span><strong>{collaborationSummary}</strong></span>
+          <span className="health-collaboration-meta"><span>{collaborationUserMessageCount} 次说明</span><span>{collaborationExpanded ? "收起交流" : "展开交流"}</span><ChevronDown aria-hidden="true" /></span>
+        </button>
+        {collaborationExpanded && <div className="health-collaboration-panel" id="health-collaboration-panel">
+          <p className="health-collaboration-note">这里是 {weekStart} 起这一周的独立健康交流，不会混入复盘、普通对话或网络日记。{feishuHealthSyncAvailable === true ? "需要你补充时，问题也会同步到飞书。" : feishuHealthSyncAvailable === false ? "当前未连接飞书健康追问，本页仍可完成全部交流。" : ""}</p>
+          <div className="health-conversation-ledger" aria-live="polite">
+            {collaboration?.messages.length ? collaboration.messages.map((message) => <article key={message.id} data-role={message.role}>
+              <div><strong>{message.role === "user" ? "你" : "DeepSeek"}</strong><span>{message.source === "feishu" ? "来自飞书 · " : ""}{conversationTime(message.createdAt)}</span>{message.role === "assistant" && message.needsClarification && <i>待补充</i>}</div>
+              <p>{message.content}</p>
+            </article>) : <div className="health-conversation-empty"><Quote /><div><strong>尚未起笔</strong><p>可以直接写下作息、训练、饮食、饮水、正在服用的药物或补充剂，以及这一周的特殊安排。DeepSeek 会先澄清，不会直接改计划。</p></div></div>}
+          </div>
+          <form className="health-collaboration-composer" onSubmit={sendHealthMessage}>
+            <label htmlFor="health-collaboration-input">告诉 DeepSeek 这一周真实需要考虑的情况</label>
+            <textarea id="health-collaboration-input" aria-label="本周健康想法" rows={5} maxLength={4000} value={collaborationDraft} onChange={(event) => setCollaborationDraft(event.target.value)} placeholder="例如：开学前希望早睡早起；每周三次力量、三次有氧；最近在喝中药，需要保守考虑饮水与补充剂安排……" />
+            <footer>
+              <small>{profile ? "输入草稿会保留；发送成功后原文会保存到本周健康交流。" : "请先在上方保存健康资料，DeepSeek 才能结合资料回应。"}</small>
+              {replyPending ? <button className="primary-button" type="button" disabled={busy} onClick={() => void retryHealthReply()}>{healthAiStage === "replying" ? <LoaderCircle className="spin" /> : <RefreshCcw />}重试回应</button> : <button className="primary-button" type="submit" disabled={busy || !profile || !collaboration || !collaborationDraft.trim()}>{healthAiStage === "saving_message" || healthAiStage === "replying" ? <LoaderCircle className="spin" /> : <Send />}{healthAiStage === "saving_message" ? "正在保存" : healthAiStage === "replying" ? "等待回应" : "发送给 DeepSeek"}</button>}
+            </footer>
+          </form>
+          <div className={`health-ai-status ${healthAiStage}`} role="status"><span aria-hidden="true" />{healthAiStatusCopy(healthAiStage)}</div>
+          {collaborationError && <div className="health-collaboration-error" role="alert">{collaborationError}</div>}
+        </div>}
+      </section>
       <section className="health-generation">
-        <div><p className="section-kicker">本周候选</p><h2>{candidate ? "候选尚未生效" : active ? "当前参考保持稳定" : "先生成一份本周参考"}</h2><small>最多补充一句本周的运动、外出、身体不适或饮食场景；跳过也能生成。</small></div>
-        <textarea aria-label="本周健康特殊情况" rows={3} maxLength={1000} value={specialContext} onChange={(event) => setSpecialContext(event.target.value)} placeholder="可选，例如：周三有排球，周末需要外出" />
-        <div className="health-generation-actions"><button className="quiet-button" type="button" disabled={busy || !profile || !visiblePlan} onClick={openManualEditor}><ClipboardPenLine />手动编辑候选</button><button className="primary-button" type="button" disabled={busy || !profile} onClick={() => void createCandidate()}><Sparkles />{active ? "请求 DeepSeek 修订" : "让 DeepSeek 生成候选"}</button></div>
+        <div><p className="section-kicker">本周候选</p><h2>{candidate ? "候选尚未生效" : active ? "当前参考保持稳定" : "生成一份本周参考"}</h2><small>DeepSeek 会读取本周健康交流、已保存资料和已有日程；只生成候选，确认前不会改变健康栏目。</small></div>
+        <div className="health-generation-context"><strong>{collaborationUserMessageCount} 条已保存说明</strong><span>{collaborationDraft.trim() ? "笔谈中还有未发送内容，请先发送" : replyPending ? "上一条说明等待 DeepSeek 回应" : "已准备好生成候选"}</span></div>
+        <div className="health-generation-actions"><button className="quiet-button" type="button" disabled={busy || !profile || !visiblePlan} onClick={openManualEditor}><ClipboardPenLine />手动编辑候选</button><button className="primary-button" type="button" disabled={busy || !profile || !collaboration || Boolean(collaborationDraft.trim()) || replyPending} onClick={() => void createCandidate()}>{healthAiStage === "preparing_candidate" || healthAiStage === "generating_candidate" || healthAiStage === "waiting_candidate" ? <LoaderCircle className="spin" /> : <Sparkles />}{healthAiStage === "preparing_candidate" ? "正在整理" : healthAiStage === "generating_candidate" || healthAiStage === "waiting_candidate" ? "正在生成候选" : "根据本页交流生成候选"}</button></div>
       </section>
       {manualDraft && <form className="health-manual-editor" onSubmit={saveManualCandidate}>
         <header><div><p className="section-kicker">手动周参考候选</p><h2>你决定每一项内容。</h2><small>保存后只会形成待确认候选，不会立即覆盖当前生效版本。</small></div><button className="quiet-button" type="button" disabled={busy} onClick={() => setManualDraft(null)}>取消编辑</button></header>
@@ -542,6 +877,39 @@ export function HealthWorkspace({ onAskHealth, onCreateTask }:{
           <label className="wide"><span>{weekday[selectedDay]}饮食方向</span><textarea value={manualDraft.days[selectedDay]!.nutritionDirection} onChange={(event) => updateManualDay({ nutritionDirection: event.target.value })} rows={3} maxLength={700} required /></label>
           <label><span>蛋白质下限（g）</span><input type="number" min="1" max="300" value={manualDraft.days[selectedDay]!.proteinRangeGrams.minimum} onChange={(event) => updateManualDay({ proteinRangeGrams: { ...manualDraft.days[selectedDay]!.proteinRangeGrams, minimum: Number(event.target.value) } })} required /></label>
           <label><span>蛋白质上限（g）</span><input type="number" min="1" max="300" value={manualDraft.days[selectedDay]!.proteinRangeGrams.maximum} onChange={(event) => updateManualDay({ proteinRangeGrams: { ...manualDraft.days[selectedDay]!.proteinRangeGrams, maximum: Number(event.target.value) } })} required /></label>
+          <fieldset className="health-manual-fieldset wide">
+            <legend>每日营养目标（可选）</legend>
+            <label className="health-checkbox health-manual-toggle"><input type="checkbox" checked={Boolean(manualDraft.days[selectedDay]!.nutritionTargets)} onChange={(event) => updateManualDay({ nutritionTargets: event.target.checked ? emptyManualNutritionTargets() : undefined })} /><span>为当天填写碳水、脂肪、纤维、饮水和比例参考</span></label>
+            {manualDraft.days[selectedDay]!.nutritionTargets && <div className="health-manual-grid">
+              <label><span>碳水下限（g）</span><input type="number" min="0" max="1000" value={manualDraft.days[selectedDay]!.nutritionTargets!.carbohydrateGrams.minimum} onChange={(event) => updateManualNutritionTargets((targets) => ({ ...targets, carbohydrateGrams: { ...targets.carbohydrateGrams, minimum: manualNumber(event.target.value) } }))} required /></label>
+              <label><span>碳水上限（g）</span><input type="number" min="0" max="1000" value={manualDraft.days[selectedDay]!.nutritionTargets!.carbohydrateGrams.maximum} onChange={(event) => updateManualNutritionTargets((targets) => ({ ...targets, carbohydrateGrams: { ...targets.carbohydrateGrams, maximum: manualNumber(event.target.value) } }))} required /></label>
+              <label><span>脂肪下限（g）</span><input type="number" min="0" max="1000" value={manualDraft.days[selectedDay]!.nutritionTargets!.fatGrams.minimum} onChange={(event) => updateManualNutritionTargets((targets) => ({ ...targets, fatGrams: { ...targets.fatGrams, minimum: manualNumber(event.target.value) } }))} required /></label>
+              <label><span>脂肪上限（g）</span><input type="number" min="0" max="1000" value={manualDraft.days[selectedDay]!.nutritionTargets!.fatGrams.maximum} onChange={(event) => updateManualNutritionTargets((targets) => ({ ...targets, fatGrams: { ...targets.fatGrams, maximum: manualNumber(event.target.value) } }))} required /></label>
+              <label><span>纤维下限（g）</span><input type="number" min="0" max="1000" value={manualDraft.days[selectedDay]!.nutritionTargets!.fiberGrams.minimum} onChange={(event) => updateManualNutritionTargets((targets) => ({ ...targets, fiberGrams: { ...targets.fiberGrams, minimum: manualNumber(event.target.value) } }))} required /></label>
+              <label><span>纤维上限（g）</span><input type="number" min="0" max="1000" value={manualDraft.days[selectedDay]!.nutritionTargets!.fiberGrams.maximum} onChange={(event) => updateManualNutritionTargets((targets) => ({ ...targets, fiberGrams: { ...targets.fiberGrams, maximum: manualNumber(event.target.value) } }))} required /></label>
+              <label><span>饮水下限（L）</span><input type="number" min="0" max="10" step="0.1" value={manualDraft.days[selectedDay]!.nutritionTargets!.hydrationLiters.minimum} onChange={(event) => updateManualNutritionTargets((targets) => ({ ...targets, hydrationLiters: { ...targets.hydrationLiters, minimum: manualNumber(event.target.value) } }))} required /></label>
+              <label><span>饮水上限（L）</span><input type="number" min="0" max="10" step="0.1" value={manualDraft.days[selectedDay]!.nutritionTargets!.hydrationLiters.maximum} onChange={(event) => updateManualNutritionTargets((targets) => ({ ...targets, hydrationLiters: { ...targets.hydrationLiters, maximum: manualNumber(event.target.value) } }))} required /></label>
+              <div className="health-manual-macros wide"><span>三大营养素比例（合计约 100%）</span><label><b>蛋白</b><input aria-label="蛋白质比例" type="number" min="0" max="100" value={manualDraft.days[selectedDay]!.nutritionTargets!.macroRatioPercent.protein} onChange={(event) => updateManualNutritionTargets((targets) => ({ ...targets, macroRatioPercent: { ...targets.macroRatioPercent, protein: manualNumber(event.target.value) } }))} required /></label><label><b>碳水</b><input aria-label="碳水比例" type="number" min="0" max="100" value={manualDraft.days[selectedDay]!.nutritionTargets!.macroRatioPercent.carbohydrate} onChange={(event) => updateManualNutritionTargets((targets) => ({ ...targets, macroRatioPercent: { ...targets.macroRatioPercent, carbohydrate: manualNumber(event.target.value) } }))} required /></label><label><b>脂肪</b><input aria-label="脂肪比例" type="number" min="0" max="100" value={manualDraft.days[selectedDay]!.nutritionTargets!.macroRatioPercent.fat} onChange={(event) => updateManualNutritionTargets((targets) => ({ ...targets, macroRatioPercent: { ...targets.macroRatioPercent, fat: manualNumber(event.target.value) } }))} required /></label></div>
+            </div>}
+          </fieldset>
+          <label className="wide"><span>饮水参考建议（每行一条，可选）</span><textarea value={manualDraft.days[selectedDay]!.hydrationGuidance?.join("\n") ?? ""} onChange={(event) => updateManualDay({ hydrationGuidance: event.target.value.trim() ? draftLines(event.target.value) : undefined })} rows={3} maxLength={1000} /></label>
+          <fieldset className="health-manual-fieldset wide">
+            <legend>今日吃法与替代参考（可选）</legend>
+            <label className="health-checkbox health-manual-toggle"><input type="checkbox" checked={Boolean(manualDraft.days[selectedDay]!.mealExamples)} onChange={(event) => updateManualDay({ mealExamples: event.target.checked ? { breakfast: [""], lunch: [""], dinner: [""], snack: [] } : undefined })} /><span>填写早餐、午餐、晚餐和可选加餐示例</span></label>
+            {manualDraft.days[selectedDay]!.mealExamples && <div className="health-manual-grid">
+              <label><span>早餐示例（每行一项）</span><textarea value={manualDraft.days[selectedDay]!.mealExamples!.breakfast.join("\n")} onChange={(event) => updateManualDay({ mealExamples: { ...manualDraft.days[selectedDay]!.mealExamples!, breakfast: draftLines(event.target.value) } })} rows={3} required /></label>
+              <label><span>午餐示例（每行一项）</span><textarea value={manualDraft.days[selectedDay]!.mealExamples!.lunch.join("\n")} onChange={(event) => updateManualDay({ mealExamples: { ...manualDraft.days[selectedDay]!.mealExamples!, lunch: draftLines(event.target.value) } })} rows={3} required /></label>
+              <label><span>晚餐示例（每行一项）</span><textarea value={manualDraft.days[selectedDay]!.mealExamples!.dinner.join("\n")} onChange={(event) => updateManualDay({ mealExamples: { ...manualDraft.days[selectedDay]!.mealExamples!, dinner: draftLines(event.target.value) } })} rows={3} required /></label>
+              <label><span>加餐示例（可留空）</span><textarea value={manualDraft.days[selectedDay]!.mealExamples!.snack.join("\n")} onChange={(event) => updateManualDay({ mealExamples: { ...manualDraft.days[selectedDay]!.mealExamples!, snack: draftLines(event.target.value) } })} rows={3} /></label>
+            </div>}
+            <label><span>当天蛋白轮换来源（逗号或换行分隔）</span><textarea value={manualDraft.days[selectedDay]!.proteinRotationSources?.join("，") ?? ""} onChange={(event) => updateManualDay({ proteinRotationSources: event.target.value.trim() ? draftLines(event.target.value.replace(/[，,]/g, "\n")) : undefined })} rows={2} /></label>
+            <label className="health-checkbox health-manual-toggle"><input type="checkbox" checked={Boolean(manualDraft.days[selectedDay]!.foodReference)} onChange={(event) => updateManualDay({ foodReference: event.target.checked ? { proteinOptions: [""], fiberOptions: [""], carbOptions: [""] } : undefined })} /><span>填写可替换的蛋白、纤维和碳水来源</span></label>
+            {manualDraft.days[selectedDay]!.foodReference && <div className="health-manual-grid health-manual-grid-three">
+              <label><span>蛋白来源</span><textarea value={manualDraft.days[selectedDay]!.foodReference!.proteinOptions.join("\n")} onChange={(event) => updateManualDay({ foodReference: { ...manualDraft.days[selectedDay]!.foodReference!, proteinOptions: draftLines(event.target.value) } })} rows={3} required /></label>
+              <label><span>纤维来源</span><textarea value={manualDraft.days[selectedDay]!.foodReference!.fiberOptions.join("\n")} onChange={(event) => updateManualDay({ foodReference: { ...manualDraft.days[selectedDay]!.foodReference!, fiberOptions: draftLines(event.target.value) } })} rows={3} required /></label>
+              <label><span>碳水来源</span><textarea value={manualDraft.days[selectedDay]!.foodReference!.carbOptions.join("\n")} onChange={(event) => updateManualDay({ foodReference: { ...manualDraft.days[selectedDay]!.foodReference!, carbOptions: draftLines(event.target.value) } })} rows={3} required /></label>
+            </div>}
+          </fieldset>
           <label className="wide"><span>餐盘提示（逗号或换行分隔）</span><textarea value={manualDraft.days[selectedDay]!.plateGuidance.join("\n")} onChange={(event) => updateManualDay({ plateGuidance: listText(event.target.value) })} rows={2} required /></label>
           <label className="wide"><span>时令蔬菜提示（逗号或换行分隔）</span><textarea value={manualDraft.days[selectedDay]!.seasonalVegetables.join("，")} onChange={(event) => updateManualDay({ seasonalVegetables: listText(event.target.value) })} rows={2} required /></label>
           <label className="wide"><span>时令生活提示（可选）</span><textarea value={manualDraft.days[selectedDay]!.seasonalGuidance ?? ""} onChange={(event) => updateManualDay({ seasonalGuidance: event.target.value.trim() ? event.target.value : null })} rows={2} maxLength={500} /></label>
@@ -549,18 +917,28 @@ export function HealthWorkspace({ onAskHealth, onCreateTask }:{
           <label><span>作者（可选）</span><input value={manualDraft.days[selectedDay]!.seasonalPoem?.author ?? ""} onChange={(event) => updateManualPoem({ author: event.target.value })} maxLength={120} required={Boolean(manualDraft.days[selectedDay]!.seasonalPoem)} /></label>
           <label className="wide"><span>诗句（可选；留空则不显示诗词）</span><textarea value={manualDraft.days[selectedDay]!.seasonalPoem?.excerpt ?? ""} onChange={(event) => event.target.value.trim() ? updateManualPoem({ excerpt: event.target.value }) : updateManualDay({ seasonalPoem: null })} rows={2} maxLength={180} /></label>
           {manualDraft.days[selectedDay]!.seasonalPoem && <label className="wide"><span>与当天的关联</span><textarea value={manualDraft.days[selectedDay]!.seasonalPoem?.relevance ?? ""} onChange={(event) => updateManualPoem({ relevance: event.target.value })} rows={2} maxLength={300} required /></label>}
-          <label><span>运动类别</span><select value={manualDraft.days[selectedDay]!.movement.category} onChange={(event) => updateManualMovement({ category: event.target.value as DayReference["content"]["movement"]["category"] })}><option value="strength">力量训练</option><option value="volleyball">排球</option><option value="running">跑步</option><option value="cycling">骑行</option><option value="recovery">轻量恢复</option><option value="rest">休息</option></select></label>
+          <label><span>运动类别</span><select value={manualDraft.days[selectedDay]!.movement.category} onChange={(event) => updateManualMovement({ category: event.target.value as DayReference["content"]["movement"]["category"] })}><option value="strength">力量训练</option><option value="volleyball">排球</option><option value="running">跑步</option><option value="walking">步行</option><option value="cycling">骑行</option><option value="recovery">轻量恢复</option><option value="rest">休息</option></select></label>
           <label><span>运动强度</span><select value={manualDraft.days[selectedDay]!.movement.intensity} onChange={(event) => updateManualMovement({ intensity: event.target.value as DayReference["content"]["movement"]["intensity"] })}><option value="rest">休息</option><option value="low">低强度</option><option value="moderate">中等强度</option><option value="high">高强度</option></select></label>
           <label><span>运动下限（分钟）</span><input type="number" min="0" max="240" value={manualDraft.days[selectedDay]!.movement.durationMinutes.minimum} onChange={(event) => updateManualMovement({ durationMinutes: { ...manualDraft.days[selectedDay]!.movement.durationMinutes, minimum: Number(event.target.value) } })} required /></label>
           <label><span>运动上限（分钟）</span><input type="number" min="0" max="300" value={manualDraft.days[selectedDay]!.movement.durationMinutes.maximum} onChange={(event) => updateManualMovement({ durationMinutes: { ...manualDraft.days[selectedDay]!.movement.durationMinutes, maximum: Number(event.target.value) } })} required /></label>
           <label className="health-checkbox wide"><input type="checkbox" checked={manualDraft.days[selectedDay]!.movement.highIntensity} onChange={(event) => updateManualMovement({ highIntensity: event.target.checked })} /><span>这是高强度日</span></label>
+          <label className="wide"><span>训练重点或动作结构（逗号或换行分隔，可选）</span><textarea value={manualDraft.days[selectedDay]!.movement.focus?.join("\n") ?? ""} onChange={(event) => updateManualMovement({ focus: event.target.value.trim() ? draftLines(event.target.value) : undefined })} rows={3} /></label>
           <label className="wide"><span>安全提醒</span><textarea value={manualDraft.days[selectedDay]!.movement.safetyReminder} onChange={(event) => updateManualMovement({ safetyReminder: event.target.value })} rows={2} maxLength={400} required /></label>
+          <label className="wide"><span>分条注意事项（逗号或换行分隔，可选）</span><textarea value={manualDraft.days[selectedDay]!.movement.safetyNotes?.join("\n") ?? ""} onChange={(event) => updateManualMovement({ safetyNotes: event.target.value.trim() ? draftLines(event.target.value) : undefined })} rows={3} /></label>
         </section>}
         <footer><button className="primary-button" type="submit" disabled={busy}>{busy ? <LoaderCircle className="spin" /> : <Check />}保存为待确认候选</button></footer>
       </form>}
-      {visiblePlan ? <section className="health-plan">
+      {visiblePlan ? <section className="health-plan" ref={candidateSectionRef}>
         <header className="health-plan-header"><div><p className="section-kicker">{candidate ? "待确认版本" : "本周生效版本"}</p><h2>{visiblePlan.solarTerm} · {visiblePlan.city ?? "未设置城市"}</h2><small>{candidate ? (visiblePlan.source === "ai" ? "DeepSeek 只生成候选；天气不可用时不会编造，确认后才会替换本周参考。" : visiblePlan.source === "manual" ? "由你手动编辑的候选，确认后才会替换本周参考。" : "这是历史候选，仍需你确认后才会生效。") : "本周参考不会因一天睡眠或运动变化自动改写。"}</small></div>{candidate && <div className="candidate-actions"><button className="quiet-button" type="button" disabled={busy} onClick={() => void discardCandidate()}>放弃候选</button><button className="primary-button" type="button" disabled={busy} onClick={() => void confirmCandidate()}>{busy ? <LoaderCircle className="spin" /> : <Check />}确认并使用</button></div>}</header>
-        <p className="health-overview">{visiblePlan.overview}</p>
+        <section className="health-week-summary" aria-label="本周摘要">
+          <div><p className="section-kicker">本周摘要</p><strong>{profile?.profile.goals.slice(0,3).join("、") || "按已保存资料生成的本周参考"}</strong><p>{visiblePlan.overview}</p></div>
+          <dl>
+            <div><dt>每周运动</dt><dd>{profile ? `${profile.profile.activity.sessionsPerWeek} 次` : "未提供"}</dd></div>
+            <div><dt>单次时长</dt><dd>{profile ? `${profile.profile.activity.usualDurationMinutes.minimum}–${profile.profile.activity.usualDurationMinutes.maximum}m` : "未提供"}</dd></div>
+            <div><dt>每日蛋白</dt><dd>{selectedReference ? `${selectedReference.content.proteinRangeGrams.minimum}–${selectedReference.content.proteinRangeGrams.maximum}g` : "未提供"}</dd></div>
+            <div><dt>每日饮水</dt><dd>{selectedReference?.content.nutritionTargets ? `${selectedReference.content.nutritionTargets.hydrationLiters.minimum}–${selectedReference.content.nutritionTargets.hydrationLiters.maximum}L` : "当前参考未提供"}</dd></div>
+          </dl>
+        </section>
         {candidate?.revisionReason && active && candidate.basedOnPlanId === active.id && <section className="health-revision-preview" aria-label={candidateIsUneditedSleepRevision ? "睡眠修订前后差异" : "候选前后差异"}>
           <header><Sparkles /><div><p className="section-kicker">{candidateIsUneditedSleepRevision ? "本次修订依据" : "候选说明"}</p><strong>候选尚未生效</strong></div></header>
           <p>{candidate.revisionReason}</p>
@@ -574,7 +952,39 @@ export function HealthWorkspace({ onAskHealth, onCreateTask }:{
           }) && <div><strong>本周</strong><span>候选没有改变当前可显示的每日参考；确认前原计划仍保持不变。</span></div>}</div>
         </section>}
         <div className="health-days" role="tablist" aria-label="本周健康参考日期">{visiblePlan.days.map((day) => <button key={day.id} role="tab" aria-selected={selectedDay === day.dayIndex} className={selectedDay === day.dayIndex ? "active" : ""} type="button" onClick={() => setSelectedDay(day.dayIndex)}><span>{weekday[day.dayIndex]}</span><strong>{day.localDate.slice(8)}</strong></button>)}</div>
-        {selectedReference && <>{(selectedReference.content.seasonalGuidance||selectedReference.content.seasonalPoem)&&<article className="health-seasonal-card"><Leaf/><div>{selectedReference.content.seasonalGuidance&&<><p className="section-kicker">结合时令与已取得的环境信息</p><strong>{selectedReference.content.seasonalGuidance}</strong></>}{selectedReference.content.seasonalPoem&&<blockquote><Quote/><p>“{selectedReference.content.seasonalPoem.excerpt}”</p><cite>{selectedReference.content.seasonalPoem.author}《{selectedReference.content.seasonalPoem.title}》</cite><small>{selectedReference.content.seasonalPoem.relevance}</small></blockquote>}</div></article>}<article className="health-day-detail"><section><header><Leaf /><div><p>饮食方向</p><strong>蛋白质约 {selectedReference.content.proteinRangeGrams.minimum}–{selectedReference.content.proteinRangeGrams.maximum} g / 天</strong></div></header><p>{selectedReference.content.nutritionDirection}</p><ul>{selectedReference.content.plateGuidance.map((item) => <li key={item}>{item}</li>)}</ul><div className="vegetable-tags">{selectedReference.content.seasonalVegetables.map((item) => <span key={item}>{item}</span>)}</div></section><section><header><HeartPulse /><div><p>运动范围</p><strong>{activityLabel[selectedReference.content.movement.category]} · {intensityLabel[selectedReference.content.movement.intensity]}</strong></div></header><p>{selectedReference.content.movement.durationMinutes.maximum === 0 ? "不安排训练；保持日常轻松活动即可。" : `${selectedReference.content.movement.durationMinutes.minimum}–${selectedReference.content.movement.durationMinutes.maximum} 分钟，按当天实际状态自主决定。`}</p><aside>{selectedReference.content.movement.safetyReminder}</aside></section></article><div className="health-reference-actions"><button className="quiet-button" type="button" onClick={() => askAbout("food")}><MessageCircleQuestion />询问具体饮食</button><button className="quiet-button" type="button" onClick={() => askAbout("movement")}><MessageCircleQuestion />询问具体运动</button>{!candidate && active?.id === visiblePlan.id && selectedReference.content.movement.category !== "rest" && <button className="primary-button" type="button" onClick={createTaskFromMovement}><ClipboardPenLine />转为任务并重新排期</button>}</div></>}
+        {selectedReference && <>
+          {(selectedReference.content.seasonalGuidance||selectedReference.content.seasonalPoem)&&<article className="health-seasonal-card"><Leaf/><div>{selectedReference.content.seasonalGuidance&&<><p className="section-kicker">结合时令与已取得的环境信息</p><strong>{selectedReference.content.seasonalGuidance}</strong></>}{selectedReference.content.seasonalPoem&&<blockquote><Quote/><p>“{selectedReference.content.seasonalPoem.excerpt}”</p><cite>{selectedReference.content.seasonalPoem.author}《{selectedReference.content.seasonalPoem.title}》</cite><small>{selectedReference.content.seasonalPoem.relevance}</small></blockquote>}</div></article>}
+          <article className="health-day-detail health-prescription">
+            <section className="health-food-prescription">
+              <header><Leaf /><div><p>今日饮食处方 · 参考级</p><strong>今天可以怎样吃</strong></div></header>
+              <p>{selectedReference.content.nutritionDirection}</p>
+              <div className="health-target-scales">
+                {referenceScale("蛋白质", selectedReference.content.proteinRangeGrams, "protein")}
+                {referenceScale("碳水", selectedReference.content.nutritionTargets?.carbohydrateGrams, "carb")}
+                {referenceScale("脂肪", selectedReference.content.nutritionTargets?.fatGrams, "fat")}
+                {referenceScale("膳食纤维", selectedReference.content.nutritionTargets?.fiberGrams, "fiber")}
+                {referenceScale("饮水", selectedReference.content.nutritionTargets?.hydrationLiters, "water", "L")}
+              </div>
+              {selectedReference.content.nutritionTargets ? <div className="health-macro-ratio" aria-label="三大营养素参考比例">
+                <header><h3>三大营养素参考比例</h3><small>只表示建议结构，不代表今日实际摄入</small></header>
+                <div aria-hidden="true"><i data-tone="protein" style={{ "--macro-share": `${selectedReference.content.nutritionTargets.macroRatioPercent.protein}%` } as CSSProperties} /><i data-tone="carb" style={{ "--macro-share": `${selectedReference.content.nutritionTargets.macroRatioPercent.carbohydrate}%` } as CSSProperties} /><i data-tone="fat" style={{ "--macro-share": `${selectedReference.content.nutritionTargets.macroRatioPercent.fat}%` } as CSSProperties} /></div>
+                <p><span><b data-tone="protein" />蛋白 {selectedReference.content.nutritionTargets.macroRatioPercent.protein}%</span><span><b data-tone="carb" />碳水 {selectedReference.content.nutritionTargets.macroRatioPercent.carbohydrate}%</span><span><b data-tone="fat" />脂肪 {selectedReference.content.nutritionTargets.macroRatioPercent.fat}%</span></p>
+              </div> : null}
+              <section className="health-hydration-guidance"><h3>今日饮水参考</h3>{listOrMissing(selectedReference.content.hydrationGuidance)}</section>
+              <section className="health-meal-sheet"><h3>三餐示例</h3>{selectedReference.content.mealExamples ? <dl>{([['早餐',selectedReference.content.mealExamples.breakfast],['午餐',selectedReference.content.mealExamples.lunch],['晚餐',selectedReference.content.mealExamples.dinner],['加餐',selectedReference.content.mealExamples.snack]] as Array<[string,string[]]>).map(([label,items])=><div key={label}><dt>{label}</dt><dd>{items.length ? items.join(" · ") : "可不安排"}</dd></div>)}</dl> : <p className="health-field-missing">当前参考未提供三餐示例；重新请求 DeepSeek 候选后可补齐。</p>}</section>
+              <section className="health-protein-rotation"><h3>本周蛋白轮换</h3><div>{visiblePlan.days.map((day)=><span key={day.id} className={day.id===selectedReference.id?"current":""}><b>{weekday[day.dayIndex]}</b><small>{day.content.proteinRotationSources?.join(" / ") || "未提供"}</small></span>)}</div></section>
+              <section className="health-food-reference"><h3>替代食材参考</h3>{selectedReference.content.foodReference ? <div><p><b>蛋白</b>{selectedReference.content.foodReference.proteinOptions.join("、")}</p><p><b>纤维</b>{selectedReference.content.foodReference.fiberOptions.join("、")}</p><p><b>碳水</b>{selectedReference.content.foodReference.carbOptions.join("、")}</p></div> : <p className="health-field-missing">当前参考未提供替代食材；重新请求 DeepSeek 候选后可补齐。</p>}</section>
+            </section>
+            <section className="health-movement-prescription">
+              <header><HeartPulse /><div><p>今日运动处方 · 参考级</p><strong>{activityLabel[selectedReference.content.movement.category]} · {intensityLabel[selectedReference.content.movement.intensity]}</strong></div></header>
+              <div className="health-movement-facts"><span><small>建议时长</small><b>{selectedReference.content.movement.durationMinutes.minimum}–{selectedReference.content.movement.durationMinutes.maximum} 分钟</b></span><span><small>强度</small><b>{intensityLabel[selectedReference.content.movement.intensity]}</b></span></div>
+              <section><h3>今日重点</h3>{listOrMissing(selectedReference.content.movement.focus)}</section>
+              <section className="health-safety-notes"><h3>注意事项</h3>{listOrMissing(selectedReference.content.movement.safetyNotes ?? [selectedReference.content.movement.safetyReminder])}</section>
+              <section><h3>餐盘与时令提示</h3>{listOrMissing(selectedReference.content.plateGuidance)}<div className="vegetable-tags">{selectedReference.content.seasonalVegetables.map((item) => <span key={item}>{item}</span>)}</div></section>
+            </section>
+          </article>
+          <div className="health-reference-actions"><button className="quiet-button" type="button" onClick={() => askAbout("food")}><MessageCircleQuestion />按今天食材协商</button><button className="quiet-button" type="button" onClick={() => askAbout("movement")}><MessageCircleQuestion />调整今日运动</button>{!candidate && active?.id === visiblePlan.id && selectedReference.content.movement.category !== "rest" && <button className="primary-button" type="button" onClick={createTaskFromMovement}><ClipboardPenLine />转为任务并重新排期</button>}</div>
+        </>}
         <section className="health-supplements"><p className="section-kicker">补充剂参考</p>{visiblePlan.supplements.map((item) => <p key={item}>{item}</p>)}</section>
       </section> : <div className="health-empty"><HeartPulse /><strong>健康资料已准备好后，会在这里生成一份待你确认的本周参考。</strong></div>}
       <section className="health-sleep-card">

@@ -1,8 +1,9 @@
 import { and, eq, gte, inArray, isNull, lte } from "drizzle-orm";
 import type { AppDatabase } from "@personal-ai/db/client";
 import { cyberDiaryContentSchema } from "@personal-ai/domain/diary";
-import { cyberDiaries, focusSessions, reviewMessages, reviewSessions, taskFeedback, taskOutcomes, tasks } from "@personal-ai/db/schema";
-import { buildDiaryDayData, type DailyStateTone } from "./diary-service.js";
+import { reviewRadarSnapshotSchema, type ReviewRadar } from "@personal-ai/domain/review";
+import { cyberDiaries, focusSessionSegmentRuns, focusSessions, reviewMessages, reviewSessions, taskFeedback, taskOutcomes, tasks } from "@personal-ai/db/schema";
+import { buildDiaryDayData, type DailyGrowthBreakdown, type DailyStateTone } from "./diary-service.js";
 
 type RadarKey = "mainlineProgress" | "overallExecution" | "focusQuality" | "energyState" | "wellbeing" | "growthGain";
 export type GrowthWindowDays = 7 | 30 | 90 | 365;
@@ -14,6 +15,7 @@ type Day = {
   tone: DailyStateTone;
   radar: Array<{ key: RadarKey; label: string; value: number | null; source: "system" | "user" }>;
   points: number;
+  pointsBreakdown: DailyGrowthBreakdown;
   hasData: boolean;
 };
 
@@ -30,6 +32,25 @@ function datesEndingAt(end: string, count: number) {
 
 function average(values: number[]) {
   return values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : null;
+}
+
+function parseRadarMessage(content: string): ReviewRadar | null {
+  try {
+    return reviewRadarSnapshotSchema.parse(JSON.parse(content)).radar;
+  } catch {
+    return null;
+  }
+}
+
+function averageBreakdown(days: Day[]): DailyGrowthBreakdown {
+  const activeDays = days.filter((day) => day.hasData);
+  if (activeDays.length === 0) return { execution: 0, focus: 0, satisfaction: 0, review: 0 };
+  return {
+    execution: average(activeDays.map((day) => day.pointsBreakdown.execution)) ?? 0,
+    focus: average(activeDays.map((day) => day.pointsBreakdown.focus)) ?? 0,
+    satisfaction: average(activeDays.map((day) => day.pointsBreakdown.satisfaction)) ?? 0,
+    review: average(activeDays.map((day) => day.pointsBreakdown.review)) ?? 0
+  };
 }
 
 function weekKey(localDate: string) {
@@ -61,7 +82,7 @@ export class GrowthService {
   async getSummary(endLocalDate: string, dayCount: GrowthWindowDays = 7) {
     const dates = datesEndingAt(endLocalDate, dayCount);
     const start = dates[0]!;
-    const taskRows = await this.db.select().from(tasks).where(and(isNull(tasks.deletedAt), gte(tasks.localDate, start), lte(tasks.localDate, endLocalDate)));
+    const taskRows = await this.db.select().from(tasks).where(and(eq(tasks.recordKind, "formal"), isNull(tasks.deletedAt), gte(tasks.localDate, start), lte(tasks.localDate, endLocalDate)));
     const taskIds = taskRows.map((task) => task.id);
     const [sessions, feedback, outcomes, reviews, diaryRows] = await Promise.all([
       taskIds.length ? this.db.select().from(focusSessions).where(inArray(focusSessions.taskId, taskIds)) : Promise.resolve([]),
@@ -71,8 +92,24 @@ export class GrowthService {
       this.db.select().from(cyberDiaries).where(and(gte(cyberDiaries.localDate, start), lte(cyberDiaries.localDate, endLocalDate)))
     ]);
     const reviewIds = reviews.map((review) => review.id);
+    const sessionIds = sessions.map((session) => session.id);
+    const segmentRuns = sessionIds.length
+      ? await this.db.select().from(focusSessionSegmentRuns).where(inArray(focusSessionSegmentRuns.focusSessionId, sessionIds))
+      : [];
+    const taskIdBySessionId = new Map(sessions.map((session) => [session.id, session.taskId]));
+    const segmentRunsByTaskId = new Map<string, typeof segmentRuns>();
+    for (const run of segmentRuns) {
+      const taskId = taskIdBySessionId.get(run.focusSessionId);
+      if (!taskId) continue;
+      const taskRuns = segmentRunsByTaskId.get(taskId) ?? [];
+      taskRuns.push(run);
+      segmentRunsByTaskId.set(taskId, taskRuns);
+    }
     const messages = reviewIds.length
       ? await this.db.select({ reviewSessionId: reviewMessages.reviewSessionId }).from(reviewMessages).where(and(inArray(reviewMessages.reviewSessionId, reviewIds), eq(reviewMessages.source, "app")))
+      : [];
+    const radarMessages = reviewIds.length
+      ? await this.db.select({ reviewSessionId: reviewMessages.reviewSessionId, content: reviewMessages.content, createdAt: reviewMessages.createdAt }).from(reviewMessages).where(and(inArray(reviewMessages.reviewSessionId, reviewIds), eq(reviewMessages.source, "radar"))).orderBy(reviewMessages.createdAt)
       : [];
     const reviewDates = new Map(reviews.map((review) => [review.id, review.localDate]));
     const reviewedDateSet = new Set(messages.map((message) => reviewDates.get(message.reviewSessionId)).filter((localDate): localDate is string => Boolean(localDate)));
@@ -80,6 +117,11 @@ export class GrowthService {
       const parsed = cyberDiaryContentSchema.safeParse(diary.content);
       return parsed.success && parsed.data.radar ? [[diary.localDate, parsed.data.radar] as const] : [];
     }));
+    for (const message of radarMessages) {
+      const localDate = reviewDates.get(message.reviewSessionId);
+      const radar = parseRadarMessage(message.content);
+      if (localDate && radar) savedRadarByDate.set(localDate, radar);
+    }
 
     const days: Day[] = dates.map((localDate) => {
       const dayTasks = taskRows.filter((task) => task.localDate === localDate);
@@ -88,9 +130,10 @@ export class GrowthService {
         dayTasks,
         sessions.filter((session) => dayTaskIds.has(session.taskId)),
         outcomes.filter((outcome) => dayTaskIds.has(outcome.taskId)),
-        feedback.filter((item) => dayTaskIds.has(item.taskId)),
-        reviewedDateSet.has(localDate)
-      );
+         feedback.filter((item) => dayTaskIds.has(item.taskId)),
+         reviewedDateSet.has(localDate),
+         dayTasks.flatMap((task) => segmentRunsByTaskId.get(task.id) ?? [])
+       );
       const saved = savedRadarByDate.get(localDate);
       return {
         localDate,
@@ -104,12 +147,17 @@ export class GrowthService {
           value: saved ? saved[metric.key as RadarKey] : metric.value
         })),
         points: dayData.tree.points,
+        pointsBreakdown: dayData.tree.pointsBreakdown,
         hasData: dayData.plannedTasks > 0 || dayData.rawFocusMinutes > 0 || reviewedDateSet.has(localDate)
       };
     });
     const focusMinutes = days.reduce((sum, day) => sum + day.focusMinutes, 0);
     const plannedTasks = days.reduce((sum, day) => sum + day.plannedTasks, 0);
     const closedTasks = days.reduce((sum, day) => sum + day.closedTasks, 0);
+    const currentDay = days.find((day) => day.localDate === endLocalDate) ?? days.at(-1);
+    const growthPercent = currentDay && currentDay.plannedTasks > 0
+      ? Math.min(100, Math.round(currentDay.closedTasks / currentDay.plannedTasks * 100))
+      : 0;
     const satisfied = feedback.filter((item) => item.satisfaction === "satisfied").length;
     const neutral = feedback.filter((item) => item.satisfaction === "neutral").length;
     const dissatisfied = feedback.filter((item) => item.satisfaction === "dissatisfied").length;
@@ -131,9 +179,11 @@ export class GrowthService {
       });
       return { key, label: definition.label, source: definition.source, value: average(values), sampleDays: values.length };
     });
+    const activeDays = days.filter((day) => day.hasData);
+    const pointsBreakdown = averageBreakdown(days);
     return {
       range: { start, end: endLocalDate },
-      days: days.map(({ radar: _radar, points: _points, hasData: _hasData, ...day }) => day),
+      days: days.map(({ radar: _radar, hasData: _hasData, ...day }) => day),
       focusTrend: buildFocusTrend(days, dayCount),
       focusMinutes,
       plannedTasks,
@@ -141,9 +191,13 @@ export class GrowthService {
       reviewedDays: reviewedDateSet.size,
       satisfaction: { satisfied, neutral, dissatisfied },
       radar,
+      currentRadar: currentDay?.radar ?? [],
+      currentRadarSaved: savedRadarByDate.has(endLocalDate),
       garden: {
-        points: days.reduce((sum, day) => sum + day.points, 0),
-        growthPercent: Math.min(100, Math.round(focusMinutes / 600 * 100)),
+        points: average(activeDays.map((day) => day.points)) ?? 0,
+        pointsBreakdown,
+        scoredDays: activeDays.length,
+        growthPercent,
         treeKind,
         quality
       }

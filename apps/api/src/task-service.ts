@@ -116,13 +116,10 @@ export class TaskService {
 
   async createBackfill(input: TaskBackfillInput): Promise<{ task: StoredTask; historicalOverlaps: TaskConflict[] }> {
     return this.store.runSerializable(async (transaction) => {
-      const record: NewTaskRecord = { ...toNewTaskRecord(input), lifecycleStatus: "awaiting_outcome" };
+      const record: NewTaskRecord = { ...toNewTaskRecord(input), recordKind: "backfill", lifecycleStatus: "awaiting_outcome" };
       assertProductScheduleBounds(record);
       assertBackfillWindow(record);
-      const blocking = await this.findConflicts(transaction, record);
-      await this.assertConflictDecision(transaction, record, blocking, input.conflictDecision, input.expectedConflictFingerprint);
       const task = await transaction.insertTask(record);
-      await transaction.syncReminderForTask(task);
       await transaction.insertLifecycleEvent({
         id: randomUUID(),
         taskId: task.id,
@@ -131,10 +128,7 @@ export class TaskService {
         source: "app",
         reason: "same-day task backfill"
       });
-      if (input.conflictDecision === "keep") {
-        await transaction.insertConflictAcceptances(blocking.map((conflict) => canonicalAcceptance(task, conflict)));
-      }
-      return { task, historicalOverlaps: await this.findHistoricalOverlaps(transaction, task) };
+      return { task, historicalOverlaps: [] };
     });
   }
 
@@ -232,7 +226,7 @@ export class TaskService {
       for (let rightIndex = leftIndex + 1; rightIndex < listedTasks.length; rightIndex += 1) {
         const left = listedTasks[leftIndex]!;
         const right = listedTasks[rightIndex]!;
-        if (!exactlyOverlaps(left, right)) continue;
+        if (left.recordKind !== "formal" || right.recordKind !== "formal" || !exactlyOverlaps(left, right)) continue;
         if (left.lifecycleStatus === "cancelled" || right.lifecycleStatus === "cancelled") continue;
         if (left.lifecycleStatus === "closed" || right.lifecycleStatus === "closed") {
           historicalOverlaps.push({ taskIdA: left.id, taskIdB: right.id, accepted: false });
@@ -289,6 +283,7 @@ export class TaskService {
       const target: NewTaskRecord = {
         ...normalized,
         id: current.id,
+        recordKind: current.recordKind as "formal" | "backfill",
         lifecycleStatus: current.lifecycleStatus as TaskLifecycle,
         currentOutcome: current.currentOutcome as TaskOutcome | null,
         version: current.version + 1,
@@ -347,6 +342,11 @@ export class TaskService {
         toStatus: "deleted", source: "app", reason
       });
     });
+  }
+
+  async emptyTrash(): Promise<{ purgedCount: number }> {
+    const purgedCount = await this.store.runSerializable((transaction) => transaction.purgeDeletedTasks());
+    return { purgedCount };
   }
 
   async restore(
@@ -596,10 +596,10 @@ export class TaskService {
 
   private async findConflicts(
     transaction: TaskStoreTransaction,
-    task: Pick<StoredTask, "scheduleKind" | "startAt" | "endAt" | "lifecycleStatus"> & { id?: string },
+    task: Pick<StoredTask, "recordKind" | "scheduleKind" | "startAt" | "endAt" | "lifecycleStatus"> & { id?: string },
     excludeTaskId?: string
   ): Promise<StoredTask[]> {
-    if (task.scheduleKind !== "exact" || !task.startAt || !task.endAt || !isBlocking(task.lifecycleStatus)) return [];
+    if (task.recordKind !== "formal" || task.scheduleKind !== "exact" || !task.startAt || !task.endAt || !isBlocking(task.lifecycleStatus)) return [];
     return transaction.listExactOverlaps(task.startAt, task.endAt, blockingStatuses, excludeTaskId);
   }
 
@@ -628,13 +628,8 @@ export class TaskService {
     expectedFingerprint?: string
   ): Promise<void> {
     const detailed = await this.withAcceptance(transaction, task, conflicts);
-    const unresolved = detailed.filter((conflict) => !conflict.accepted);
     const fingerprint = conflictFingerprint(conflicts);
-    if (decision === "keep") {
-      if (expectedFingerprint !== fingerprint) throw new ConflictSetChangedError(detailed, fingerprint);
-      return;
-    }
-    if (unresolved.length > 0) throw new TaskTimeConflictError(detailed, fingerprint);
+    if (detailed.length > 0) throw new TaskTimeConflictError(detailed, fingerprint);
   }
 }
 
@@ -646,6 +641,7 @@ function toNewTaskRecord(input: TaskInput, id: NewTaskRecord["id"] = randomUUID(
     title: input.title,
     sourceInboxEntryId: null,
     sourceLongRangePlanId: null,
+    recordKind: "formal",
     lifecycleStatus: "open",
     scheduleKind: input.scheduleKind,
     currentOutcome: null,
@@ -676,7 +672,7 @@ function mergeAndValidate(current: StoredTask, patch: TaskPatch): NewTaskRecord 
   if (candidate.scheduleKind === "exact") candidate.localDate = null;
   const parsed = taskInputSchema.safeParse(candidate);
   if (!parsed.success) throw parsed.error;
-  return { ...toNewTaskRecord(parsed.data), id: current.id };
+  return { ...toNewTaskRecord(parsed.data), id: current.id, recordKind: current.recordKind as "formal" | "backfill" };
 }
 
 function hasSchedulePatchField(patch: TaskPatch): boolean {

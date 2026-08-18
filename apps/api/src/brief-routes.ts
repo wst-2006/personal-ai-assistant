@@ -7,7 +7,7 @@ import { BriefGenerationUnavailableError, BriefNotFoundError, BriefReviewRequire
 const idParams = z.object({ id: z.string().uuid() });
 const standaloneQuery = z.object({ date: reviewDateSchema });
 
-export async function briefRoutes(app: FastifyInstance, options: { briefService: BriefService }) {
+export async function briefRoutes(app: FastifyInstance, options: { briefService: BriefService; standaloneEnabled?: boolean }) {
   app.post("/reviews/:id/briefs", async (request, reply) => {
     const params = idParams.safeParse(request.params);
     const input = generateDailyBriefSchema.safeParse(request.body ?? {});
@@ -22,6 +22,7 @@ export async function briefRoutes(app: FastifyInstance, options: { briefService:
     }
   });
   app.post("/briefs/standalone", async (request, reply) => {
+    if (options.standaloneEnabled === false) return reply.status(404).send({ error: "standalone_brief_disabled" });
     const input = generateStandaloneBriefSchema.safeParse(request.body);
     if (!input.success) return reply.status(400).send({ error: "invalid_standalone_brief", details: input.error.flatten() });
     try {
@@ -34,6 +35,7 @@ export async function briefRoutes(app: FastifyInstance, options: { briefService:
     }
   });
   app.get("/briefs/standalone", async (request, reply) => {
+    if (options.standaloneEnabled === false) return reply.status(404).send({ error: "standalone_brief_disabled" });
     const query = standaloneQuery.safeParse(request.query);
     if (!query.success) return reply.status(400).send({ error: "invalid_standalone_brief_date" });
     return { briefs: await options.briefService.listStandalone(query.data.date) };

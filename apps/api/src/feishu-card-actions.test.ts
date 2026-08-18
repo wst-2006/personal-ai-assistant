@@ -6,28 +6,40 @@ import {
   loadFeishuCardActionConfig
 } from "./feishu-card-actions.js";
 import type { TaskService } from "./task-service.js";
-import type { DesktopCommandService } from "./desktop-command-service.js";
 
 const taskId = "7f9a4ad8-4dc7-4d18-92df-1d8be780a1b1";
 
-function service(sessionState: "scheduled" | "preparing" = "preparing") {
-  const taskService = { get: vi.fn().mockResolvedValue({ task: { id: taskId, version: 8, scheduleRevision: 3 } }) };
-  const focusService = {
-    create: vi.fn().mockResolvedValue({ id: "focus-1", version: 1, state: sessionState }),
-    respondToReminder: vi.fn().mockResolvedValue({ id: "focus-1", version: 2 })
+function service(
+  createdState: "armed" | "running" = "armed",
+  current: { id: string; taskId: string; version: number; state: string } | null = null
+) {
+  const task = {
+    id: taskId,
+    title: "整理产品原型",
+    version: 8,
+    scheduleRevision: 3,
+    lifecycleStatus: "open",
+    localDate: null,
+    startAt: new Date("2099-08-15T07:00:00.000Z"),
+    endAt: new Date("2099-08-15T08:00:00.000Z")
   };
-  const desktopCommandService = {
-    requestOpenTask: vi.fn().mockResolvedValue({ id: "command-1" })
+  const taskService = {
+    get: vi.fn().mockResolvedValue({ task }),
+    update: vi.fn().mockResolvedValue({ task: { ...task, scheduleKind: "none" }, historicalOverlaps: [] }),
+    cancel: vi.fn().mockResolvedValue({ ...task, lifecycleStatus: "cancelled" })
+  };
+  const focusService = {
+    currentForTask: vi.fn().mockResolvedValue(current),
+    create: vi.fn().mockResolvedValue({ id: "focus-1", taskId, version: 2, state: createdState }),
+    otherArrangement: vi.fn().mockResolvedValue({ id: "focus-1", taskId, version: 3, state: "stopped_no_response" })
   };
   return {
+    taskService,
     focusService,
-    desktopCommandService,
     actions: new FeishuCardActionService(
       { targetOpenId: "ou_owner" },
       taskService as unknown as TaskService,
-      focusService as unknown as FocusService,
-      undefined,
-      desktopCommandService as unknown as DesktopCommandService
+      focusService as unknown as FocusService
     )
   };
 }
@@ -44,31 +56,83 @@ describe("Feishu card actions", () => {
       .rejects.toBeInstanceOf(FeishuActionAuthError);
   });
 
-  it("starts preparation without bypassing task and schedule versions", async () => {
-    const { actions, focusService } = service();
+  it("arms an explicitly confirmed task and replaces every card action", async () => {
+    const { actions, focusService } = service("armed");
+    const commandId = "00000000-0000-4000-8000-000000000003";
+    const result = await actions.handle("ou_owner", { action: "start", taskId, scheduleRevision: 3, commandId });
+
+    expect(result).toMatchObject({ type: "success", message: expect.stringContaining("任务已经开始"), card: expect.any(Object) });
+    expect(JSON.stringify(result.card)).toContain("任务已经开始");
+    expect(JSON.stringify(result.card)).not.toContain("另有安排");
+    expect(JSON.stringify(result.card)).not.toContain("取消任务");
+    expect(focusService.create).toHaveBeenCalledWith(taskId, 8, "prepare", commandId);
+  });
+
+  it("records a late explicit start as running without backfilling", async () => {
+    const { actions } = service("running", {
+      id: "focus-late",
+      taskId,
+      version: 4,
+      state: "awaiting_late_start"
+    });
     await expect(actions.handle("ou_owner", { action: "start", taskId, scheduleRevision: 3 }))
-      .resolves.toEqual({ type: "success", message: expect.stringContaining("1 分钟准备") });
-    expect(focusService.create).toHaveBeenCalledWith(taskId, 8, "prepare");
+      .resolves.toMatchObject({ type: "success", message: expect.stringContaining("实际开始后") });
   });
 
-  it("tells a future task that preparation starts at the scheduled time", async () => {
-    const { actions } = service("scheduled");
-    await expect(actions.handle("ou_owner", { action: "start", taskId, scheduleRevision: 3 }))
-      .resolves.toEqual({ type: "success", message: expect.stringContaining("到任务开始时间") });
+  it("treats a repeated start for the same running task as idempotent success", async () => {
+    const { actions, focusService } = service("armed", {
+      id: "focus-running",
+      taskId,
+      version: 6,
+      state: "running"
+    });
+    const result = await actions.handle("ou_owner", { action: "start", taskId, scheduleRevision: 3 });
+
+    expect(result).toMatchObject({ type: "success", card: expect.any(Object) });
+    expect(JSON.stringify(result.card)).toContain("任务已经开始");
+    expect(focusService.create).not.toHaveBeenCalled();
   });
 
-  it("records other arrangement while retaining the scheduled task", async () => {
-    const { actions, focusService } = service();
-    await expect(actions.handle("ou_owner", { action: "other_arrangement", taskId, scheduleRevision: 3 }))
-      .resolves.toEqual({ type: "success", message: expect.stringContaining("任务仍保留") });
-    expect(focusService.create).toHaveBeenCalledWith(taskId, 8, "remind");
-    expect(focusService.respondToReminder).toHaveBeenCalledWith("focus-1", 1, "other_arrangement");
+  it("invalidates arrangement and cancellation controls immediately after confirmation", async () => {
+    const { actions, taskService, focusService } = service("armed", {
+      id: "focus-armed",
+      taskId,
+      version: 5,
+      state: "armed"
+    });
+    const result = await actions.handle("ou_owner", { action: "other_arrangement", taskId, scheduleRevision: 3 });
+
+    expect(result).toMatchObject({ type: "success", message: expect.stringContaining("操作已失效"), card: expect.any(Object) });
+    expect(taskService.update).not.toHaveBeenCalled();
+    expect(focusService.otherArrangement).not.toHaveBeenCalled();
   });
 
-  it("queues a non-terminal desktop navigation request", async () => {
-    const { actions, desktopCommandService } = service();
-    await expect(actions.handle("ou_owner", { action: "open_task", taskId, scheduleRevision: 3 }))
-      .resolves.toEqual({ type: "success", message: expect.stringContaining("电脑端打开"), terminal: false });
-    expect(desktopCommandService.requestOpenTask).toHaveBeenCalledWith(taskId, 3);
+  it("returns an unstarted task to the unscheduled list and replaces the card", async () => {
+    const { actions, taskService, focusService } = service("armed", {
+      id: "focus-preparing",
+      taskId,
+      version: 4,
+      state: "preparing"
+    });
+    const commandId = "00000000-0000-4000-8000-000000000004";
+    const result = await actions.handle("ou_owner", { action: "other_arrangement", taskId, scheduleRevision: 3, commandId });
+
+    expect(result).toMatchObject({ type: "success", message: "已退回未排期任务。", card: expect.any(Object) });
+    expect(focusService.otherArrangement).toHaveBeenCalledWith("focus-preparing", 4, "飞书选择另有安排", expect.any(String));
+    expect(taskService.update).toHaveBeenCalledWith(taskId, expect.objectContaining({ scheduleKind: "none", startAt: null, endAt: null }));
+    expect(JSON.stringify(result.card)).not.toContain("开始任务");
+  });
+
+  it("requires a second cancellation confirmation and then replaces the card", async () => {
+    const { actions, taskService } = service();
+    const first = await actions.handle("ou_owner", { action: "cancel_request", taskId, scheduleRevision: 3 });
+    expect(first).toMatchObject({ type: "success", card: expect.any(Object) });
+    expect(JSON.stringify(first.card)).toContain("确认取消");
+    expect(taskService.cancel).not.toHaveBeenCalled();
+
+    const confirmed = await actions.handle("ou_owner", { action: "cancel_confirm", taskId, scheduleRevision: 3 });
+    expect(confirmed).toMatchObject({ type: "success", message: "任务已取消。", card: expect.any(Object) });
+    expect(taskService.cancel).toHaveBeenCalledWith(taskId, 8, "飞书二次确认取消任务");
+    expect(JSON.stringify(confirmed.card)).not.toContain("确认取消");
   });
 });

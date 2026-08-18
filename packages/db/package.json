@@ -29,6 +29,7 @@
     "build": "tsc --project tsconfig.build.json",
     "generate": "drizzle-kit generate",
     "migrate": "tsx src/migrate.ts",
+    "preflight": "tsx src/migration-preflight-cli.ts",
     "verify": "tsx src/verify.ts",
     "check": "tsc --noEmit",
     "test": "vitest run"

@@ -36,11 +36,32 @@ export const setLongRangePlanStatusSchema = z.object({
   status: longRangePlanStatusSchema
 }).strict();
 
+export const deleteLongRangePlanSchema = z.object({
+  expectedVersion: z.number().int().positive()
+}).strict();
+
+export const organizeLongRangePlanInputSchema = z.object({
+  scope: longRangePlanScopeSchema,
+  title: z.string().trim().max(200),
+  periodStart: z.string().date(),
+  periodEnd: z.string().date(),
+  description: z.string().trim().min(1).max(8000),
+  milestones: z.array(longRangeMilestoneInputSchema).max(30).default([])
+}).strict().superRefine(validatePeriod);
+
+export const organizedLongRangePlanSchema = z.object({
+  title: z.string().trim().min(1).max(200),
+  description: z.string().trim().min(1).max(8000),
+  milestones: z.array(longRangeMilestoneInputSchema).max(12)
+}).strict();
+
 export type LongRangePlanScope = z.infer<typeof longRangePlanScopeSchema>;
 export type LongRangePlanStatus = z.infer<typeof longRangePlanStatusSchema>;
 export type LongRangeMilestoneInput = z.infer<typeof longRangeMilestoneInputSchema>;
 export type CreateLongRangePlan = z.infer<typeof createLongRangePlanSchema>;
 export type UpdateLongRangePlan = z.infer<typeof updateLongRangePlanSchema>;
+export type OrganizeLongRangePlanInput = z.infer<typeof organizeLongRangePlanInputSchema>;
+export type OrganizedLongRangePlan = z.infer<typeof organizedLongRangePlanSchema>;
 
 export const taskTreeProposalItemSchema = z.object({
   title: z.string().trim().min(1).max(200),

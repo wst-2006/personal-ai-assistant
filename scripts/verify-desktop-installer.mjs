@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -36,6 +36,8 @@ const requiredRuntimeFiles = [
   "node.exe",
   join("api", "dist", "server.js"),
   join("worker", "dist", "worker.js"),
+  join("api", "node_modules", "@personal-ai", "db", "dist", "migrate.js"),
+  join("api", "node_modules", "@personal-ai", "db", "drizzle", "meta", "_journal.json"),
   ".env.example"
 ];
 
@@ -45,6 +47,13 @@ for (const file of [releaseExecutable, installer, generatedInstaller]) {
 for (const relativePath of requiredRuntimeFiles) {
   assert(existsSync(join(runtimeRoot, relativePath)), `desktop runtime file is missing: ${relativePath}`);
 }
+const migrationFolder = join(runtimeRoot, "api", "node_modules", "@personal-ai", "db", "drizzle");
+const migrationJournal = readJson(join(migrationFolder, "meta", "_journal.json"));
+const latestMigration = migrationJournal.entries?.at(-1)?.tag;
+assert(
+  typeof latestMigration === "string" && existsSync(join(migrationFolder, `${latestMigration}.sql`)),
+  "desktop runtime is missing its latest database migration"
+);
 assert(!existsSync(join(runtimeRoot, ".env")), "private .env must not be bundled into the installer");
 for (const service of ["api", "worker"]) {
   const releaseFiles = readdirSync(join(runtimeRoot, service, "dist"), { recursive: true });
@@ -99,13 +108,16 @@ assert(installerSize > 10_000_000, `desktop installer is unexpectedly small: ${i
 await verifyExactPathCleanup(join(runtimeRoot, "node.exe"), releaseExecutable);
 verifyMissingRuntimeCleanup(releaseExecutable, join(runtimeRoot, "missing-node.exe"));
 const sha256 = createHash("sha256").update(readFileSync(installer)).digest("hex").toUpperCase();
+writeFileSync(join(dirname(installer), "SHA256SUMS.txt"), `${sha256} *${basename(installer)}\n`, "utf8");
 
 console.log(`desktop-installer-version: ${version}`);
 console.log("desktop-installer-gui-subsystem: ok");
 console.log("desktop-installer-runtime-files: ok");
+console.log(`desktop-installer-latest-migration: ${latestMigration}`);
 console.log("desktop-installer-process-cleanup-hook: ok");
 console.log("desktop-installer-exact-path-cleanup: ok");
 console.log("desktop-installer-private-env-excluded: ok");
+console.log("desktop-installer-checksum-file: updated");
 console.log(`desktop-installer-sha256: ${sha256}`);
 
 function readJson(path) {

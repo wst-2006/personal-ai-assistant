@@ -3,10 +3,14 @@ import { loadDatabaseConfig } from "@personal-ai/db/config";
 import { ReminderWorker } from "./worker-core.js";
 import { FocusTimerWorker } from "./focus-worker.js";
 import { FeishuDeliveryProvider, loadFeishuConfig } from "./feishu-delivery.js";
+import { UnscheduledTaskWorker } from "./unscheduled-task-worker.js";
+import { RecycleRetentionWorker } from "./recycle-retention-worker.js";
 
 const connection = await connectVerifiedDatabase(loadDatabaseConfig());
 const worker = new ReminderWorker(connection.db);
 const focusWorker = new FocusTimerWorker(connection.db);
+const unscheduledTaskWorker = new UnscheduledTaskWorker(connection.db);
+const recycleRetentionWorker = new RecycleRetentionWorker(connection.db);
 const feishuConfig = loadFeishuConfig(process.env);
 const provider = feishuConfig ? new FeishuDeliveryProvider(feishuConfig) : null;
 let polling: Promise<void> | null = null;
@@ -15,9 +19,11 @@ const timer = setInterval(() => void pollSafely(), 15_000);
 
 async function pollDueJobs() {
   for (let processed = 0; processed < 50 && !shuttingDown; processed += 1) {
+    const dayEndResult = await unscheduledTaskWorker.processNext();
+    const recycleResult = await recycleRetentionWorker.processNext();
     const focusResult = await focusWorker.processNext();
     const reminderResult = provider ? await worker.processNext(provider) : "idle";
-    if (focusResult === "idle" && reminderResult === "idle") return;
+    if (dayEndResult === "idle" && recycleResult === "idle" && focusResult === "idle" && reminderResult === "idle") return;
   }
 }
 

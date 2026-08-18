@@ -20,21 +20,59 @@ blocking lifecycle group (`open | active | awaiting_outcome`) do not change the
 schedule revision. Entering or leaving `closed`, `cancelled`, or deleted state
 does.
 
+### Dated unscheduled task at day end
+
+Only `formal + open + scheduleKind:none + localDate:<today + undeleted` enters
+this Worker-controlled transition. The policy is a user-authored singleton
+setting, not an AI decision:
+
+- `carry_forward`: `localDate D -> D+1`, with `version` and
+  `scheduleRevision` incremented;
+- `delete_at_day_end`: the task receives `deletedAt`, with the same version
+  increments, and becomes recoverable through the normal recycle bin.
+
+The Worker stores one `unscheduled_task_day_end_runs` row per processed local
+date in the same serializable transaction as the task mutations. A failure
+rolls back both claim and mutations; a repeated poll or restart cannot process
+the same date twice. Backfills, non-open tasks, daypart/exact tasks and the
+separate inbox tables never enter this transition.
+
+### Recycle retention
+
+Task deletion remains a soft transition while `deletedAt + retentionDays` is in
+the future. During that window only an explicit user restore may return the
+task to active storage. After the deadline, the local Worker performs one
+transactional dependency purge followed by task deletion. There is no restore
+transition after that transaction commits.
+
 AI candidates are not stored as task lifecycle states. The user confirms a
 candidate before a task is created. Objective outcome remains separate from
 subjective satisfaction.
 
 ## Focus Session
 
-The normal confirmed execution path is:
+Creating a new focus session first requires an `open`, formal, exact task with
+persisted `startAt` and `endAt`. `none` and `daypart` tasks do not enter this
+state machine. Existing current sessions remain readable and recoverable for
+backward compatibility.
 
-`scheduled -> preparing -> running -> ended -> evaluated`
+The normal explicit-confirmation path is:
 
-`reminded` is a separate waiting-for-response entry state, not a mandatory
-step in every session. A positive response moves to `scheduled` when the exact
-task has not started yet, or directly to `preparing` when the task interval is
-already in progress. "Other arrangement" ends that reminder interaction and
-opens a plan-change conversation without changing the stored task.
+`scheduled -> preparing -> armed -> running -> ended -> evaluated`
+
+The local Worker enters `preparing` at `startAt - 1 minute`. `Start task` during
+that minute performs `preparing -> armed`; `armed -> running` occurs at the
+fixed `startAt`. If no start confirmation exists at `startAt`, the session
+performs `preparing -> awaiting_late_start`. A desktop start command or an
+explicit Feishu AI message while a focus segment still remains performs
+`awaiting_late_start -> running` and records the actual start time. Repeated
+start commands for `armed` or `running` are idempotent.
+
+Preparation and `awaiting_late_start` are not execution. They do not activate
+the task, create focus seconds, or imply completion. Reaching the fixed end
+without a valid start performs `awaiting_late_start -> stopped_no_response`,
+records one objective `not_completed` outcome, closes the task, and never
+creates an evaluation or subjective-feedback record.
 
 Plan-change advice is not a task state. A structured schedule candidate may
 target only an `open` task and remains transient. It carries the task version
@@ -43,11 +81,12 @@ normal editable form; no transition or schedule mutation occurs until the user
 saves successfully through the existing version/conflict checks. A changed or
 locked task invalidates the candidate instead of being overwritten.
 
-Preparation lasts one minute and then starts timing automatically. The user
-may explicitly skip the remaining preparation countdown and start immediately.
-There is no pause or manual restart in the current API, UI, or state machine.
-Legacy `awaiting_start`, `paused`, and pause timestamp columns remain readable
-only for historical compatibility; new operations do not create those states.
+Preparation lasts one minute and never starts timing automatically without an
+explicit start confirmation. Once `running`, there is no pause, cancel,
+reschedule, delete, or early-end transition. Closing the window is a pure
+presentation action and does not change session state. Legacy `paused` and
+`awaiting_start` rows remain readable only for recovery compatibility and no
+new command may create them.
 
 Once preparation begins, the current task's focus structure is immutable;
 other tasks remain editable. A late start locates the user's current position
@@ -55,17 +94,34 @@ inside the already confirmed structure, marks earlier segments as skipped,
 records only the actually executed seconds, and keeps the original fixed
 `endAt`. It never compresses, extends, or automatically rearranges the
 structure. The user may explicitly skip only the final rest segment; doing so
-ends the session and records that decision. Only `partial` and `complete`
-evaluations count executed focus-segment seconds as effective focus time.
+ends the session and records that decision. Entering `ended` immediately
+records the actually executed focus time. For a structured session this is the
+sum of executed focus segments and excludes breaks; for an unstructured legacy
+session it is the recorded active time.
 
-Every eligible exact task has two revision-bound durable reminder jobs: a
-start reminder available 15 minutes before `startAt`, and a non-response
-follow-up due five minutes after `startAt`. An explicit start or "other
-arrangement" response cancels the follow-up. If neither the app nor Feishu
-receives a response, the local Worker creates or stops a `stopped_no_response`
-session, appends one system `not_completed` outcome, and closes the task. This
-works while the main window is closed as long as the local desktop runtime and
-Worker are running.
+Entering `ended` replaces the desktop timer composition with an independent
+evaluation composition. This is a presentation change over the same persisted
+session, not a second session or inferred state. The evaluation records an
+objective outcome and progress independently from subjective satisfaction, with
+an optional user-authored process note. Only a successful evaluation command
+performs `ended -> evaluated`; closing or hiding the window leaves the session
+in `ended` and allows the tray to restore it. Evaluation records outcome,
+progress and satisfaction but does not clear or recalculate the already
+recorded focus duration.
+
+Every eligible exact task has four revision-bound durable transitions: T-15
+creates one Feishu reminder card, T-1 updates the same card with `Start task`
+and opens desktop preparation, T0 disables an unpressed start control and
+enters `awaiting_late_start`, and fixed-end finalizes a never-started task as
+missed. The original Feishu message ID is persisted so `started`,
+`returned_to_unscheduled`, `cancelled`, and `missed` replace the original
+controls instead of leaving stale buttons.
+
+The reminder card's `Other arrangement` transition changes an eligible open
+task from `exact` to `none` and returns it to the unscheduled list. Cancellation
+uses `cancel_requested -> cancelled`, where the first action only produces a
+confirmation card and the second action performs the lifecycle transition.
+Neither action is valid after `running` begins.
 
 Focus structures are durable candidates tied to the task version and
 `scheduleRevision`. A continuous block of 30 minutes is one uninterrupted
@@ -92,16 +148,16 @@ An explicit finish-and-generate action then follows:
 diary_saved`
 
 The transition to `brief_generating` is unavailable without a review-page
-message. Normal-chat brief generation is a separate path that ends at
-`brief_ready` and cannot create a diary. A saved diary must reference both the
-review session and a confirmed brief.
+message. Normal chat, Work Buddy, and forwarded Feishu messages cannot create
+a brief. A saved diary must reference both the review session and a confirmed
+brief.
 
-`brief_generating` sends only bounded review/task/search context to the
-server-side configured DeepSeek writer. Its structured result is validated
-before persistence; a provider or schema failure returns a recoverable error
-and leaves the previous confirmed brief intact. Regenerating a confirmed brief
-creates a new draft state until the user confirms it again. Each brief keeps
-the retrieved source URLs/provider metadata alongside the edited sections.
+`brief_generating` sends only bounded local review/task context to the
+server-side configured writer. External RSS/Atom subscriptions, web search and
+Work Buddy imports are disabled. The structured result is validated before
+persistence; a provider or schema failure returns a recoverable error and
+leaves the previous confirmed brief intact. Regenerating a confirmed brief
+creates a new draft state until the user confirms it again.
 
 `diary_draft` contains editable title, body, and six-dimensional review data.
 Mainline progress, overall execution, and focus quality start from database-
@@ -113,6 +169,22 @@ manual ratings. Older diary rows without the optional radar object remain
 readable and receive current derived defaults until they are saved again.
 
 ## Health Reference
+
+Health collaboration is a separate durable ledger, not a plan state:
+
+`empty -> user_message_saved -> assistant_reply_saved`
+
+Provider failure after `user_message_saved` leaves that user message intact.
+Retrying requests only the missing assistant reply and does not append the user
+message again. One in-flight reply is shared per conversation. Messages are
+bound to one `weekStart`; app messages may trigger a Feishu clarification, and
+explicit `健康：` Feishu replies return to the same current Shanghai week.
+Neither message state creates, replaces, confirms or edits a health plan.
+
+AI candidate generation begins only from an explicit Health-page action and
+shares one in-flight request per week. Opening the page or reaching Sunday is
+not a generation transition. Provider timeout, invalid JSON/schema output or
+provider rejection leaves the week in its previous plan state.
 
 Weekly plans use explicit durable states:
 
@@ -135,3 +207,12 @@ food or movement opens an ordinary AI conversation but is not a plan state
 transition. “Convert to task” opens an unsaved formal-task form; only the
 separate task-form confirmation creates the task, and the health reference is
 not changed or marked complete.
+
+## Long-range plan collaboration
+
+Long-range plan content uses `draft -> candidate_visible -> draft_applied ->
+saved`. AI organization only creates `candidate_visible`; it cannot persist the
+plan or create tasks. Discarding the candidate returns to the untouched draft.
+Applying copies the candidate into the editable draft, and only the normal save
+operation persists it. Permanent plan deletion first detaches generated tasks,
+then removes task-tree candidates, milestones and the plan in one transaction.

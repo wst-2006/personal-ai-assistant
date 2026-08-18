@@ -70,6 +70,21 @@ export class UserProfileService {
       aiGuidance: "",
       shareWithAi: true,
       responseStyle: "balanced",
+      unscheduledTaskPolicy: "carry_forward",
+      recycleRetentionDays: 3,
+      focusFlipSoundEnabled: true,
+      focusStartSoundEnabled: true,
+      breakStartSoundEnabled: true,
+      breakEndSoundEnabled: true,
+      focusEndSoundEnabled: true,
+      focusTheme: "ink",
+      desktopFocusEnabled: true,
+      focusPreparationWindowEnabled: true,
+      focusTimerWindowEnabled: true,
+      focusEvaluationEnabled: true,
+      feishuTaskCardsEnabled: true,
+      feishuT15Enabled: true,
+      healthPageEnabled: true,
       version: 1,
       createdAt: now,
       updatedAt: now
@@ -78,11 +93,26 @@ export class UserProfileService {
   }
 }
 
-function toRecord(input: UserProfileContent): UserProfileContent {
+function toRecord(input: UserProfileContent) {
   return {
     personalContext: input.personalContext,
     aiGuidance: input.aiGuidance,
     shareWithAi: input.shareWithAi,
-    responseStyle: input.responseStyle
+    responseStyle: input.responseStyle,
+    unscheduledTaskPolicy: input.unscheduledTaskPolicy,
+    recycleRetentionDays: input.recycleRetentionDays,
+    focusFlipSoundEnabled: input.focusSounds.flip,
+    focusStartSoundEnabled: input.focusSounds.focusStart,
+    breakStartSoundEnabled: input.focusSounds.breakStart,
+    breakEndSoundEnabled: input.focusSounds.breakEnd,
+    focusEndSoundEnabled: input.focusSounds.focusEnd,
+    focusTheme: input.focusTheme,
+    desktopFocusEnabled: input.desktopFocusEnabled,
+    focusPreparationWindowEnabled: input.focusPreparationWindowEnabled,
+    focusTimerWindowEnabled: input.focusTimerWindowEnabled,
+    focusEvaluationEnabled: input.focusEvaluationEnabled,
+    feishuTaskCardsEnabled: input.feishuTaskCardsEnabled,
+    feishuT15Enabled: input.feishuT15Enabled,
+    healthPageEnabled: input.healthPageEnabled
   };
 }

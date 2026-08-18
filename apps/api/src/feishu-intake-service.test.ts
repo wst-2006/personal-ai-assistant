@@ -1,12 +1,14 @@
 import { connectVerifiedDatabase } from "@personal-ai/db/client";
 import { loadDatabaseConfig } from "@personal-ai/db/config";
-import { feishuIntakeCandidates, inboxEntries, reminderJobs, taskLifecycleEvents, tasks } from "@personal-ai/db/schema";
-import type { NaturalLanguageTaskCandidate } from "@personal-ai/domain/task";
+import { dailyBriefs, feishuIntakeCandidates, inboxEntries, reminderJobs, taskLifecycleEvents, tasks } from "@personal-ai/db/schema";
+import { localDateAtTimeZone, type NaturalLanguageTaskCandidate } from "@personal-ai/domain/task";
 import { eq } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import type { TaskParser } from "./ai/task-parser.js";
 import { FeishuIntakeService } from "./feishu-intake-service.js";
+import { BriefService } from "./brief-service.js";
+import type { HealthConversationResponder, HealthConversationService } from "./health-conversation-service.js";
 import { PostgresTaskStore } from "./task-repository.js";
 import { TaskService } from "./task-service.js";
 
@@ -16,6 +18,7 @@ const owner = "ou_feishu_intake_test";
 const createdCandidateIds: string[] = [];
 const createdTaskIds: string[] = [];
 const createdInboxIds: string[] = [];
+const createdBriefIds: string[] = [];
 
 function exactCandidate(title: string, startAt = "2099-12-28T09:00:00+08:00"): NaturalLanguageTaskCandidate {
   const endAt = new Date(new Date(startAt).getTime() + 60 * 60 * 1000).toISOString();
@@ -46,6 +49,91 @@ async function storedCandidate(sourceMessageId: string) {
 }
 
 describe("Feishu text intake", () => {
+  it("imports an allowlisted Work Buddy post as one deduplicated standalone draft", async () => {
+    const suffix = randomUUID();
+    const workBuddySender = `ou_work_buddy_${suffix}`;
+    const title = `Work Buddy 每日简报 ${suffix}`;
+    const parser: TaskParser = { parse: vi.fn().mockRejectedValue(new Error("Work Buddy briefs must not reach task parsing")) };
+    const briefService = new BriefService(connection.db);
+    const service = new FeishuIntakeService(
+      { targetOpenId: owner, timeZone: "Asia/Shanghai", workBuddySenderIds: [workBuddySender] },
+      connection.db,
+      taskService,
+      parser,
+      undefined,
+      undefined,
+      briefService
+    );
+    const message = {
+      messageId: `om_work_buddy_${suffix}`,
+      chatId: `oc_work_buddy_${suffix}`,
+      operatorOpenId: workBuddySender,
+      messageType: "post",
+      text: `# ${title}\n\nAI 与科技今日有新的公开资料。\nhttps://example.com/work-buddy-source`
+    };
+
+    await expect(service.receive(message)).resolves.toEqual({
+      kind: "text",
+      text: expect.stringContaining("待确认")
+    });
+    await expect(service.receive(message)).resolves.toEqual({
+      kind: "text",
+      text: expect.stringContaining("已经导入过")
+    });
+    expect(parser.parse).not.toHaveBeenCalled();
+    const localDate = localDateAtTimeZone(new Date(), "Asia/Shanghai");
+    const stored = (await briefService.listStandalone(localDate)).find((brief) => (brief.content as { title?: string }).title === title);
+    expect(stored).toMatchObject({ reviewSessionId: null, state: "draft" });
+    expect(stored?.sources).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "external_brief", provider: "work_buddy" }),
+      expect.objectContaining({ url: "https://example.com/work-buddy-source" })
+    ]));
+    if (stored) createdBriefIds.push(stored.id);
+  });
+
+  it("routes an explicit health reply into the health-week ledger before task parsing", async () => {
+    const suffix = randomUUID();
+    const conversationId = randomUUID();
+    const parser: TaskParser = { parse: vi.fn().mockRejectedValue(new Error("health text must not reach task parsing")) };
+    const healthService = {
+      hasExternalMessage: vi.fn().mockResolvedValue(false),
+      getOrOpen: vi.fn().mockResolvedValue({ conversation: { id: conversationId, weekStart: "2026-08-16" }, messages: [] }),
+      saveUserMessage: vi.fn().mockResolvedValue({ conversation: { id: conversationId, weekStart: "2026-08-16" }, messages: [] }),
+      retryLast: vi.fn().mockResolvedValue({
+        conversation: { id: conversationId, weekStart: "2026-08-16" },
+        messages: [{ role: "assistant", content: "已经记入本周健康交流，可以回到健康栏目生成候选。" }]
+      })
+    } as unknown as HealthConversationService;
+    const responder = { reply: vi.fn() } as unknown as HealthConversationResponder;
+    const service = new FeishuIntakeService(
+      { targetOpenId: owner, timeZone: "Asia/Shanghai" },
+      connection.db,
+      taskService,
+      parser,
+      undefined,
+      { service: healthService, responder }
+    );
+    const message = {
+      messageId: `om_health_${suffix}`,
+      chatId: "oc_health",
+      operatorOpenId: owner,
+      messageType: "text",
+      text: "健康：这周力量训练安排在周一、周三和周五"
+    };
+
+    await expect(service.receive(message)).resolves.toEqual({
+      kind: "text",
+      text: "已经记入本周健康交流，可以回到健康栏目生成候选。"
+    });
+    expect(parser.parse).not.toHaveBeenCalled();
+    expect(healthService.saveUserMessage).toHaveBeenCalledWith(
+      conversationId,
+      "这周力量训练安排在周一、周三和周五",
+      "feishu",
+      message.messageId
+    );
+  });
+
   it("persists the parser failure reason for diagnosis without creating data", async () => {
     const suffix = randomUUID();
     const parser: TaskParser = {
@@ -118,6 +206,54 @@ describe("Feishu text intake", () => {
       action: "intake_confirm", candidateId: candidate.id, expectedVersion: candidate.version
     })).resolves.toMatchObject({ type: "success", message: expect.stringContaining("已创建") });
     expect(await connection.db.select().from(tasks).where(eq(tasks.title, `飞书确认任务 ${suffix}`))).toHaveLength(1);
+  });
+
+  it("asks for a missing duration and only then produces the confirmation card", async () => {
+    const suffix = randomUUID();
+    const partial: NaturalLanguageTaskCandidate = {
+      title: `飞书补时长任务 ${suffix}`,
+      entryType: "task",
+      date: "2099-12-28",
+      startAt: "2099-12-28T09:00:00+08:00",
+      endAt: null,
+      schedulePrecision: "exact",
+      notes: null,
+      missingFields: ["endAt"]
+    };
+    const complete = exactCandidate(partial.title);
+    const parser: TaskParser = { parse: vi.fn().mockResolvedValueOnce(partial).mockResolvedValueOnce(complete) };
+    const service = new FeishuIntakeService(
+      { targetOpenId: owner, timeZone: "Asia/Shanghai" },
+      connection.db,
+      taskService,
+      parser
+    );
+    const firstMessage = {
+      messageId: `om_duration_start_${suffix}`,
+      chatId: `oc_duration_${suffix}`,
+      operatorOpenId: owner,
+      messageType: "text",
+      text: "12月28日上午九点整理材料"
+    };
+    await expect(service.receive(firstMessage)).resolves.toEqual({
+      kind: "text",
+      text: expect.stringContaining("准备做多久")
+    });
+    const stored = await storedCandidate(firstMessage.messageId);
+    expect(stored.state).toBe("awaiting_duration");
+
+    const durationMessage = {
+      ...firstMessage,
+      messageId: `om_duration_reply_${suffix}`,
+      text: "1 小时"
+    };
+    await expect(service.receive(durationMessage)).resolves.toMatchObject({ kind: "card" });
+    const [updated] = await connection.db.select().from(feishuIntakeCandidates).where(eq(feishuIntakeCandidates.id, stored.id));
+    expect(updated).toMatchObject({ state: "pending", lastSourceMessageId: durationMessage.messageId });
+    expect(parser.parse).toHaveBeenLastCalledWith(expect.objectContaining({
+      text: expect.stringContaining("用户补充时长：1 小时")
+    }));
+    await expect(service.receive(durationMessage)).resolves.toEqual({ kind: "none" });
   });
 
   it("keeps ideas out of the task lifecycle after confirmation", async () => {
@@ -211,5 +347,6 @@ afterAll(async () => {
   }
   for (const entryId of createdInboxIds) await connection.db.delete(inboxEntries).where(eq(inboxEntries.id, entryId));
   for (const candidateId of createdCandidateIds) await connection.db.delete(feishuIntakeCandidates).where(eq(feishuIntakeCandidates.id, candidateId));
+  for (const briefId of createdBriefIds) await connection.db.delete(dailyBriefs).where(eq(dailyBriefs.id, briefId));
   await connection.client.end();
 });

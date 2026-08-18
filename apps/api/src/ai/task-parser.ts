@@ -99,7 +99,8 @@ export class DeepSeekTaskParser implements TaskParser {
               "只有 date、startAt、endAt、schedulePrecision、notes 这些可选字段在原文无法确定时才返回 null。missingFields 只能列这些可选字段，不得包含 title 或 entryType。",
               "日期使用 YYYY-MM-DD；相对日期根据 referenceDate 推导。具体时间使用带时区偏移的 ISO 8601。",
               "schedulePrecision 只能是 exact、morning、afternoon、evening 或 null。",
-              "task 的 exact 起止时间必须落在 Asia/Shanghai 本地时间的 :00 或 :30，且至少相隔 30 分钟；时间块长度只由起止时间决定。",
+              "task 的 exact 起止时间必须落在 Asia/Shanghai 本地时间的 :00 或 :30，且至少相隔 30 分钟；时间块长度只由起止时间决定。若用户明确给出开始时间但没有给时长或结束时间，保留 startAt，令 endAt=null，并把 endAt 放入 missingFields，等待系统追问时长。",
+              "若输入同时包含‘原始安排’和‘用户补充时长’，必须保留原始任务标题与开始时间，用补充时长计算 endAt，并从 missingFields 移除 endAt。",
               "idea 或 question 的 date、startAt、endAt、schedulePrecision 必须全部为 null；这些不适用字段不要放入 missingFields。",
               "只返回一个包含 title、entryType、date、startAt、endAt、schedulePrecision、notes、missingFields 的 JSON 对象，不要 Markdown 或解释。",
               context

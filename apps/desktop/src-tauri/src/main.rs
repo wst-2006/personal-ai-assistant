@@ -12,20 +12,17 @@ use std::sync::{
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use tauri::{
-    menu::{Menu, MenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    AppHandle, Manager, RunEvent, WindowEvent,
-};
-use tauri_plugin_autostart::ManagerExt;
+use tauri::{AppHandle, Manager, RunEvent, WindowEvent};
+
+mod focus_companion;
 
 const MAIN_WINDOW_LABEL: &str = "main";
 const START_HIDDEN_ARGUMENT: &str = "--minimized";
 const CLEANUP_INSTALLED_RUNTIME_ARGUMENT: &str = "--cleanup-installed-runtime";
 
 #[derive(Default)]
-struct AppLifecycle {
-    quit_requested: AtomicBool,
+pub(crate) struct AppLifecycle {
+    pub(crate) quit_requested: AtomicBool,
 }
 
 struct ManagedChild {
@@ -59,9 +56,29 @@ impl LocalRuntime {
         let node = runtime.join("node.exe");
         let api = runtime.join("api").join("dist").join("server.js");
         let worker = runtime.join("worker").join("dist").join("worker.js");
+        let migration = runtime
+            .join("api")
+            .join("node_modules")
+            .join("@personal-ai")
+            .join("db")
+            .join("dist")
+            .join("migrate.js");
+        let migration_journal = runtime
+            .join("api")
+            .join("node_modules")
+            .join("@personal-ai")
+            .join("db")
+            .join("drizzle")
+            .join("meta")
+            .join("_journal.json");
         let bundled_env_template = runtime.join(".env.example");
 
-        if !node.is_file() || !api.is_file() || !worker.is_file() || !bundled_env_template.is_file()
+        if !node.is_file()
+            || !api.is_file()
+            || !worker.is_file()
+            || !migration.is_file()
+            || !migration_journal.is_file()
+            || !bundled_env_template.is_file()
         {
             return Err(format!(
                 "standalone runtime is incomplete under {}",
@@ -106,6 +123,8 @@ impl LocalRuntime {
                     .to_string(),
             );
         }
+
+        run_bundled_migrations(&runtime, &node, &migration, &user_env, &app_data_dir)?;
 
         let launch = BundledLaunch {
             runtime: runtime.clone(),
@@ -402,6 +421,55 @@ fn append_desktop_log(directory: &Path, message: &str) {
     if let Ok(mut log) = OpenOptions::new().create(true).append(true).open(path) {
         let _ = writeln!(log, "[{timestamp}] {message}");
     }
+}
+
+fn run_bundled_migrations(
+    runtime: &Path,
+    node: &Path,
+    migration: &Path,
+    env_file: &Path,
+    log_directory: &Path,
+) -> Result<(), String> {
+    let stdout_path = log_directory.join("migration.stdout.log");
+    let stderr_path = log_directory.join("migration.stderr.log");
+    rotate_log_if_needed(&stdout_path);
+    rotate_log_if_needed(&stderr_path);
+    let stdout = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&stdout_path)
+        .map_err(|error| format!("failed to open migration stdout log: {error}"))?;
+    let stderr = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&stderr_path)
+        .map_err(|error| format!("failed to open migration stderr log: {error}"))?;
+    let migration_argument = migration.strip_prefix(runtime).unwrap_or(migration);
+    let mut command = Command::new(node);
+    command
+        .arg(migration_argument)
+        .current_dir(runtime)
+        .env("NODE_ENV", "production")
+        .env("PERSONAL_AI_ENV_FILE", env_file)
+        .env(
+            "PERSONAL_AI_MIGRATION_BACKUP_DIR",
+            log_directory.join("backups").join("migrations"),
+        )
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(stderr));
+    configure_command(&mut command);
+    let status = command
+        .status()
+        .map_err(|error| format!("failed to start guarded database migration: {error}"))?;
+    if status.success() {
+        append_desktop_log(log_directory, "guarded database migration check completed");
+        return Ok(());
+    }
+    Err(format!(
+        "guarded database migration stopped with status {status}; inspect {} and {}",
+        stdout_path.display(),
+        stderr_path.display()
+    ))
 }
 
 fn rotate_log_if_needed(path: &Path) {
@@ -781,7 +849,7 @@ fn stop_process_tree(mut child: Child) {
     let _ = child.wait();
 }
 
-fn show_main_window(app: &AppHandle) {
+pub(crate) fn show_main_window(app: &AppHandle) {
     let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) else {
         return;
     };
@@ -790,44 +858,31 @@ fn show_main_window(app: &AppHandle) {
     let _ = window.set_focus();
 }
 
-fn install_tray(app: &AppHandle) -> tauri::Result<()> {
-    let open = MenuItem::with_id(app, "open", "打开主界面", true, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "退出个人 AI 助理", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &quit])?;
-    let icon = app
-        .default_window_icon()
-        .cloned()
-        .ok_or_else(|| tauri::Error::AssetNotFound("default window icon".into()))?;
+#[cfg(windows)]
+pub(crate) fn confirm_full_exit() -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        MessageBoxW, IDYES, MB_DEFBUTTON2, MB_ICONWARNING, MB_YESNO,
+    };
 
-    TrayIconBuilder::with_id("personal-ai-tray")
-        .icon(icon)
-        .tooltip("个人 AI 助理")
-        .menu(&menu)
-        .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id.as_ref() {
-            "open" => show_main_window(app),
-            "quit" => {
-                app.state::<AppLifecycle>()
-                    .quit_requested
-                    .store(true, Ordering::SeqCst);
-                app.exit(0);
-            }
-            _ => {}
-        })
-        .on_tray_icon_event(|tray, event| {
-            if matches!(
-                event,
-                TrayIconEvent::Click {
-                    button: MouseButton::Left,
-                    button_state: MouseButtonState::Up,
-                    ..
-                }
-            ) {
-                show_main_window(tray.app_handle());
-            }
-        })
-        .build(app)?;
-    Ok(())
+    fn wide(value: &str) -> Vec<u16> {
+        value.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    let title = wide("彻底退出个人 AI 助理");
+    let body = wide("彻底退出后，本地提醒服务和飞书提醒将停止。\n\n确定要彻底退出吗？");
+    unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            body.as_ptr(),
+            title.as_ptr(),
+            MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2,
+        ) == IDYES
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn confirm_full_exit() -> bool {
+    true
 }
 
 fn should_start_hidden() -> bool {
@@ -887,16 +942,25 @@ fn main() {
     let app = tauri::Builder::default()
         .manage(LocalRuntime::default())
         .manage(AppLifecycle::default())
+        .manage(focus_companion::FocusCompanionState::default())
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main_window(app);
         }))
-        .plugin(
-            tauri_plugin_autostart::Builder::new()
-                .args([START_HIDDEN_ARGUMENT])
-                .build(),
-        )
+        .invoke_handler(tauri::generate_handler![
+            focus_companion::focus_mini_settings,
+            focus_companion::focus_mini_hide,
+            focus_companion::focus_mini_minimize,
+            focus_companion::focus_mini_open_main,
+            focus_companion::focus_mini_start_drag,
+            focus_companion::focus_mini_set_always_on_top,
+            focus_companion::focus_mini_set_locked,
+            focus_companion::focus_mini_set_auto_show,
+            focus_companion::focus_mini_set_position_mode,
+            focus_companion::focus_mini_set_notification,
+        ])
         .setup(|app| {
-            install_tray(app.handle())?;
+            focus_companion::install(app.handle())?;
             let mut runtime_started = true;
             if !cfg!(debug_assertions) {
                 let app_handle = app.handle();
@@ -914,7 +978,6 @@ fn main() {
                     Err("standalone runtime is missing; rebuild the desktop installer".to_string())
                 };
 
-                let start_succeeded = start_result.is_ok();
                 if let Err(error) = &start_result {
                     let retrying = app
                         .state::<LocalRuntime>()
@@ -942,16 +1005,6 @@ fn main() {
                         show_main_window(app_handle);
                     }
                 }
-                if start_succeeded || runtime_started {
-                    if let Err(error) = app.autolaunch().enable() {
-                        if let Ok(app_data_dir) = app.path().app_data_dir() {
-                            append_desktop_log(
-                                &app_data_dir,
-                                &format!("failed to enable Windows login startup: {error}"),
-                            );
-                        }
-                    }
-                }
             }
             if runtime_started && should_start_hidden() {
                 if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
@@ -965,6 +1018,8 @@ fn main() {
         .build(tauri::generate_context!())
         .expect("failed to run Personal AI Assistant desktop shell");
     app.run(|app, event| match event {
+        RunEvent::WindowEvent { label, event, .. }
+            if focus_companion::handle_window_event(app, &label, &event) => {}
         RunEvent::WindowEvent {
             label,
             event: WindowEvent::CloseRequested { api, .. },

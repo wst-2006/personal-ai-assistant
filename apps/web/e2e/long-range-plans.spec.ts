@@ -95,9 +95,64 @@ test("月度规划通过真实 API 持久化、编辑、提示过期版本、归
     await page.getByRole("button", { name: "恢复规划", exact: true }).click();
     await restored;
     await expect(page.getByRole("button", { name: "归档规划", exact: true })).toBeVisible();
+
+    page.once("dialog", async (dialog) => {
+      expect(dialog.message()).toContain("已经由它创建的任务会保留");
+      await dialog.accept();
+    });
+    const deleted = page.waitForResponse((response) => response.url().endsWith(`/api/v1/long-range-plans/${createdPlan.id}`)
+      && response.request().method() === "DELETE" && response.status() === 204);
+    await page.getByRole("button", { name: "删除规划", exact: true }).click();
+    await deleted;
+    await expect(page.locator(".long-range-item").filter({ hasText: `${editedTitle} 已在另一处保存` })).toHaveCount(0);
   } finally {
     await cleanupPlans(ids);
   }
+});
+
+test("AI 整理只展示候选，应用前不覆盖原稿，应用后仍可人工微调", async ({ page }) => {
+  const originalDescription = "我想在一个月内整理研究方向，但要保留课程时间，不自动创建任何任务。";
+  let receivedPayload: Record<string, unknown> | null = null;
+  await page.route("**/api/v1/long-range-plans/organize-ai", async (route) => {
+    receivedPayload = route.request().postDataJSON() as Record<string, unknown>;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ candidate: {
+        title: "研究方向整理月度主线",
+        description: "在不挤占课程时间的前提下，形成可继续讨论的研究方向候选。",
+        milestones: [{ title: "确认资料边界", targetDate: "2099-04-10", notes: "先整理可靠来源" }]
+      } })
+    });
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "规划", exact: true }).click();
+  await page.getByRole("button", { name: "新建规划", exact: true }).click();
+  await page.getByLabel("规划标题").fill("我的原始标题");
+  await page.getByLabel("开始日期").fill("2099-04-01");
+  await page.getByLabel("结束日期").fill("2099-04-30");
+  await page.getByLabel("规划说明").fill(originalDescription);
+  await page.getByRole("button", { name: "让 AI 整理成候选", exact: true }).click();
+
+  const candidate = page.getByLabel("AI 整理的规划候选");
+  await expect(candidate).toBeVisible();
+  await expect(candidate).toContainText("研究方向整理月度主线");
+  await expect(page.getByLabel("规划说明")).toHaveValue(originalDescription);
+  expect(receivedPayload).toMatchObject({
+    title: "我的原始标题",
+    periodStart: "2099-04-01",
+    periodEnd: "2099-04-30",
+    description: originalDescription
+  });
+
+  await candidate.getByRole("button", { name: "应用后继续微调", exact: true }).click();
+  await expect(candidate).toHaveCount(0);
+  await expect(page.getByLabel("规划标题")).toHaveValue("研究方向整理月度主线");
+  await expect(page.getByLabel("规划说明")).toHaveValue("在不挤占课程时间的前提下，形成可继续讨论的研究方向候选。");
+  await expect(page.getByLabel("里程碑 1", { exact: true })).toHaveValue("确认资料边界");
+  await page.getByLabel("里程碑 1", { exact: true }).fill("用户微调后的资料边界");
+  await expect(page.getByLabel("里程碑 1", { exact: true })).toHaveValue("用户微调后的资料边界");
 });
 
 test("390px 下可查看并创建长期规划，不产生横向溢出", async ({ page }) => {

@@ -1,0 +1,2 @@
+ALTER TABLE "health_week_conversation_messages" ADD COLUMN "needs_clarification" boolean;--> statement-breakpoint
+ALTER TABLE "health_week_conversation_messages" ADD CONSTRAINT "health_week_conversation_messages_clarification_check" CHECK (("health_week_conversation_messages"."role" = 'user' and "health_week_conversation_messages"."needs_clarification" is null) or ("health_week_conversation_messages"."role" = 'assistant' and "health_week_conversation_messages"."needs_clarification" is not null));

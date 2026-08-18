@@ -1,61 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-
-type SeasonalPlantKind = "orchid" | "lotus" | "chrysanthemum" | "plum";
-
-type SeasonalMotif = {
-  kind: SeasonalPlantKind;
-  season: string;
-  term: string;
-  plant: string;
-  note: string;
-};
-
-const solarTerms = [
-  [1, 5, "小寒"], [1, 20, "大寒"], [2, 4, "立春"], [2, 19, "雨水"],
-  [3, 5, "惊蛰"], [3, 20, "春分"], [4, 5, "清明"], [4, 20, "谷雨"],
-  [5, 5, "立夏"], [5, 21, "小满"], [6, 6, "芒种"], [6, 21, "夏至"],
-  [7, 7, "小暑"], [7, 23, "大暑"], [8, 7, "立秋"], [8, 23, "处暑"],
-  [9, 7, "白露"], [9, 23, "秋分"], [10, 8, "寒露"], [10, 23, "霜降"],
-  [11, 7, "立冬"], [11, 22, "小雪"], [12, 7, "大雪"], [12, 22, "冬至"],
-] as const;
-
-function dateParts(value?: string) {
-  if (value && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    const [, month, day] = value.split("-").map(Number);
-    return { month, day };
-  }
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Shanghai",
-    month: "numeric",
-    day: "numeric",
-  }).formatToParts(new Date());
-  return {
-    month: Number(parts.find((part) => part.type === "month")?.value ?? 1),
-    day: Number(parts.find((part) => part.type === "day")?.value ?? 1),
-  };
-}
-
-function resolveSeasonalMotif(value?: string): SeasonalMotif {
-  const { month, day } = dateParts(value);
-  const numericDate = month * 100 + day;
-  let termIndex = solarTerms.length - 1;
-  for (let index = 0; index < solarTerms.length; index += 1) {
-    const [termMonth, termDay] = solarTerms[index];
-    if (numericDate >= termMonth * 100 + termDay) termIndex = index;
-  }
-  const term = solarTerms[termIndex][2];
-
-  if (termIndex >= 2 && termIndex <= 7) {
-    return { kind: "orchid", season: "春", term, plant: "兰", note: "幽香入纸" };
-  }
-  if (termIndex >= 8 && termIndex <= 13) {
-    return { kind: "lotus", season: "夏", term, plant: "荷", note: "清影生凉" };
-  }
-  if (termIndex >= 14 && termIndex <= 19) {
-    return { kind: "chrysanthemum", season: "秋", term, plant: "菊", note: "疏篱有秋" };
-  }
-  return { kind: "plum", season: "冬", term, plant: "梅", note: "暗香破寒" };
-}
+import { resolveSolarTerm, shanghaiDateKey, type SeasonalAccentKind, type SeasonalPlantKind } from "./solar-terms";
 
 function PlantDrawing({ kind }: { kind: SeasonalPlantKind }) {
   if (kind === "orchid") {
@@ -113,12 +57,46 @@ function PlantDrawing({ kind }: { kind: SeasonalPlantKind }) {
   </g>;
 }
 
+function TermAccent({ kind }: { kind: SeasonalAccentKind }) {
+  if (kind === "rain") return <g className="seasonal-term-accent seasonal-accent-rain"><path d="M48 66l-8 15M61 59l-10 19M75 64l-8 16" /></g>;
+  if (kind === "thunder") return <g className="seasonal-term-accent seasonal-accent-thunder"><path d="M39 76C50 64 67 64 78 76M45 82C54 74 65 74 73 82" /></g>;
+  if (kind === "balance") return <g className="seasonal-term-accent seasonal-accent-balance"><circle cx="58" cy="69" r="8"/><path d="M35 84H82" /></g>;
+  if (kind === "breeze") return <g className="seasonal-term-accent seasonal-accent-breeze"><path d="M35 68C49 58 66 62 78 55M42 79C56 70 70 73 86 66" /></g>;
+  if (kind === "grain") return <g className="seasonal-term-accent seasonal-accent-grain"><path d="M50 83C48 71 54 60 65 52M56 72C47 69 43 62 47 57C55 58 59 64 56 72ZM63 61C60 53 64 47 70 45C75 51 72 58 63 61Z" /></g>;
+  if (kind === "sun") return <g className="seasonal-term-accent seasonal-accent-sun"><circle cx="59" cy="67" r="9"/><path d="M59 49v-7M59 92v-7M41 67h-7M84 67h-7" /></g>;
+  if (kind === "dew") return <g className="seasonal-term-accent seasonal-accent-dew"><path d="M52 78C52 70 59 63 63 57C68 65 73 71 72 78C71 88 54 89 52 78Z" /></g>;
+  if (kind === "snow") return <g className="seasonal-term-accent seasonal-accent-snow"><path d="M49 61v18M41 66l16 9M57 66l-16 9M73 52v14M67 55l12 7M79 55l-12 7" /></g>;
+  if (kind === "bud") return <g className="seasonal-term-accent seasonal-accent-bud"><path d="M48 82C50 68 57 57 69 49M59 61C50 60 46 54 49 48C58 48 63 53 59 61ZM66 54C65 46 70 41 77 42C80 50 75 55 66 54Z" /></g>;
+  return <g className="seasonal-term-accent seasonal-accent-frost"><path d="M39 76l15-15M54 61l10-11M50 65l-11-3M58 57l1-11M65 51l10 2" /></g>;
+}
+
 export function SeasonalPlant({ date }: { date?: string }) {
-  const motif = useMemo(() => resolveSeasonalMotif(date), [date]);
-  return <aside className={`seasonal-corner seasonal-${motif.kind}`} aria-label={`${motif.term}，${motif.season}季${motif.plant}花水墨`}>
-    <svg viewBox="0 0 270 235" role="img" aria-hidden="true">
+  const [clock, setClock] = useState(() => Date.now());
+  const live = !date || date === shanghaiDateKey(new Date(clock));
+  const motif = useMemo(() => resolveSolarTerm(live ? new Date(clock) : date), [clock, date, live]);
+  useEffect(() => {
+    if (!live) return;
+    const now = Date.now();
+    const delay = Math.max(1_000, Math.min(60 * 60 * 1_000, motif.nextStart.getTime() - now + 250));
+    const timer = window.setTimeout(() => setClock(Date.now()), delay);
+    return () => window.clearTimeout(timer);
+  }, [live, motif.nextStart]);
+  return <aside
+    className={`seasonal-corner seasonal-${motif.kind} seasonal-term-${motif.slug}`}
+    data-solar-term={motif.term}
+    data-solar-term-index={motif.index}
+    data-season={motif.season}
+    data-season-phase={motif.seasonPhase}
+    data-plant={motif.plant}
+    data-accent={motif.accent}
+    data-term-start={motif.start.toISOString()}
+    data-next-term-start={motif.nextStart.toISOString()}
+    aria-label={`${motif.term}，${motif.season}季${motif.plant}花水墨，${motif.note}`}
+  >
+    <svg key={`${motif.term}:${motif.start.toISOString()}`} viewBox="0 0 270 235" role="img" aria-hidden="true">
       <path className="seasonal-wash" d="M77 35C118 4 196 7 234 49C269 88 256 163 210 200C163 238 75 226 37 179C2 136 29 70 77 35Z" />
       <path className="seasonal-mist" d="M23 196C77 184 115 201 163 193C202 186 235 190 267 203" />
+      <TermAccent kind={motif.accent} />
       <PlantDrawing kind={motif.kind} />
     </svg>
     <div className="seasonal-caption" aria-hidden="true"><span>{motif.term}</span><strong>{motif.plant}</strong><small>{motif.note}</small></div>
@@ -128,12 +106,13 @@ export function SeasonalPlant({ date }: { date?: string }) {
 export function InitialInkLoadingScreen() {
   const [progress, setProgress] = useState(0);
   const [leaving, setLeaving] = useState(false);
-  const [visible, setVisible] = useState(true);
+  const [visible, setVisible] = useState(() => !navigator.webdriver);
 
   useEffect(() => {
+    if (navigator.webdriver) return;
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    const duration = reducedMotion ? 260 : 2_150;
-    const fadeDuration = reducedMotion ? 40 : 430;
+    const duration = reducedMotion ? 260 : 4_000;
+    const fadeDuration = reducedMotion ? 40 : 520;
     const startedAt = performance.now();
     let animationFrame = 0;
     let removeTimer = 0;
@@ -159,7 +138,7 @@ export function InitialInkLoadingScreen() {
 
   if (!visible) return null;
   const progressRatio = progress / 100;
-  const sunOffset = Math.round((1 - progressRatio) * 96);
+  const sunOffset = Math.round((1 - progressRatio) * 112);
   const sunOpacity = Math.min(1, .18 + progressRatio * 1.05);
   return <section className={`ink-loading-screen ${leaving ? "is-leaving" : ""}`} aria-label="正在加载个人 AI 助手" aria-live="polite">
     <svg className="ink-loading-landscape" viewBox="0 0 1200 720" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
@@ -167,7 +146,7 @@ export function InitialInkLoadingScreen() {
         <filter id="loading-ink-soften" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="18" /></filter>
         <filter id="loading-mist-soften" x="-30%" y="-60%" width="160%" height="220%"><feGaussianBlur stdDeviation="11" /></filter>
         <clipPath id="loading-sun-horizon">
-          <path d="M0 0H1200V300C899 292 821 277 760 290C721 299 700 314 674 296C648 309 629 291 594 283C548 272 510 286 465 303C407 324 339 311 0 302Z" />
+          <path d="M0 0H1200V306C904 298 815 287 744 298C688 307 646 324 600 300C551 325 506 304 450 295C383 284 306 316 0 304Z" />
         </clipPath>
       </defs>
       <g className="loading-ink-washes" filter="url(#loading-ink-soften)">
@@ -181,17 +160,16 @@ export function InitialInkLoadingScreen() {
       </g>
       <g clipPath="url(#loading-sun-horizon)">
         <g className="loading-rising-sun" style={{ transform: `translateY(${sunOffset}px)`, opacity: sunOpacity }}>
-          <circle className="loading-sun-glow" cx="674" cy="244" r="63" />
-          <circle className="loading-sun-disc" cx="674" cy="244" r="39" />
+          <circle className="loading-sun-disc" cx="600" cy="246" r="42" />
         </g>
       </g>
-      <image className="loading-waterfall-art" href="/art/cold-waterfall-ink-public-domain.png" x="292" y="28" width="636" height="702" preserveAspectRatio="xMidYMid meet" />
+      <image className="loading-waterfall-art" href="/art/cold-waterfall-ink-public-domain.png" x="758" y="-18" width="438" height="546" preserveAspectRatio="xMidYMid meet" />
       <g className="loading-water-glints">
-        <path d="M630 440C620 478 621 520 613 558M650 427C643 473 647 520 640 574M670 445C662 489 667 531 660 563" />
+        <path d="M952 327C944 364 947 406 940 447M972 316C965 361 970 408 963 460M991 331C985 372 989 417 983 449" />
       </g>
       <g className="loading-water-spray" filter="url(#loading-mist-soften)">
-        <ellipse cx="628" cy="649" rx="132" ry="26" />
-        <ellipse cx="680" cy="641" rx="92" ry="20" />
+        <ellipse cx="951" cy="508" rx="113" ry="23" />
+        <ellipse cx="1002" cy="500" rx="78" ry="18" />
       </g>
       <g className="loading-river-lines">
         <path d="M466 659C391 659 330 671 278 694" />

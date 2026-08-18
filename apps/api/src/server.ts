@@ -21,11 +21,15 @@ import { FeishuWebhookService, loadFeishuWebhookConfig } from "./feishu-webhook.
 import { BackupService } from "./backup-service.js";
 import { HealthService } from "./health-service.js";
 import { DeepSeekHealthPlanner } from "./ai/health-planner.js";
+import { DeepSeekHealthConversationResponder } from "./ai/health-conversation-responder.js";
+import { HealthConversationService } from "./health-conversation-service.js";
+import { FeishuHealthMessenger, loadFeishuHealthMessengerConfig } from "./feishu-health-messenger.js";
 import { OpenAiCompatibleSleepImageAnalyzer } from "./ai/sleep-image-analyzer.js";
 import { loadVisionConfig } from "./ai/vision-config.js";
 import { LongRangePlanService } from "./long-range-plan-service.js";
 import { LongRangeTaskTreeService } from "./long-range-task-tree-service.js";
 import { DeepSeekLongRangeTaskTreePlanner } from "./ai/long-range-task-tree-planner.js";
+import { DeepSeekLongRangePlanOrganizer } from "./ai/long-range-plan-organizer.js";
 import { UserProfileService } from "./user-profile-service.js";
 import { ConversationService } from "./conversation-service.js";
 import { DeepSeekConversationResponder } from "./ai/conversation-responder.js";
@@ -46,14 +50,32 @@ const feishuActionConfig = loadFeishuCardActionConfig(process.env);
 const feishuIntakeConfig = loadFeishuIntakeConfig(process.env);
 const feishuWebhookConfig = loadFeishuWebhookConfig(process.env);
 const feishuLongConnectionConfig = loadFeishuLongConnectionConfig(process.env);
+const feishuHealthMessengerConfig = loadFeishuHealthMessengerConfig(process.env);
+const healthConversationService = new HealthConversationService(
+  database.db,
+  feishuHealthMessengerConfig ? new FeishuHealthMessenger(feishuHealthMessengerConfig) : undefined
+);
 const deepSeekConfig = loadDeepSeekConfig();
 const visionConfig = loadVisionConfig();
-const briefProviders = new BriefProviders();
+const briefProviders = new BriefProviders({
+  ...process.env,
+  // External daily-brief sources are intentionally disabled in the published build.
+  // Local review summaries remain available so the existing review/diary flow keeps working.
+  BRIEF_EXTERNAL_SOURCES_ENABLED: process.env.BRIEF_EXTERNAL_SOURCES_ENABLED ?? "false"
+});
+const briefService = new BriefService(database.db, briefProviders, new DeepSeekBriefWriter(deepSeekConfig, userProfileService));
 const feishuIntake = feishuIntakeConfig
-  ? new FeishuIntakeService(feishuIntakeConfig, database.db, taskService, new DeepSeekTaskParser(deepSeekConfig, userProfileService))
+  ? new FeishuIntakeService(
+      feishuIntakeConfig,
+      database.db,
+      taskService,
+      new DeepSeekTaskParser(deepSeekConfig, userProfileService),
+      focusService,
+      { service: healthConversationService, responder: new DeepSeekHealthConversationResponder(deepSeekConfig, userProfileService) }
+    )
   : null;
 const feishuActions = feishuActionConfig
-  ? new FeishuCardActionService(feishuActionConfig, taskService, focusService, feishuIntake ?? undefined, desktopCommandService)
+  ? new FeishuCardActionService(feishuActionConfig, taskService, focusService, feishuIntake ?? undefined)
   : null;
 const feishuLongConnection = feishuActions && feishuLongConnectionConfig
   ? new FeishuLongConnectionService(feishuLongConnectionConfig, feishuActions, undefined, undefined, feishuIntake ?? undefined)
@@ -65,18 +87,23 @@ const app = buildApp({
   focusStructurePlanner: new DeepSeekFocusStructurePlanner(deepSeekConfig, userProfileService),
   reviewService: new ReviewService(database.db),
   reviewResponder: new DeepSeekReviewResponder(deepSeekConfig, userProfileService),
-  briefService: new BriefService(database.db, briefProviders, new DeepSeekBriefWriter(deepSeekConfig, userProfileService)),
+  briefService,
+  standaloneBriefsEnabled: false,
   diaryService: new DiaryService(database.db),
   growthService: new GrowthService(database.db),
   backupService: new BackupService(database.db),
   healthService: new HealthService(database.db, briefProviders),
   healthPlanner: new DeepSeekHealthPlanner(deepSeekConfig, userProfileService),
+  healthConversationService,
+  healthConversationResponder: new DeepSeekHealthConversationResponder(deepSeekConfig, userProfileService),
+  healthFeishuSyncAvailable: Boolean(feishuHealthMessengerConfig),
   sleepImageAnalyzer: visionConfig
     ? new OpenAiCompatibleSleepImageAnalyzer(visionConfig)
     : undefined,
   longRangePlanService: new LongRangePlanService(database.db),
   longRangeTaskTreeService: new LongRangeTaskTreeService(database.db),
   longRangeTaskTreePlanner: new DeepSeekLongRangeTaskTreePlanner(deepSeekConfig, userProfileService),
+  longRangePlanOrganizer: new DeepSeekLongRangePlanOrganizer(deepSeekConfig, userProfileService),
   userProfileService,
   conversationService: new ConversationService(database.db),
   conversationResponder: new DeepSeekConversationResponder(deepSeekConfig, userProfileService),

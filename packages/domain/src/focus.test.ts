@@ -29,6 +29,23 @@ describe("focus input contracts", () => {
     }).success).toBe(false);
   });
 
+  it("accepts an optional UUID command id and rejects arbitrary retry tokens", () => {
+    expect(evaluateFocusSessionSchema.safeParse({
+      expectedVersion: 1,
+      commandId: "00000000-0000-4000-8000-000000000002",
+      outcome: "complete",
+      progressPercent: 100,
+      satisfaction: "satisfied"
+    }).success).toBe(true);
+    expect(evaluateFocusSessionSchema.safeParse({
+      expectedVersion: 1,
+      commandId: "retry-me",
+      outcome: "complete",
+      progressPercent: 100,
+      satisfaction: "satisfied"
+    }).success).toBe(false);
+  });
+
   it.each([
     ["complete", 100, true], ["complete", 90, false], ["partial", 50, true], ["partial", 0, false], ["not_completed", 0, true]
   ] as const)("validates %s evaluation percentages", (outcome, progressPercent, valid) => {
@@ -41,11 +58,11 @@ describe("focus structure allocation", () => {
   const start = "2026-07-27T09:00:00+08:00";
 
   it.each([
-    [30, "09:30", 30, 0],
+    [30, "09:30", 25, 5],
     [60, "10:00", 55, 5],
-    [90, "10:30", 85, 5],
-    [120, "11:00", 115, 5]
-  ] as const)("allocates %i minutes as %i focus + %i rest", (total, endTime, focus, rest) => {
+    [90, "10:30", 80, 10],
+    [120, "11:00", 105, 15]
+  ] as const)("allocates %i minutes ending at %s as %i focus + %i rest", (total, endTime, focus, rest) => {
     const result = allocateContinuousFocusStructure({
       totalStartAt: start,
       totalEndAt: `2026-07-27T${endTime}:00+08:00`
@@ -53,18 +70,18 @@ describe("focus structure allocation", () => {
     expect(result.totalMinutes).toBe(total);
     expect(result.effectiveFocusMinutes).toBe(focus);
     expect(result.breakMinutes).toBe(rest);
-    expect(result.segments).toEqual(rest === 0
-      ? [{ segmentType: "focus", durationMinutes: focus }]
-      : [{ segmentType: "focus", durationMinutes: focus }, { segmentType: "break", durationMinutes: rest }]);
+    expect(result.segments).toEqual([
+      { segmentType: "focus", durationMinutes: focus },
+      { segmentType: "break", durationMinutes: rest }
+    ]);
   });
 
-  it("accepts an explicit zero break for a 30-minute task", () => {
-    const result = allocateContinuousFocusStructure({
+  it("rejects removing the final rest from a 30-minute task", () => {
+    expect(() => allocateContinuousFocusStructure({
       totalStartAt: start,
       totalEndAt: "2026-07-27T09:30:00+08:00",
       breakMinutes: 0
-    });
-    expect(result.segments).toEqual([{ segmentType: "focus", durationMinutes: 30 }]);
+    })).toThrow("requires");
   });
 
   it("counts only focus segments and clips a late start at the fixed end", () => {
@@ -91,7 +108,7 @@ describe("focus structure allocation", () => {
     expect(result.breakMinutes).toBe(15);
   });
 
-  it.each([0, 4, 16])("rejects a rest value outside 5-15 minutes for long tasks", (breakMinutes) => {
+  it.each([0, 4, 16])("rejects a rest value outside 5-15 minutes", (breakMinutes) => {
     expect(() => allocateContinuousFocusStructure({
       totalStartAt: start,
       totalEndAt: "2026-07-27T10:00:00+08:00",
@@ -176,7 +193,7 @@ describe("focus structure allocation", () => {
   it("rejects a segment count that cannot fit its minimum focus and rest", () => {
     expect(() => allocateTemplateFocusStructure({
       totalStartAt: start,
-      totalEndAt: "2026-07-27T10:00:00+08:00",
+      totalEndAt: "2026-07-27T09:30:00+08:00",
       focusCount: 2,
       distribution: "equal",
       breakMinutes: 5

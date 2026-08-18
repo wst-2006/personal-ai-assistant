@@ -139,7 +139,11 @@ export const naturalLanguageTaskCandidateSchema = z.object({
   }
   if (candidate.schedulePrecision !== "exact") return;
   if (!candidate.startAt || !candidate.endAt) {
-    context.addIssue({ code: z.ZodIssueCode.custom, path: ["startAt"], message: "Exact candidates require startAt and endAt" });
+    const missingStartIsDeclared = !candidate.startAt && candidate.missingFields.includes("startAt");
+    const missingEndIsDeclared = !candidate.endAt && candidate.missingFields.includes("endAt");
+    if (!missingStartIsDeclared && !missingEndIsDeclared) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ["startAt"], message: "Incomplete exact candidates must declare the missing time field" });
+    }
     return;
   }
   const start = new Date(candidate.startAt);

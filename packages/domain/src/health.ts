@@ -39,12 +39,35 @@ export const healthProfileSchema = z.object({
   }
 });
 
-export const healthMovementCategorySchema = z.enum(["strength", "volleyball", "running", "cycling", "recovery", "rest"]);
+export const healthMovementCategorySchema = z.enum(["strength", "volleyball", "running", "walking", "cycling", "recovery", "rest"]);
 export const healthIntensitySchema = z.enum(["rest", "low", "moderate", "high"]);
+const healthGramRangeSchema = z.object({ minimum: z.number().int().min(0).max(1000), maximum: z.number().int().min(0).max(1000) }).strict();
+const healthMealExamplesSchema = z.object({
+  breakfast: z.array(z.string().trim().min(1).max(160)).min(1).max(6),
+  lunch: z.array(z.string().trim().min(1).max(160)).min(1).max(6),
+  dinner: z.array(z.string().trim().min(1).max(160)).min(1).max(6),
+  snack: z.array(z.string().trim().min(1).max(160)).max(5)
+}).strict();
+const healthFoodReferenceSchema = z.object({
+  proteinOptions: z.array(z.string().trim().min(1).max(120)).min(1).max(10),
+  fiberOptions: z.array(z.string().trim().min(1).max(120)).min(1).max(10),
+  carbOptions: z.array(z.string().trim().min(1).max(120)).min(1).max(10)
+}).strict();
 
 export const healthDailyReferenceSchema = z.object({
   nutritionDirection: z.string().trim().min(1).max(700),
   proteinRangeGrams: z.object({ minimum: z.number().int().min(1).max(300), maximum: z.number().int().min(1).max(300) }).strict(),
+  nutritionTargets: z.object({
+    carbohydrateGrams: healthGramRangeSchema,
+    fatGrams: healthGramRangeSchema,
+    fiberGrams: healthGramRangeSchema,
+    hydrationLiters: z.object({ minimum: z.number().min(0).max(10), maximum: z.number().min(0).max(10) }).strict(),
+    macroRatioPercent: z.object({ protein: z.number().min(0).max(100), carbohydrate: z.number().min(0).max(100), fat: z.number().min(0).max(100) }).strict()
+  }).strict().optional(),
+  hydrationGuidance: z.array(z.string().trim().min(1).max(180)).min(1).max(6).optional(),
+  mealExamples: healthMealExamplesSchema.optional(),
+  proteinRotationSources: z.array(z.string().trim().min(1).max(120)).min(1).max(5).optional(),
+  foodReference: healthFoodReferenceSchema.optional(),
   plateGuidance: z.array(z.string().trim().min(1).max(240)).min(1).max(5),
   seasonalVegetables: z.array(z.string().trim().min(1).max(80)).min(1).max(6),
   seasonalGuidance: z.string().trim().min(1).max(500).nullable().optional(),
@@ -59,11 +82,22 @@ export const healthDailyReferenceSchema = z.object({
     durationMinutes: z.object({ minimum: z.number().int().min(0).max(240), maximum: z.number().int().min(0).max(300) }).strict(),
     intensity: healthIntensitySchema,
     highIntensity: z.boolean(),
-    safetyReminder: z.string().trim().min(1).max(400)
+    safetyReminder: z.string().trim().min(1).max(400),
+    focus: z.array(z.string().trim().min(1).max(180)).min(1).max(8).optional(),
+    safetyNotes: z.array(z.string().trim().min(1).max(220)).min(1).max(8).optional()
   }).strict()
 }).strict().superRefine((reference, context) => {
   if (reference.proteinRangeGrams.minimum > reference.proteinRangeGrams.maximum) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ["proteinRangeGrams"], message: "Protein range minimum cannot exceed maximum" });
+  }
+  const targets = reference.nutritionTargets;
+  if (targets) {
+    for (const [key, range] of Object.entries({ carbohydrateGrams: targets.carbohydrateGrams, fatGrams: targets.fatGrams, fiberGrams: targets.fiberGrams })) {
+      if (range.minimum > range.maximum) context.addIssue({ code: z.ZodIssueCode.custom, path: ["nutritionTargets", key], message: `${key} minimum cannot exceed maximum` });
+    }
+    if (targets.hydrationLiters.minimum > targets.hydrationLiters.maximum) context.addIssue({ code: z.ZodIssueCode.custom, path: ["nutritionTargets", "hydrationLiters"], message: "Hydration minimum cannot exceed maximum" });
+    const macroTotal = targets.macroRatioPercent.protein + targets.macroRatioPercent.carbohydrate + targets.macroRatioPercent.fat;
+    if (macroTotal < 95 || macroTotal > 105) context.addIssue({ code: z.ZodIssueCode.custom, path: ["nutritionTargets", "macroRatioPercent"], message: "Macro ratio percentages must total approximately 100" });
   }
   if (reference.movement.durationMinutes.minimum > reference.movement.durationMinutes.maximum) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ["movement", "durationMinutes"], message: "Movement duration minimum cannot exceed maximum" });
@@ -76,10 +110,23 @@ export const healthPlanContentSchema = z.object({
   days: z.array(healthDailyReferenceSchema).length(7)
 }).strict();
 
+export const generatedHealthPlanContentSchema = healthPlanContentSchema.superRefine((plan, context) => {
+  plan.days.forEach((day, dayIndex) => {
+    for (const key of ["nutritionTargets", "hydrationGuidance", "mealExamples", "proteinRotationSources", "foodReference"] as const) {
+      if (day[key] === undefined) context.addIssue({ code: z.ZodIssueCode.custom, path: ["days", dayIndex, key], message: `${key} is required for newly generated health references` });
+    }
+    if (day.movement.focus === undefined) context.addIssue({ code: z.ZodIssueCode.custom, path: ["days", dayIndex, "movement", "focus"], message: "movement focus is required for newly generated health references" });
+    if (day.movement.safetyNotes === undefined) context.addIssue({ code: z.ZodIssueCode.custom, path: ["days", dayIndex, "movement", "safetyNotes"], message: "movement safety notes are required for newly generated health references" });
+  });
+});
+
 export const healthWeekStartSchema = reviewDateSchema.refine((value) => new Date(`${value}T00:00:00.000Z`).getUTCDay() === 0, "weekStart must be a Sunday");
 export const createHealthPlanCandidateSchema = z.object({
   weekStart: healthWeekStartSchema,
   specialContext: z.string().trim().max(1000).nullable().optional()
+}).strict();
+export const healthCollaborationMessageInputSchema = z.object({
+  content: z.string().trim().min(1).max(4_000)
 }).strict();
 export const createManualHealthPlanCandidateSchema = z.object({
   weekStart: healthWeekStartSchema,

@@ -25,11 +25,13 @@ import { backupRoutes } from "./backup-routes.js";
 import type { BackupExporter } from "./backup-service.js";
 import { healthRoutes } from "./health-routes.js";
 import type { HealthPlanner, HealthService, SleepImageAnalyzer } from "./health-service.js";
+import type { HealthConversationResponder, HealthConversationService } from "./health-conversation-service.js";
 import { longRangePlanRoutes } from "./long-range-plan-routes.js";
 import type { LongRangePlanService } from "./long-range-plan-service.js";
 import { longRangeTaskTreeRoutes } from "./long-range-task-tree-routes.js";
 import type { LongRangeTaskTreePlanner } from "./ai/long-range-task-tree-planner.js";
 import type { LongRangeTaskTreeService } from "./long-range-task-tree-service.js";
+import type { LongRangePlanOrganizer } from "./ai/long-range-plan-organizer.js";
 import { userProfileRoutes } from "./user-profile-routes.js";
 import type { UserProfileService } from "./user-profile-service.js";
 import { conversationRoutes } from "./conversation-routes.js";
@@ -49,6 +51,7 @@ type AppOptions = {
   reviewService?: ReviewService;
   reviewResponder?: ReviewResponder;
   briefService?: BriefService;
+  standaloneBriefsEnabled?: boolean;
   diaryService?: DiaryService;
   growthService?: GrowthService;
   feishuWebhookService?: FeishuWebhookService;
@@ -57,10 +60,14 @@ type AppOptions = {
   backupService?: BackupExporter;
   healthService?: HealthService;
   healthPlanner?: HealthPlanner;
+  healthConversationService?: HealthConversationService;
+  healthConversationResponder?: HealthConversationResponder;
+  healthFeishuSyncAvailable?: boolean;
   sleepImageAnalyzer?: SleepImageAnalyzer;
   longRangePlanService?: LongRangePlanService;
   longRangeTaskTreeService?: LongRangeTaskTreeService;
   longRangeTaskTreePlanner?: LongRangeTaskTreePlanner;
+  longRangePlanOrganizer?: LongRangePlanOrganizer;
   userProfileService?: UserProfileService;
   conversationService?: ConversationService;
   conversationResponder?: ConversationResponder;
@@ -115,13 +122,21 @@ export function buildApp(options: AppOptions = {}) {
     focusStructurePlanner: options.focusStructurePlanner
   });
   if (options.reviewService) app.register(reviewRoutes, { prefix: "/api/v1", reviewService: options.reviewService, responder: options.reviewResponder });
-  if (options.briefService) app.register(briefRoutes, { prefix: "/api/v1", briefService: options.briefService });
+  if (options.briefService) app.register(briefRoutes, { prefix: "/api/v1", briefService: options.briefService, standaloneEnabled: options.standaloneBriefsEnabled });
   if (options.diaryService) app.register(diaryRoutes, { prefix: "/api/v1", diaryService: options.diaryService });
   if (options.growthService) app.register(growthRoutes, { prefix: "/api/v1", growthService: options.growthService });
   if (options.feishuWebhookService) app.register(feishuRoutes, { prefix: "/api/v1", webhookService: options.feishuWebhookService });
   if (options.backupService) app.register(backupRoutes, { prefix: "/api/v1", backupService: options.backupService });
-  if (options.healthService) app.register(healthRoutes, { prefix: "/api/v1", healthService: options.healthService, healthPlanner: options.healthPlanner, sleepImageAnalyzer: options.sleepImageAnalyzer });
-  if (options.longRangePlanService) app.register(longRangePlanRoutes, { prefix: "/api/v1", longRangePlanService: options.longRangePlanService });
+  if (options.healthService) app.register(healthRoutes, {
+    prefix: "/api/v1",
+    healthService: options.healthService,
+    healthPlanner: options.healthPlanner,
+    healthConversationService: options.healthConversationService,
+    healthConversationResponder: options.healthConversationResponder,
+    feishuClarificationSyncAvailable: options.healthFeishuSyncAvailable,
+    sleepImageAnalyzer: options.sleepImageAnalyzer
+  });
+  if (options.longRangePlanService) app.register(longRangePlanRoutes, { prefix: "/api/v1", longRangePlanService: options.longRangePlanService, organizer: options.longRangePlanOrganizer });
   if (options.longRangeTaskTreeService) app.register(longRangeTaskTreeRoutes, { prefix: "/api/v1", service: options.longRangeTaskTreeService, planner: options.longRangeTaskTreePlanner });
   if (options.userProfileService) app.register(userProfileRoutes, { prefix: "/api/v1", userProfileService: options.userProfileService });
   if (options.conversationService && options.conversationResponder) app.register(conversationRoutes, {

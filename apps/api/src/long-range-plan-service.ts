@@ -1,7 +1,7 @@
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, ne } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import type { AppDatabase } from "@personal-ai/db/client";
-import { longRangePlanMilestones, longRangePlans } from "@personal-ai/db/schema";
+import { longRangePlanMilestones, longRangePlanTaskTreeCandidates, longRangePlans, tasks } from "@personal-ai/db/schema";
 import type { CreateLongRangePlan, LongRangePlanScope, LongRangePlanStatus, UpdateLongRangePlan } from "@personal-ai/domain/long-range-plan";
 
 export type StoredLongRangePlan = typeof longRangePlans.$inferSelect;
@@ -14,6 +14,9 @@ export class LongRangePlanVersionConflictError extends Error {
 }
 export class LongRangePlanStateError extends Error {
   constructor(readonly state: string, readonly operation: string) { super(`Cannot ${operation} a ${state} long-range plan.`); }
+}
+export class LongRangePlanScopeLimitError extends Error {
+  constructor(readonly scope: LongRangePlanScope) { super(`Long-range plan scope ${scope} already has three plans.`); }
 }
 
 export class LongRangePlanService {
@@ -35,6 +38,7 @@ export class LongRangePlanService {
 
   async create(input: CreateLongRangePlan): Promise<LongRangePlanWithMilestones> {
     return this.db.transaction(async (transaction) => {
+      await this.assertScopeCapacity(transaction as AppDatabase, input.scope);
       const now = new Date();
       const [plan] = await transaction.insert(longRangePlans).values({
         id: randomUUID(),
@@ -58,6 +62,7 @@ export class LongRangePlanService {
     return this.db.transaction(async (transaction) => {
       const current = await this.requireCurrent(transaction as AppDatabase, id, input.expectedVersion);
       if (current.status !== "active") throw new LongRangePlanStateError(current.status, "edit");
+      if (current.scope !== input.scope) await this.assertScopeCapacity(transaction as AppDatabase, input.scope, current.id);
       const now = new Date();
       const [plan] = await transaction.update(longRangePlans).set({
         scope: input.scope,
@@ -88,6 +93,19 @@ export class LongRangePlanService {
       }).where(and(eq(longRangePlans.id, id), eq(longRangePlans.version, expectedVersion))).returning();
       if (!plan) throw new LongRangePlanVersionConflictError(await this.requirePlan(transaction as AppDatabase, id));
       return (await this.withMilestones(transaction as AppDatabase, [plan]))[0]!;
+    });
+  }
+
+  async delete(id: string, expectedVersion: number): Promise<void> {
+    return this.db.transaction(async (transaction) => {
+      await this.requireCurrent(transaction as AppDatabase, id, expectedVersion);
+      await transaction.update(tasks).set({ sourceLongRangePlanId: null }).where(eq(tasks.sourceLongRangePlanId, id));
+      await transaction.delete(longRangePlanTaskTreeCandidates).where(eq(longRangePlanTaskTreeCandidates.longRangePlanId, id));
+      await transaction.delete(longRangePlanMilestones).where(eq(longRangePlanMilestones.longRangePlanId, id));
+      const removed = await transaction.delete(longRangePlans)
+        .where(and(eq(longRangePlans.id, id), eq(longRangePlans.version, expectedVersion)))
+        .returning({ id: longRangePlans.id });
+      if (removed.length === 0) throw new LongRangePlanVersionConflictError(await this.requirePlan(transaction as AppDatabase, id));
     });
   }
 
@@ -124,6 +142,14 @@ export class LongRangePlanService {
     const current = await this.requirePlan(database, id);
     if (current.version !== expectedVersion) throw new LongRangePlanVersionConflictError(current);
     return current;
+  }
+
+  private async assertScopeCapacity(database: AppDatabase, scope: LongRangePlanScope, excludeId?: string): Promise<void> {
+    const condition = excludeId
+      ? and(eq(longRangePlans.scope, scope), ne(longRangePlans.id, excludeId))
+      : eq(longRangePlans.scope, scope);
+    const [result] = await database.select({ total: count() }).from(longRangePlans).where(condition);
+    if (Number(result?.total ?? 0) >= 3) throw new LongRangePlanScopeLimitError(scope);
   }
 
   private async requirePlan(database: AppDatabase, id: string): Promise<StoredLongRangePlan> {

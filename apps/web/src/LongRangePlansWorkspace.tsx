@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
-import { Archive, Check, ChevronRight, CircleAlert, LoaderCircle, Plus, RotateCcw, Save, Trash2 } from "lucide-react";
+import { Archive, Check, ChevronRight, CircleAlert, LoaderCircle, Plus, RotateCcw, Save, Sparkles, Trash2 } from "lucide-react";
 
 type PlanScope = "month" | "semester" | "annual";
 type PlanStatus = "active" | "archived";
@@ -36,6 +36,7 @@ type PlanDraft = {
 };
 type TaskTreeItem = { title: string; targetDate: string | null; notes: string | null };
 type TaskTreeCandidate = { id: string; state: "candidate" | "confirmed" | "cancelled"; longRangePlanVersion: number; proposal: { summary: string; tasks: TaskTreeItem[] }; createdTaskIds: string[]; version: number };
+type OrganizedPlanCandidate = { title: string; description: string; milestones: Array<{ title: string; targetDate?: string | null; notes?: string | null }> };
 
 type ApiFailureBody = { error?: string; plan?: LongRangePlan };
 
@@ -108,6 +109,7 @@ function textForFailure(error: unknown) {
     if (error.body.error === "long_range_plan_version_conflict") return "这份规划已经在另一处更新。已保留你的输入，请重新查看后再保存。";
     if (error.body.error === "invalid_long_range_plan_state") return "已归档的规划不能直接编辑；请先恢复它。";
     if (error.body.error === "long_range_plan_not_found") return "这份规划已经不存在，请刷新列表。";
+    if (error.body.error === "long_range_plan_scope_limit") return "同一种规划最多保留 3 个。请先删除或改为其他规划范围。";
   }
   return "无法保存规划，请确认本地 API 正在运行后重试。";
 }
@@ -156,6 +158,8 @@ export function LongRangePlansWorkspace() {
   const [taskTreeCandidate, setTaskTreeCandidate] = useState<TaskTreeCandidate | null>(null);
   const [taskTreeInstructions, setTaskTreeInstructions] = useState("");
   const [taskTreeBusy, setTaskTreeBusy] = useState(false);
+  const [organizing, setOrganizing] = useState(false);
+  const [organizedCandidate, setOrganizedCandidate] = useState<OrganizedPlanCandidate | null>(null);
   const selectedPlan = useMemo(() => plans.find((plan) => plan.id === selectedId) ?? null, [plans, selectedId]);
   const scopeCopy = scopeOptions.find((option) => option.value === scope)!;
 
@@ -195,18 +199,21 @@ export function LongRangePlansWorkspace() {
     setSelectedId(null);
     setDraft(blankDraft(nextScope));
     setError(null);
+    setOrganizedCandidate(null);
   }
 
   function beginNewPlan() {
     setSelectedId(null);
     setDraft(blankDraft(scope));
     setError(null);
+    setOrganizedCandidate(null);
   }
 
   function selectPlan(plan: LongRangePlan) {
     setSelectedId(plan.id);
     setDraft(draftFromPlan(plan));
     setError(null);
+    setOrganizedCandidate(null);
   }
 
   function updateDraft(patch: Partial<PlanDraft>) {
@@ -242,6 +249,58 @@ export function LongRangePlansWorkspace() {
     } finally {
       setSaving(false);
     }
+  }
+
+  async function organizePlanDraft() {
+    if (!draft.description.trim()) {
+      setError("先把你的大致想法、目标和边界写进规划说明，再交给 AI 整理。");
+      return;
+    }
+    setOrganizing(true); setError(null);
+    try {
+      const result = await requestPlan<{ candidate: OrganizedPlanCandidate }>("/api/v1/long-range-plans/organize-ai", "POST", {
+        scope: draft.scope,
+        title: draft.title.trim(),
+        periodStart: draft.periodStart,
+        periodEnd: draft.periodEnd,
+        description: draft.description.trim(),
+        milestones: draft.milestones.filter((item) => item.title.trim()).map((item) => ({ title: item.title.trim(), targetDate: item.targetDate || null, notes: item.notes.trim() || null }))
+      });
+      setOrganizedCandidate(result.candidate);
+    } catch {
+      setError("AI 暂时没有返回可用的规划候选。你的原始说明没有变化，可以稍后重试。");
+    } finally { setOrganizing(false); }
+  }
+
+  function applyOrganizedCandidate() {
+    if (!organizedCandidate) return;
+    setDraft((current) => ({
+      ...current,
+      title: organizedCandidate.title,
+      description: organizedCandidate.description,
+      milestones: organizedCandidate.milestones.map((milestone) => ({
+        key: crypto.randomUUID(),
+        title: milestone.title,
+        targetDate: milestone.targetDate ?? "",
+        notes: milestone.notes ?? ""
+      }))
+    }));
+    setOrganizedCandidate(null);
+  }
+
+  async function deletePlan() {
+    if (!selectedPlan || !window.confirm("删除后规划本身无法恢复；已经由它创建的任务会保留。是否继续？")) return;
+    setSaving(true); setError(null);
+    try {
+      await requestPlan(`/api/v1/long-range-plans/${selectedPlan.id}`, "DELETE", { expectedVersion: selectedPlan.version });
+      setSelectedId(null);
+      setDraft(blankDraft(scope));
+      setTaskTreeCandidate(null);
+      setOrganizedCandidate(null);
+      await loadPlans(scope, includeArchived);
+    } catch (deleteError) {
+      setError(textForFailure(deleteError));
+    } finally { setSaving(false); }
   }
 
   async function setPlanStatus(status: PlanStatus) {
@@ -340,8 +399,10 @@ export function LongRangePlansWorkspace() {
             updateDraft({ scope: nextScope, ...defaultPeriod(nextScope) });
           }}>{scopeOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
           <div className="long-range-date-row"><label><span>开始日期</span><input aria-label="开始日期" type="date" required disabled={saving || selectedPlan?.status === "archived"} value={draft.periodStart} onChange={(event) => updateDraft({ periodStart: event.target.value })} /></label><label><span>结束日期</span><input aria-label="结束日期" type="date" required disabled={saving || selectedPlan?.status === "archived"} value={draft.periodEnd} onChange={(event) => updateDraft({ periodEnd: event.target.value })} /></label></div>
-          <label className="wide"><span>规划说明（可选）</span><textarea aria-label="规划说明" rows={4} maxLength={8000} disabled={saving || selectedPlan?.status === "archived"} value={draft.description} onChange={(event) => updateDraft({ description: event.target.value })} placeholder="写下这段时间真正要推进的方向、边界或判断标准。" /></label>
+          <label className="wide plan-description-field"><span>你的原始想法与目标</span><textarea aria-label="规划说明" rows={5} maxLength={8000} disabled={saving || organizing || selectedPlan?.status === "archived"} value={draft.description} onChange={(event) => { updateDraft({ description: event.target.value }); setOrganizedCandidate(null); }} placeholder="先按自己的方式写：想达成什么、为什么、有哪些边界和现实条件。AI 只会在你要求时整理成候选。" /><small>这不是摆设字段：它是 AI 协作整理规划的主要输入，候选不会自动覆盖你的原文。</small>{selectedPlan?.status !== "archived" && <button className="quiet-button plan-organize-button" type="button" disabled={saving || organizing || !draft.description.trim()} onClick={() => void organizePlanDraft()}>{organizing ? <LoaderCircle className="spin" /> : <Sparkles />}{organizing ? "正在整理候选" : "让 AI 整理成候选"}</button>}</label>
         </div>
+
+        {organizedCandidate && <section className="organized-plan-candidate" aria-label="AI 整理的规划候选"><header><div><p className="section-kicker">尚未应用</p><h3>AI 整理候选</h3></div><span>原始输入仍保留</span></header><strong>{organizedCandidate.title}</strong><p>{organizedCandidate.description}</p><ol>{organizedCandidate.milestones.map((milestone, index) => <li key={`${milestone.title}-${index}`}><span>{String(index + 1).padStart(2, "0")}</span><div><b>{milestone.title}</b><small>{milestone.targetDate ?? "日期待定"}{milestone.notes ? ` · ${milestone.notes}` : ""}</small></div></li>)}</ol><footer><button className="quiet-button" type="button" onClick={() => setOrganizedCandidate(null)}>保留原稿</button><button className="primary-button" type="button" onClick={applyOrganizedCandidate}><Check />应用后继续微调</button></footer></section>}
 
         <section className="milestone-editor" aria-labelledby="milestone-title">
           <header><div><p className="section-kicker">自己设定的节点</p><h3 id="milestone-title">里程碑</h3></div>{selectedPlan?.status !== "archived" && <button className="inline-button" type="button" disabled={saving || draft.milestones.length >= 30} onClick={() => updateDraft({ milestones: [...draft.milestones, newMilestone()] })}><Plus />添加节点</button>}</header>
@@ -357,6 +418,7 @@ export function LongRangePlansWorkspace() {
         </section>
 
         <footer className="long-range-actions">
+          {selectedPlan && <button className="quiet-button danger-button" type="button" disabled={saving} onClick={() => void deletePlan()}><Trash2 />删除规划</button>}
           {selectedPlan?.status === "active" && <button className="quiet-button" type="button" disabled={saving} onClick={() => void setPlanStatus("archived")}><Archive />归档规划</button>}
           {selectedPlan?.status === "archived" && <button className="quiet-button" type="button" disabled={saving} onClick={() => void setPlanStatus("active")}><RotateCcw />恢复规划</button>}
           {selectedPlan?.status !== "archived" && <button className="primary-button" type="submit" disabled={saving}>{saving ? <LoaderCircle className="spin" /> : selectedPlan ? <Save /> : <Check />}{saving ? "正在保存" : selectedPlan ? "保存修改" : "保存规划"}</button>}

@@ -23,10 +23,21 @@ const unavailableApp = buildApp({ briefService: {
 const sourcesUnavailableApp = buildApp({ briefService: {
   async generateFromConversation() { throw new BriefSourcesUnavailableError(); }
 } as unknown as BriefService });
+const disabledApp = buildApp({ briefService, standaloneBriefsEnabled: false });
 
-afterAll(async () => { await app.close(); await unavailableApp.close(); await sourcesUnavailableApp.close(); });
+afterAll(async () => { await app.close(); await unavailableApp.close(); await sourcesUnavailableApp.close(); await disabledApp.close(); });
 
 describe("standalone brief routes", () => {
+  it("keeps standalone briefs unavailable in the published configuration", async () => {
+    const create = await disabledApp.inject({ method: "POST", url: "/api/v1/briefs/standalone", payload: { conversation: "不应生成", localDate: "2026-07-30" } });
+    const list = await disabledApp.inject({ method: "GET", url: "/api/v1/briefs/standalone?date=2026-07-30" });
+
+    expect(create.statusCode).toBe(404);
+    expect(create.json()).toEqual({ error: "standalone_brief_disabled" });
+    expect(list.statusCode).toBe(404);
+    expect(list.json()).toEqual({ error: "standalone_brief_disabled" });
+  });
+
   it("persists only an explicitly requested standalone brief contract", async () => {
     const response = await app.inject({ method: "POST", url: "/api/v1/briefs/standalone", payload: { conversation: "整理这段独立对话", localDate: "2026-07-30" } });
     expect(response.statusCode).toBe(201);

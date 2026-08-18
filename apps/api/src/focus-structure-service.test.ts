@@ -4,7 +4,7 @@ import { loadDatabaseConfig } from "@personal-ai/db/config";
 import { focusStructureSegments, focusStructures, tasks } from "@personal-ai/db/schema";
 import { and, eq } from "drizzle-orm";
 import { afterAll, describe, expect, it } from "vitest";
-import { FocusStructureService, FocusStructureTaskConflictError } from "./focus-structure-service.js";
+import { FocusStructureService, FocusStructureTaskConflictError, InvalidFocusStructureError } from "./focus-structure-service.js";
 
 const connection = await connectVerifiedDatabase(loadDatabaseConfig());
 const service = new FocusStructureService(connection.db);
@@ -23,6 +23,37 @@ afterAll(async () => {
 });
 
 describe("focus structure persistence", () => {
+  it("rejects focus structures for factual backfill records", async () => {
+    const taskId = randomUUID();
+    cleanupIds.push(taskId);
+    const [task] = await connection.db.insert(tasks).values({
+      id: taskId,
+      title: "Backfill structure guard test",
+      recordKind: "backfill",
+      lifecycleStatus: "awaiting_outcome",
+      scheduleKind: "exact",
+      localDate: "2099-07-27",
+      startAt: new Date("2099-07-27T01:00:00.000Z"),
+      endAt: new Date("2099-07-27T02:00:00.000Z"),
+      timeZone: "Asia/Shanghai",
+      version: 1,
+      scheduleRevision: 1
+    }).returning();
+    if (!task) throw new Error("test backfill was not created");
+
+    await expect(service.createCandidate({
+      taskId,
+      taskVersion: task.version,
+      taskScheduleRevision: task.scheduleRevision,
+      source: "manual",
+      mode: "continuous",
+      totalStartAt: task.startAt!.toISOString(),
+      totalEndAt: task.endAt!.toISOString(),
+      breakMinutes: 5
+    })).rejects.toBeInstanceOf(InvalidFocusStructureError);
+    expect(await service.list(taskId)).toHaveLength(0);
+  });
+
   it("stores a continuous candidate and confirms one active structure", async () => {
     const taskId = randomUUID();
     cleanupIds.push(taskId);

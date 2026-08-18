@@ -1,6 +1,6 @@
 [package]
 name = "personal-ai-desktop"
-version = "0.1.16"
+version = "0.1.20"
 description = "Personal AI Assistant desktop shell"
 edition = "2021"
 
@@ -9,8 +9,10 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
-tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
+tauri-plugin-notification = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [

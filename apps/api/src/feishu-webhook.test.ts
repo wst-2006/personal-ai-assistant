@@ -10,10 +10,24 @@ const config = { verificationToken: "verify-token", encryptKey: "encrypt-key" };
 const targetOpenId = "ou_owner";
 
 function services() {
-  const taskService = { get: vi.fn().mockResolvedValue({ task: { id: taskId, version: 8, scheduleRevision: 3 } }) };
+  const task = {
+    id: taskId,
+    title: "整理产品原型",
+    version: 8,
+    scheduleRevision: 3,
+    lifecycleStatus: "open",
+    localDate: null,
+    startAt: new Date("2099-08-15T07:00:00.000Z"),
+    endAt: new Date("2099-08-15T08:00:00.000Z")
+  };
+  const taskService = {
+    get: vi.fn().mockResolvedValue({ task }),
+    update: vi.fn().mockResolvedValue({ task: { ...task, scheduleKind: "none" }, historicalOverlaps: [] })
+  };
   const focusService = {
-    create: vi.fn().mockResolvedValue({ id: "focus-1", version: 1 }),
-    respondToReminder: vi.fn().mockResolvedValue({ id: "focus-1", version: 2 })
+    currentForTask: vi.fn().mockResolvedValue(null),
+    create: vi.fn().mockResolvedValue({ id: "focus-1", taskId, state: "armed", version: 2 }),
+    otherArrangement: vi.fn().mockResolvedValue({ id: "focus-1", version: 2, state: "stopped_no_response" })
   };
   return {
     taskService,
@@ -33,22 +47,26 @@ describe("Feishu webhook", () => {
     await expect(webhook.handle(JSON.stringify(body), {}, body)).resolves.toEqual({ challenge: "challenge-code" });
   });
 
-  it("starts one-minute preparation only for the configured single user", async () => {
-    const { webhook, focusService } = services();
+  it("confirms start only for the configured single user and replaces the card", async () => {
+    const { webhook, focusService, taskService } = services();
     const body = {
       token: config.verificationToken,
       event: { operator: { open_id: targetOpenId }, action: { value: { action: "start", taskId, scheduleRevision: 3 } } }
     };
     const response = await webhook.handle(JSON.stringify(body), {}, body);
-    expect(response).toEqual({ toast: { type: "success", content: expect.stringContaining("1 分钟准备") } });
-    expect(focusService.create).toHaveBeenCalledWith(taskId, 8, "prepare");
+    expect(response).toMatchObject({
+      toast: { type: "success", content: expect.stringContaining("任务已经开始") },
+      card: expect.any(Object)
+    });
+    expect(JSON.stringify((response as { card: object }).card)).not.toContain("取消任务");
+    expect(focusService.create).toHaveBeenCalledWith(taskId, 8, "prepare", undefined);
 
     const foreign = { ...body, event: { ...body.event, operator: { open_id: "ou_other" } } };
     await expect(webhook.handle(JSON.stringify(foreign), {}, foreign)).rejects.toBeInstanceOf(FeishuWebhookAuthError);
   });
 
   it("verifies the signature and decrypts encrypted callbacks", async () => {
-    const { webhook, focusService } = services();
+    const { webhook, focusService, taskService } = services();
     const decrypted = {
       token: config.verificationToken,
       event: { operator: { open_id: targetOpenId }, action: { value: { action: "other_arrangement", taskId, scheduleRevision: 3 } } }
@@ -66,8 +84,12 @@ describe("Feishu webhook", () => {
       "x-lark-signature": signature
     }, envelope);
 
-    expect(response).toEqual({ toast: { type: "success", content: expect.stringContaining("另有安排") } });
-    expect(focusService.respondToReminder).toHaveBeenCalledWith("focus-1", 1, "other_arrangement");
+    expect(response).toMatchObject({
+      toast: { type: "success", content: expect.stringContaining("未排期") },
+      card: expect.any(Object)
+    });
+    expect(focusService.otherArrangement).not.toHaveBeenCalled();
+    expect(taskService.update).toHaveBeenCalledWith(taskId, expect.objectContaining({ scheduleKind: "none" }));
   });
 
   it("answers an encrypted URL challenge", async () => {

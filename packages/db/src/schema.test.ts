@@ -1,6 +1,7 @@
 import {
   desktopCommandRequests,
   focusSessionSegmentRuns,
+  focusSessionOperations,
   focusSessions,
   focusStructureSegments,
   focusStructures,
@@ -9,19 +10,25 @@ import {
   healthDailyReferences,
   healthProfiles,
   healthSleepAnalyses,
+  healthWeekAutoGenerations,
+  healthWeekConversationMessages,
+  healthWeekConversations,
   healthWeekPlans,
   inboxEntries,
   longRangePlanMilestones,
   longRangePlans,
   reminderJobs,
   taskLegacyMetadata,
-  tasks
+  tasks,
+  unscheduledTaskDayEndRuns,
+  userProfiles
 } from "./schema.js";
 import { describe, expect, it } from "vitest";
 
 describe("formal task and inbox schema contract", () => {
   it("keeps live task scheduling and task-source linkage explicit", () => {
     expect(tasks.sourceInboxEntryId.name).toBe("source_inbox_entry_id");
+    expect(tasks.recordKind.name).toBe("record_kind");
     expect("estimatedMinutes" in tasks).toBe(false);
     expect("entryType" in tasks).toBe(false);
   });
@@ -58,6 +65,7 @@ describe("formal task and inbox schema contract", () => {
     expect(focusStructures.taskScheduleRevision.name).toBe("task_schedule_revision");
     expect(focusStructures.totalStartAt.name).toBe("total_start_at");
     expect(focusStructures.totalEndAt.name).toBe("total_end_at");
+    expect(focusStructures.mode.name).toBe("mode");
     expect(focusStructureSegments.segmentType.name).toBe("segment_type");
     expect(focusStructureSegments.durationMinutes.name).toBe("duration_minutes");
   });
@@ -68,6 +76,9 @@ describe("formal task and inbox schema contract", () => {
     expect(focusSessions.currentSegmentPosition.name).toBe("current_segment_position");
     expect(focusSessions.confirmationDeadlineAt.name).toBe("confirmation_deadline_at");
     expect(focusSessionSegmentRuns.plannedDurationSeconds.name).toBe("planned_duration_seconds");
+    expect(focusSessionSegmentRuns.pausedSeconds.name).toBe("paused_seconds");
+    expect(focusSessions.pausedTotalSeconds.name).toBe("paused_total_seconds");
+    expect(focusSessionOperations.commandId.name).toBe("command_id");
     expect(focusTimerJobs.expectedSessionVersion.name).toBe("expected_session_version");
     expect(focusTimerJobs.dueAt.name).toBe("due_at");
   });
@@ -81,6 +92,14 @@ describe("formal task and inbox schema contract", () => {
     expect(healthDailyReferences.content.name).toBe("content");
     expect(healthSleepAnalyses.analysis.name).toBe("analysis");
     expect(healthSleepAnalyses.sha256.name).toBe("sha256");
+    expect(healthWeekAutoGenerations.weekStart.name).toBe("week_start");
+    expect(healthWeekAutoGenerations.status.name).toBe("status");
+    expect(healthWeekAutoGenerations.planId.name).toBe("plan_id");
+    expect(healthWeekConversations.weekStart.name).toBe("week_start");
+    expect(healthWeekConversationMessages.conversationId.name).toBe("conversation_id");
+    expect(healthWeekConversationMessages.source.name).toBe("source");
+    expect(healthWeekConversationMessages.needsClarification.name).toBe("needs_clarification");
+    expect(healthWeekConversationMessages.externalMessageId.name).toBe("external_message_id");
   });
 
   it("keeps monthly, semester, and annual plans outside the task lifecycle", () => {
@@ -90,5 +109,27 @@ describe("formal task and inbox schema contract", () => {
     expect(longRangePlans.version.name).toBe("version");
     expect(longRangePlanMilestones.longRangePlanId.name).toBe("long_range_plan_id");
     expect(longRangePlanMilestones.targetDate.name).toBe("target_date");
+  });
+
+  it("persists one explicit unscheduled-task policy and an idempotent day-end ledger", () => {
+    expect(userProfiles.unscheduledTaskPolicy.name).toBe("unscheduled_task_policy");
+    expect(userProfiles.recycleRetentionDays.name).toBe("recycle_retention_days");
+    expect(userProfiles.focusFlipSoundEnabled.name).toBe("focus_flip_sound_enabled");
+    expect(userProfiles.focusStartSoundEnabled.name).toBe("focus_start_sound_enabled");
+    expect(userProfiles.breakStartSoundEnabled.name).toBe("break_start_sound_enabled");
+    expect(userProfiles.breakEndSoundEnabled.name).toBe("break_end_sound_enabled");
+    expect(userProfiles.focusEndSoundEnabled.name).toBe("focus_end_sound_enabled");
+    expect(userProfiles.focusTheme.name).toBe("focus_theme");
+    expect(userProfiles.desktopFocusEnabled.name).toBe("desktop_focus_enabled");
+    expect(userProfiles.focusPreparationWindowEnabled.name).toBe("focus_preparation_window_enabled");
+    expect(userProfiles.focusTimerWindowEnabled.name).toBe("focus_timer_window_enabled");
+    expect(userProfiles.focusEvaluationEnabled.name).toBe("focus_evaluation_enabled");
+    expect(userProfiles.feishuTaskCardsEnabled.name).toBe("feishu_task_cards_enabled");
+    expect(userProfiles.feishuT15Enabled.name).toBe("feishu_t15_enabled");
+    expect(userProfiles.healthPageEnabled.name).toBe("health_page_enabled");
+    expect(unscheduledTaskDayEndRuns.localDate.name).toBe("local_date");
+    expect(unscheduledTaskDayEndRuns.policy.name).toBe("policy");
+    expect(unscheduledTaskDayEndRuns.carriedCount.name).toBe("carried_count");
+    expect(unscheduledTaskDayEndRuns.deletedCount.name).toBe("deleted_count");
   });
 });

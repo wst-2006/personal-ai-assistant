@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { BriefProviders, searchSection } from "./brief-providers.js";
+import { BriefProviders, mergeSearchResponses, searchSection } from "./brief-providers.js";
 
 describe("brief weather provider", () => {
   it("does not request or guess a location when the user leaves it empty", async () => {
@@ -69,6 +69,66 @@ describe("brief weather provider", () => {
 });
 
 describe("brief search provider", () => {
+  it("makes no subscription or search request when external brief sources are disabled", async () => {
+    const fetcher = vi.fn<typeof fetch>();
+    const providers = new BriefProviders({ BRIEF_EXTERNAL_SOURCES_ENABLED: "false", TAVILY_SEARCH_API_KEY: "must-not-be-used" }, fetcher);
+
+    const subscription = await providers.subscribe("ai");
+    const search = await providers.search("不应联网");
+
+    expect(fetcher).not.toHaveBeenCalled();
+    expect(subscription).toEqual({ results: [], source: null, status: "empty", provider: "disabled" });
+    expect(search).toEqual({ results: [], source: null, status: "empty", provider: "disabled" });
+  });
+
+  it("reads a recent free RSS subscription before paid or indexed search", async () => {
+    const publishedAt = new Date().toUTCString();
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(`<?xml version="1.0"?><rss><channel><item><title>Open AI research update</title><link>https://example.com/ai-update</link><description><![CDATA[<p>A source-backed subscription summary.</p>]]></description><pubDate>${publishedAt}</pubDate></item></channel></rss>`, {
+      status: 200,
+      headers: { "content-type": "application/rss+xml" }
+    }));
+    const providers = new BriefProviders({
+      BRIEF_SUBSCRIPTION_FEEDS_JSON: JSON.stringify({ ai: [{ label: "Test AI feed", url: "https://example.com/feed.xml" }] })
+    }, fetcher);
+
+    const result = await providers.subscribe("ai");
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ status: "ok", provider: "rss_subscription" });
+    expect(result.results[0]).toMatchObject({
+      title: "Open AI research update",
+      description: "A source-backed subscription summary.",
+      url: "https://example.com/ai-update",
+      kind: "subscription",
+      provider: "rss_subscription"
+    });
+    expect(searchSection("AI", result).sources[0]).toMatchObject({ kind: "subscription", provider: "rss_subscription" });
+  });
+
+  it("fills an insufficient subscription result with search without duplicating URLs", () => {
+    const subscription = {
+      status: "ok" as const,
+      provider: "rss_subscription",
+      source: { kind: "subscription" as const, label: "feed", provider: "rss_subscription" },
+      results: [{ title: "Subscribed", description: "From RSS", url: "https://example.com/one", kind: "subscription" as const }]
+    };
+    const search = {
+      status: "ok" as const,
+      provider: "gdelt",
+      source: { kind: "search" as const, label: "search", provider: "gdelt" },
+      results: [
+        { title: "Duplicate", description: "Same URL", url: "https://example.com/one" },
+        { title: "Search fill", description: "From search", url: "https://example.com/two" }
+      ]
+    };
+
+    const result = mergeSearchResponses(subscription, search);
+
+    expect(result.status).toBe("ok");
+    expect(result.results.map((item) => item.url)).toEqual(["https://example.com/one", "https://example.com/two"]);
+    expect(searchSection("AI", result).sources.map((source) => source.kind)).toEqual(["subscription", "search"]);
+  });
+
   it("keeps generated search sections within the daily brief contract", () => {
     const result = searchSection("AI", {
       source: { kind: "search", label: "test", provider: "test" },

@@ -43,6 +43,7 @@ export const feishuIntakeCandidates = pgTable(
     chatId: varchar("chat_id", { length: 128 }).notNull(),
     operatorOpenId: varchar("operator_open_id", { length: 128 }).notNull(),
     sourceMessageId: varchar("source_message_id", { length: 128 }).notNull(),
+    lastSourceMessageId: varchar("last_source_message_id", { length: 128 }),
     rawText: text("raw_text").notNull(),
     candidate: jsonb("candidate"),
     state: varchar("state", { length: 32 }).notNull().default("parsing"),
@@ -59,7 +60,7 @@ export const feishuIntakeCandidates = pgTable(
     index("feishu_intake_candidates_active_idx").on(table.state, table.createdAt),
     check(
       "feishu_intake_candidates_state_check",
-      sql`${table.state} in ('parsing', 'pending', 'confirming', 'confirmed', 'cancelled', 'needs_desktop', 'failed')`
+      sql`${table.state} in ('parsing', 'awaiting_duration', 'pending', 'confirming', 'confirmed', 'cancelled', 'needs_desktop', 'failed')`
     ),
     check("feishu_intake_candidates_version_check", sql`${table.version} > 0`),
     check(
@@ -80,6 +81,7 @@ export const tasks = pgTable(
     title: varchar("title", { length: 200 }).notNull(),
     sourceInboxEntryId: uuid("source_inbox_entry_id").references(() => inboxEntries.id),
     sourceLongRangePlanId: uuid("source_long_range_plan_id").references(() => longRangePlans.id),
+    recordKind: varchar("record_kind", { length: 16 }).notNull().default("formal"),
     lifecycleStatus: varchar("lifecycle_status", { length: 32 }).notNull().default("open"),
     scheduleKind: varchar("schedule_kind", { length: 16 }).notNull().default("none"),
     currentOutcome: varchar("current_outcome", { length: 32 }),
@@ -98,12 +100,14 @@ export const tasks = pgTable(
   (table) => [
     index("tasks_local_date_idx").on(table.localDate),
     index("tasks_exact_interval_idx").on(table.startAt, table.endAt),
+    index("tasks_record_kind_local_date_idx").on(table.recordKind, table.localDate),
     uniqueIndex("tasks_source_inbox_entry_id_unique").on(table.sourceInboxEntryId),
     index("tasks_source_long_range_plan_idx").on(table.sourceLongRangePlanId),
     check(
       "tasks_lifecycle_status_check",
       sql`${table.lifecycleStatus} in ('open', 'active', 'awaiting_outcome', 'closed', 'cancelled')`
     ),
+    check("tasks_record_kind_check", sql`${table.recordKind} in ('formal', 'backfill')`),
     check("tasks_schedule_kind_check", sql`${table.scheduleKind} in ('none', 'daypart', 'exact')`),
     check(
       "tasks_current_outcome_check",
@@ -164,6 +168,7 @@ export const focusStructures = pgTable(
     taskScheduleRevision: integer("task_schedule_revision").notNull(),
     state: varchar("state", { length: 20 }).notNull().default("candidate"),
     source: varchar("source", { length: 16 }).notNull(),
+    mode: varchar("mode", { length: 16 }).notNull(),
     version: integer("version").notNull().default(1),
     totalStartAt: timestamp("total_start_at", { withTimezone: true }).notNull(),
     totalEndAt: timestamp("total_end_at", { withTimezone: true }).notNull(),
@@ -179,6 +184,7 @@ export const focusStructures = pgTable(
     uniqueIndex("focus_structures_active_task_unique").on(table.taskId).where(sql`${table.state} = 'active'`),
     check("focus_structures_state_check", sql`${table.state} in ('candidate', 'active', 'superseded', 'invalidated', 'cancelled')`),
     check("focus_structures_source_check", sql`${table.source} in ('ai', 'template', 'manual')`),
+    check("focus_structures_mode_check", sql`${table.mode} in ('continuous', 'segmented')`),
     check("focus_structures_revision_check", sql`${table.taskScheduleRevision} > 0`),
     check("focus_structures_version_check", sql`${table.version} > 0`),
     check("focus_structures_interval_check", sql`${table.totalEndAt} > ${table.totalStartAt}`)
@@ -202,7 +208,7 @@ export const focusStructureSegments = pgTable(
     check("focus_structure_segments_type_check", sql`${table.segmentType} in ('focus', 'break')`),
     check(
       "focus_structure_segments_duration_check",
-      sql`(${table.segmentType} = 'focus' and ${table.durationMinutes} >= 30) or (${table.segmentType} = 'break' and ${table.durationMinutes} between 5 and 15)`
+      sql`(${table.segmentType} = 'focus' and ${table.durationMinutes} >= 25) or (${table.segmentType} = 'break' and ${table.durationMinutes} between 5 and 15)`
     )
   ]
 );
@@ -227,6 +233,7 @@ export const focusSessions = pgTable(
     currentSegmentPosition: integer("current_segment_position"),
     currentSegmentStartedAt: timestamp("current_segment_started_at", { withTimezone: true }),
     currentSegmentElapsedSeconds: integer("current_segment_elapsed_seconds").notNull().default(0),
+    pausedTotalSeconds: integer("paused_total_seconds").notNull().default(0),
     confirmationDeadlineAt: timestamp("confirmation_deadline_at", { withTimezone: true }),
     stoppedReason: text("stopped_reason"),
     rawActiveSeconds: integer("raw_active_seconds").notNull().default(0),
@@ -237,13 +244,15 @@ export const focusSessions = pgTable(
   },
   (table) => [
     index("focus_sessions_task_id_idx").on(table.taskId),
+    index("focus_sessions_focus_structure_id_idx").on(table.focusStructureId),
     index("focus_sessions_current_idx").on(table.state, table.updatedAt),
-    uniqueIndex("focus_sessions_open_task_unique").on(table.taskId).where(sql`${table.state} in ('scheduled', 'reminded', 'preparing', 'awaiting_start', 'running', 'paused')`),
-    check("focus_sessions_state_check", sql`${table.state} in ('scheduled', 'reminded', 'preparing', 'awaiting_start', 'running', 'paused', 'ended', 'evaluated', 'stopped_no_response', 'stopped_for_change')`),
+    uniqueIndex("focus_sessions_open_task_unique").on(table.taskId).where(sql`${table.state} in ('scheduled', 'reminded', 'preparing', 'armed', 'awaiting_late_start', 'awaiting_start', 'running', 'paused')`),
+    check("focus_sessions_state_check", sql`${table.state} in ('scheduled', 'reminded', 'preparing', 'armed', 'awaiting_late_start', 'awaiting_start', 'running', 'paused', 'ended', 'evaluated', 'stopped_no_response', 'stopped_for_change')`),
     check("focus_sessions_raw_seconds_check", sql`${table.rawActiveSeconds} >= 0`),
     check("focus_sessions_effective_seconds_check", sql`${table.effectiveFocusSeconds} >= 0`),
     check("focus_sessions_segment_position_check", sql`${table.currentSegmentPosition} is null or ${table.currentSegmentPosition} >= 0`),
     check("focus_sessions_segment_elapsed_check", sql`${table.currentSegmentElapsedSeconds} >= 0`),
+    check("focus_sessions_paused_total_seconds_check", sql`${table.pausedTotalSeconds} >= 0`),
     check("focus_sessions_structure_version_check", sql`${table.focusStructureVersion} is null or ${table.focusStructureVersion} > 0`),
     check("focus_sessions_structure_revision_check", sql`${table.focusStructureScheduleRevision} is null or ${table.focusStructureScheduleRevision} > 0`),
     check("focus_sessions_planned_interval_check", sql`${table.plannedStartAt} is null or ${table.plannedEndAt} is null or ${table.plannedEndAt} > ${table.plannedStartAt}`),
@@ -260,6 +269,7 @@ export const focusSessionSegmentRuns = pgTable(
     segmentType: varchar("segment_type", { length: 16 }).notNull(),
     plannedDurationSeconds: integer("planned_duration_seconds").notNull(),
     elapsedSeconds: integer("elapsed_seconds").notNull().default(0),
+    pausedSeconds: integer("paused_seconds").notNull().default(0),
     startedAt: timestamp("started_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
     skippedAt: timestamp("skipped_at", { withTimezone: true }),
@@ -272,7 +282,31 @@ export const focusSessionSegmentRuns = pgTable(
     check("focus_session_segment_runs_position_check", sql`${table.position} >= 0`),
     check("focus_session_segment_runs_type_check", sql`${table.segmentType} in ('focus', 'break')`),
     check("focus_session_segment_runs_duration_check", sql`${table.plannedDurationSeconds} > 0`),
-    check("focus_session_segment_runs_elapsed_check", sql`${table.elapsedSeconds} >= 0`)
+    check("focus_session_segment_runs_elapsed_check", sql`${table.elapsedSeconds} >= 0`),
+    check("focus_session_segment_runs_paused_seconds_check", sql`${table.pausedSeconds} >= 0`)
+  ]
+);
+
+export const focusSessionOperations = pgTable(
+  "focus_session_operations",
+  {
+    commandId: uuid("command_id").primaryKey(),
+    focusSessionId: uuid("focus_session_id").notNull().references(() => focusSessions.id),
+    operation: varchar("operation", { length: 32 }).notNull(),
+    expectedVersion: integer("expected_version").notNull(),
+    resultingVersion: integer("resulting_version").notNull(),
+    resultingState: varchar("resulting_state", { length: 32 }).notNull(),
+    resultPayload: jsonb("result_payload").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    index("focus_session_operations_session_idx").on(table.focusSessionId, table.createdAt),
+    check(
+      "focus_session_operations_operation_check",
+      sql`${table.operation} in ('create', 'begin', 'skip_preparation', 'respond_start', 'other_arrangement', 'end', 'skip_final_break', 'evaluate')`
+    ),
+    check("focus_session_operations_expected_version_check", sql`${table.expectedVersion} > 0`),
+    check("focus_session_operations_resulting_version_check", sql`${table.resultingVersion} > 0`)
   ]
 );
 
@@ -309,6 +343,7 @@ export const taskFeedback = pgTable("task_feedback", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
 }, (table) => [
   uniqueIndex("task_feedback_focus_session_unique").on(table.focusSessionId),
+  index("task_feedback_task_id_idx").on(table.taskId),
   check("task_feedback_satisfaction_check", sql`${table.satisfaction} in ('satisfied', 'neutral', 'dissatisfied')`)
 ]);
 
@@ -326,6 +361,7 @@ export const taskOutcomes = pgTable(
   },
   (table) => [
     index("task_outcomes_task_id_idx").on(table.taskId, table.recordedAt),
+    index("task_outcomes_focus_session_id_idx").on(table.focusSessionId),
     check(
       "task_outcomes_value_check",
       sql`(${table.outcome} = 'not_completed' and ${table.progressPercent} = 0)
@@ -464,6 +500,21 @@ export const userProfiles = pgTable(
     aiGuidance: text("ai_guidance").notNull().default(""),
     shareWithAi: boolean("share_with_ai").notNull().default(true),
     responseStyle: varchar("response_style", { length: 16 }).notNull().default("balanced"),
+    unscheduledTaskPolicy: varchar("unscheduled_task_policy", { length: 32 }).notNull().default("carry_forward"),
+    recycleRetentionDays: integer("recycle_retention_days").notNull().default(3),
+    focusFlipSoundEnabled: boolean("focus_flip_sound_enabled").notNull().default(true),
+    focusStartSoundEnabled: boolean("focus_start_sound_enabled").notNull().default(true),
+    breakStartSoundEnabled: boolean("break_start_sound_enabled").notNull().default(true),
+    breakEndSoundEnabled: boolean("break_end_sound_enabled").notNull().default(true),
+    focusEndSoundEnabled: boolean("focus_end_sound_enabled").notNull().default(true),
+    focusTheme: varchar("focus_theme", { length: 16 }).notNull().default("ink"),
+    desktopFocusEnabled: boolean("desktop_focus_enabled").notNull().default(true),
+    focusPreparationWindowEnabled: boolean("focus_preparation_window_enabled").notNull().default(true),
+    focusTimerWindowEnabled: boolean("focus_timer_window_enabled").notNull().default(true),
+    focusEvaluationEnabled: boolean("focus_evaluation_enabled").notNull().default(true),
+    feishuTaskCardsEnabled: boolean("feishu_task_cards_enabled").notNull().default(true),
+    feishuT15Enabled: boolean("feishu_t15_enabled").notNull().default(true),
+    healthPageEnabled: boolean("health_page_enabled").notNull().default(true),
     version: integer("version").notNull().default(1),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
@@ -471,7 +522,26 @@ export const userProfiles = pgTable(
   (table) => [
     check("user_profiles_singleton_check", sql`${table.id} = 1`),
     check("user_profiles_response_style_check", sql`${table.responseStyle} in ('concise', 'balanced', 'detailed')`),
+    check("user_profiles_unscheduled_task_policy_check", sql`${table.unscheduledTaskPolicy} in ('carry_forward', 'delete_at_day_end')`),
+    check("user_profiles_recycle_retention_days_check", sql`${table.recycleRetentionDays} between 1 and 30`),
+    check("user_profiles_focus_theme_check", sql`${table.focusTheme} in ('ink', 'flip', 'nixie', 'vapor', 'cyber')`),
     check("user_profiles_version_check", sql`${table.version} > 0`)
+  ]
+);
+
+export const unscheduledTaskDayEndRuns = pgTable(
+  "unscheduled_task_day_end_runs",
+  {
+    localDate: date("local_date", { mode: "string" }).primaryKey(),
+    policy: varchar("policy", { length: 32 }).notNull(),
+    carriedCount: integer("carried_count").notNull().default(0),
+    deletedCount: integer("deleted_count").notNull().default(0),
+    completedAt: timestamp("completed_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    check("unscheduled_task_day_end_runs_policy_check", sql`${table.policy} in ('carry_forward', 'delete_at_day_end')`),
+    check("unscheduled_task_day_end_runs_counts_check", sql`${table.carriedCount} >= 0 and ${table.deletedCount} >= 0`)
   ]
 );
 
@@ -556,6 +626,7 @@ export const reminderJobs = pgTable("reminder_jobs", {
   availableAt: timestamp("available_at", { withTimezone: true }).notNull(),
   attempts: integer("attempts").notNull().default(0),
   payload: jsonb("payload").notNull(),
+  remoteMessageId: varchar("remote_message_id", { length: 128 }),
   lastError: text("last_error"),
   sentAt: timestamp("sent_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -564,7 +635,7 @@ export const reminderJobs = pgTable("reminder_jobs", {
   index("reminder_jobs_due_idx").on(table.status, table.availableAt),
   uniqueIndex("reminder_jobs_task_channel_kind_unique").on(table.taskId, table.channel, table.kind),
   check("reminder_jobs_channel_check", sql`${table.channel} in ('feishu')`),
-  check("reminder_jobs_kind_check", sql`${table.kind} in ('task_start', 'task_follow_up')`),
+  check("reminder_jobs_kind_check", sql`${table.kind} in ('task_start', 'task_start_ready', 'task_start_lapsed', 'task_start_expire')`),
   check("reminder_jobs_status_check", sql`${table.status} in ('pending', 'processing', 'sent', 'failed', 'cancelled')`),
   check("reminder_jobs_attempts_check", sql`${table.attempts} >= 0`),
   check("reminder_jobs_schedule_revision_check", sql`${table.scheduleRevision} > 0`)
@@ -609,6 +680,41 @@ export const healthProfiles = pgTable("health_profiles", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
 }, (table) => [check("health_profiles_version_check", sql`${table.version} > 0`)]);
+
+export const healthWeekConversations = pgTable(
+  "health_week_conversations",
+  {
+    id: uuid("id").primaryKey(),
+    weekStart: date("week_start", { mode: "string" }).notNull().unique(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [index("health_week_conversations_week_idx").on(table.weekStart)]
+);
+
+export const healthWeekConversationMessages = pgTable(
+  "health_week_conversation_messages",
+  {
+    id: uuid("id").primaryKey(),
+    conversationId: uuid("conversation_id").notNull().references(() => healthWeekConversations.id, { onDelete: "cascade" }),
+    role: varchar("role", { length: 16 }).notNull(),
+    source: varchar("source", { length: 16 }).notNull(),
+    content: text("content").notNull(),
+    needsClarification: boolean("needs_clarification"),
+    externalMessageId: varchar("external_message_id", { length: 128 }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    index("health_week_conversation_messages_conversation_idx").on(table.conversationId, table.createdAt),
+    uniqueIndex("health_week_conversation_messages_external_unique").on(table.externalMessageId),
+    check("health_week_conversation_messages_role_check", sql`${table.role} in ('user', 'assistant')`),
+    check("health_week_conversation_messages_source_check", sql`${table.source} in ('app', 'feishu', 'ai')`),
+    check(
+      "health_week_conversation_messages_clarification_check",
+      sql`(${table.role} = 'user' and ${table.needsClarification} is null) or (${table.role} = 'assistant' and ${table.needsClarification} is not null)`
+    )
+  ]
+);
 
 export const healthWeekPlans = pgTable(
   "health_week_plans",
@@ -661,6 +767,24 @@ export const healthDailyReferences = pgTable(
     uniqueIndex("health_daily_references_plan_day_unique").on(table.healthWeekPlanId, table.dayIndex),
     index("health_daily_references_date_idx").on(table.localDate),
     check("health_daily_references_day_index_check", sql`${table.dayIndex} between 0 and 6`)
+  ]
+);
+
+export const healthWeekAutoGenerations = pgTable(
+  "health_week_auto_generations",
+  {
+    weekStart: date("week_start", { mode: "string" }).primaryKey(),
+    status: varchar("status", { length: 16 }).notNull().default("reserved"),
+    planId: uuid("plan_id").references(() => healthWeekPlans.id),
+    failureCode: varchar("failure_code", { length: 64 }),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    index("health_week_auto_generations_status_idx").on(table.status, table.updatedAt),
+    check("health_week_auto_generations_status_check", sql`${table.status} in ('reserved', 'completed', 'failed', 'skipped')`),
+    check("health_week_auto_generations_result_check", sql`(${table.status} = 'completed' and ${table.planId} is not null and ${table.failureCode} is null) or (${table.status} = 'failed' and ${table.planId} is null and ${table.failureCode} is not null) or (${table.status} in ('reserved', 'skipped') and ${table.planId} is null)`)
   ]
 );
 

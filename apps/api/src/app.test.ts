@@ -129,8 +129,10 @@ describe("task endpoints", () => {
       }
     });
     expect(response.statusCode).toBe(201);
-    const created = response.json().task as { id: string; version: number };
-    expect(created).toMatchObject({ lifecycleStatus: "awaiting_outcome", scheduleKind: "exact" });
+    const body = response.json() as { task: { id: string; version: number; recordKind: string; lifecycleStatus: string; scheduleKind: string }; historicalOverlaps: unknown[] };
+    const created = body.task;
+    expect(created).toMatchObject({ recordKind: "backfill", lifecycleStatus: "awaiting_outcome", scheduleKind: "exact" });
+    expect(body.historicalOverlaps).toEqual([]);
     expect(store.reminderJobs.some((job) => job.taskId === created.id)).toBe(false);
 
     const outcome = await app.inject({

@@ -1,33 +1,497 @@
-import { useEffect, useState } from "react";
-import { CheckCircle2, Leaf, Sparkles, Timer, TrendingUp } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Leaf, Sparkles, TrendingUp } from "lucide-react";
+import { RadarEditor, numericRadarValues, type RadarKey, type RadarValues } from "./ReviewRadar";
 
 type Tone = "quiet" | "steady" | "bright" | "strained";
 type TrendGranularity = "day" | "week" | "month";
 type TrendPoint = { startDate: string; endDate: string; focusMinutes: number };
+type PointsBreakdown = { execution: number; focus: number; satisfaction: number; review: number };
 type Summary = {
-  days: Array<{ localDate: string; focusMinutes: number; closedTasks: number; plannedTasks: number; tone: Tone }>;
+  days: Array<{ localDate: string; focusMinutes: number; closedTasks: number; plannedTasks: number; tone: Tone; points: number; pointsBreakdown: PointsBreakdown }>;
   focusTrend: { granularity: TrendGranularity; points: TrendPoint[] };
   focusMinutes: number;
   plannedTasks: number;
   closedTasks: number;
   satisfaction: { satisfied: number; neutral: number; dissatisfied: number };
   radar: Array<{ key: string; label: string; value: number | null; source: "system" | "user"; sampleDays: number }>;
-  garden: { points: number; growthPercent: number; treeKind: string; quality: number };
+  currentRadar: Array<{ key: string; label: string; value: number | null; source: "system" | "user" }>;
+  currentRadarSaved: boolean;
+  garden: { points: number; pointsBreakdown: PointsBreakdown; scoredDays: number; growthPercent: number; treeKind: string; quality: number };
 };
 type WindowDays = 7 | 30 | 90 | 365;
+type BambooStage = "shoots" | "mixed" | "grove";
+
+type BambooPoint = { x: number; y: number; oldX: number; oldY: number; restX: number; restY: number };
+type BambooLeaf = { segment: number; amount: number; side: -1 | 1; length: number; width: number; branchLength: number; branchAngle: number; phase: number; frequency: number; opacity: number; motion: number; motionVelocity: number };
+type BambooShoot = { rootT: number; heightRatio: number; width: number; lean: number; tone: number; phase: number };
+type BambooStalk = {
+  rootT: number;
+  phase: number;
+  frequency: number;
+  amplitude: number;
+  damping: number;
+  thickness: number;
+  tone: number;
+  nodes: BambooPoint[];
+  restLengths: number[];
+  leaves: BambooLeaf[];
+};
+type BambooPointer = { x: number; y: number; velocityX: number; velocityY: number; lastX: number; lastY: number; updatedAt: number; gusts: number; inside: boolean };
+
+const BAMBOO_NODE_MIN = 6;
+const BAMBOO_NODE_MAX = 8;
+const BAMBOO_GUST_HOLD_MS = 900;
+const BAMBOO_SETTLE_MS = 1_300;
+
+function seededRandom(seed: number) {
+  let value = seed >>> 0;
+  return () => {
+    value = (value * 1664525 + 1013904223) >>> 0;
+    return value / 4294967296;
+  };
+}
+
+function bambooRootPoint(width: number, height: number, amount: number) {
+  const x = width * amount;
+  const y = height - 3 - Math.sin(amount * Math.PI * 1.6) * 2;
+  return { x, y };
+}
+
+function buildBamboo(width: number, height: number, stage: BambooStage) {
+  const random = seededRandom(0x5a17c9);
+  const roots = stage === "grove" ? [.49, .61, .72, .83] : [.64, .81];
+  const heightRatios = stage === "grove" ? [.68, .89, .76, .96] : [.38, .53];
+  const thicknesses = stage === "grove" ? [2.7, 3.5, 3.1, 4] : [2.6, 3.1];
+  // Keep the four stalks on one ink family; the visible gradient is vertical,
+  // from a washed root to a heavier upper stroke.
+  const tones = [.205, .205, .205, .205];
+  return roots.map((root, stalkIndex): BambooStalk => {
+    const rootT = Math.min(.93, Math.max(.32, root + (random() - .5) * .018));
+    const rootPoint = bambooRootPoint(width, height, rootT);
+    const nodeCount = stage === "grove"
+      ? BAMBOO_NODE_MIN + Math.floor(random() * (BAMBOO_NODE_MAX - BAMBOO_NODE_MIN + 1))
+      : 5 + Math.floor(random() * 2);
+    const length = Math.min(height - 8, height * heightRatios[stalkIndex]!);
+    const lean = width * ([-.025, .026, -.012, .038][stalkIndex] ?? 0);
+    const curvePhase = random() * Math.PI * 2;
+    const nodes = Array.from({ length: nodeCount }, (_, nodeIndex): BambooPoint => {
+      const amount = nodeIndex / (nodeCount - 1);
+      const x = rootPoint.x + lean * amount + Math.sin(curvePhase + amount * Math.PI * 1.2) * width * .0045 * amount;
+      const y = rootPoint.y - length * amount;
+      return { x, y, oldX: x, oldY: y, restX: x, restY: y };
+    });
+    const restLengths = nodes.slice(1).map((node, index) => Math.hypot(node.x - nodes[index]!.x, node.y - nodes[index]!.y));
+    const leafCount = stage === "grove" ? 5 + Math.floor(random() * 3) : 3 + Math.floor(random() * 2);
+    const leaves = Array.from({ length: leafCount }, (_, leafIndex): BambooLeaf => {
+      const progress = .24 + leafIndex / Math.max(1, leafCount - 1) * .67 + (random() - .5) * .075;
+      const scaled = Math.max(.08, Math.min(.96, progress)) * (nodeCount - 1);
+      return {
+        segment: Math.min(nodeCount - 2, Math.floor(scaled)),
+        amount: scaled - Math.floor(scaled),
+        side: ((leafIndex + stalkIndex) % 2 === 0 ? -1 : 1),
+        length: 14 + random() * 8,
+        width: 2.1 + random() * 1.4,
+        branchLength: 8 + random() * 10,
+        branchAngle: .78 + random() * .36,
+        phase: random() * Math.PI * 2,
+        frequency: .0011 + random() * .0007,
+        opacity: .72 + random() * .28,
+        motion: 0,
+        motionVelocity: 0
+      };
+    });
+    return {
+      rootT,
+      phase: random() * Math.PI * 2,
+      frequency: .00018 + random() * .00012,
+      amplitude: .0012 + random() * .002,
+      damping: .962 + random() * .009,
+      thickness: thicknesses[stalkIndex]!,
+      tone: tones[stalkIndex]!,
+      nodes,
+      restLengths,
+      leaves
+    };
+  });
+}
+
+function buildBambooShoots(stage: BambooStage): BambooShoot[] {
+  if (stage === "grove") return [];
+  const roots = stage === "shoots" ? [.54, .64, .75, .84] : [.53, .72];
+  const heights = stage === "shoots" ? [.19, .29, .23, .34] : [.25, .34];
+  return roots.map((rootT, index) => ({
+    rootT,
+    heightRatio: heights[index]!,
+    width: 10 + index % 2 * 2.5,
+    lean: [-.08, .045, -.035, .07][index] ?? .04,
+    tone: .24 + index * .018,
+    phase: .7 + index * 1.13
+  }));
+}
+
+function drawBambooShoot(context: CanvasRenderingContext2D, shoot: BambooShoot, width: number, height: number) {
+  const root = bambooRootPoint(width, height, shoot.rootT);
+  const shootHeight = height * shoot.heightRatio;
+  const tipX = root.x + shoot.lean * shootHeight;
+  const tipY = root.y - shootHeight;
+  const waistY = root.y - shootHeight * .53;
+  const gradient = context.createLinearGradient(root.x, root.y, tipX, tipY);
+  gradient.addColorStop(0, `rgba(50,70,57,${(shoot.tone * .42).toFixed(3)})`);
+  gradient.addColorStop(.58, `rgba(45,66,53,${(shoot.tone * .72).toFixed(3)})`);
+  gradient.addColorStop(1, `rgba(37,55,44,${Math.min(.42, shoot.tone * 1.35).toFixed(3)})`);
+  context.save();
+  context.beginPath();
+  context.moveTo(root.x - shoot.width * .54, root.y);
+  context.bezierCurveTo(root.x - shoot.width * .7, waistY, tipX - shoot.width * .26, tipY + shootHeight * .18, tipX, tipY);
+  context.bezierCurveTo(tipX + shoot.width * .34, tipY + shootHeight * .2, root.x + shoot.width * .68, waistY, root.x + shoot.width * .54, root.y);
+  context.closePath();
+  context.fillStyle = gradient;
+  context.fill();
+  context.strokeStyle = `rgba(37,55,44,${Math.min(.46, shoot.tone * 1.28).toFixed(3)})`;
+  context.lineWidth = .9;
+  context.stroke();
+  for (let layer = 0; layer < 3; layer += 1) {
+    const amount = .24 + layer * .22;
+    const centerX = root.x + (tipX - root.x) * amount;
+    const centerY = root.y + (tipY - root.y) * amount;
+    const layerWidth = shoot.width * (1 - amount * .42);
+    context.beginPath();
+    context.moveTo(centerX - layerWidth * .54, centerY + 4);
+    context.quadraticCurveTo(centerX + Math.sin(shoot.phase + layer) * 2, centerY - 8, centerX + layerWidth * .52, centerY - 3);
+    context.strokeStyle = `rgba(37,55,44,${(.1 + amount * .2).toFixed(3)})`;
+    context.lineWidth = .75;
+    context.stroke();
+  }
+  context.beginPath();
+  context.moveTo(tipX, tipY);
+  context.quadraticCurveTo(tipX - 7, tipY + 8, tipX - 2, tipY + 17);
+  context.strokeStyle = `rgba(37,55,44,${Math.min(.44, shoot.tone * 1.22).toFixed(3)})`;
+  context.lineWidth = 1;
+  context.stroke();
+  context.restore();
+}
+
+function drawBambooLeaf(context: CanvasRenderingContext2D, x: number, y: number, angle: number, leaf: BambooLeaf, tone: number, flutter: number) {
+  context.save();
+  context.translate(x, y);
+  context.rotate(angle + flutter);
+  context.beginPath();
+  context.moveTo(0, 0);
+  context.bezierCurveTo(leaf.length * .17, -leaf.width * .64, leaf.length * .64, -leaf.width * 1.08, leaf.length, -leaf.width * .08);
+  context.bezierCurveTo(leaf.length * .72, leaf.width * .42, leaf.length * .28, leaf.width * .62, 0, 0);
+  context.fillStyle = `rgba(65,84,70,${(tone * leaf.opacity * .66).toFixed(3)})`;
+  context.fill();
+  context.strokeStyle = `rgba(37,53,44,${(tone * leaf.opacity).toFixed(3)})`;
+  context.lineWidth = .62;
+  context.stroke();
+  context.beginPath();
+  context.moveTo(1, 0);
+  context.quadraticCurveTo(leaf.length * .52, -leaf.width * .1, leaf.length * .9, 0);
+  context.strokeStyle = `rgba(243,240,231,${(tone * .52).toFixed(3)})`;
+  context.lineWidth = .42;
+  context.stroke();
+  context.restore();
+}
+
+function bambooInkTone(stalk: BambooStalk, depth: number) {
+  return Math.min(.48, stalk.tone * (.52 + depth * 1.22));
+}
+
+function bambooInkThickness(stalk: BambooStalk, depth: number) {
+  return stalk.thickness * (.8 + depth * .28);
+}
+
+function drawBamboo(context: CanvasRenderingContext2D, stalks: BambooStalk[], shoots: BambooShoot[], width: number, height: number, now: number) {
+  context.clearRect(0, 0, width, height);
+  shoots.forEach((shoot) => drawBambooShoot(context, shoot, width, height));
+  stalks.forEach((stalk) => {
+    const nodes = stalk.nodes;
+    for (let index = 0; index < nodes.length - 1; index += 1) {
+      const current = nodes[index]!;
+      const next = nodes[index + 1]!;
+      const depth = index / Math.max(1, nodes.length - 2);
+      const tone = bambooInkTone(stalk, depth);
+      const thickness = bambooInkThickness(stalk, depth);
+      context.beginPath();
+      context.moveTo(current.x, current.y);
+      context.lineTo(next.x, next.y);
+      context.strokeStyle = `rgba(45,66,53,${tone.toFixed(3)})`;
+      context.lineWidth = thickness;
+      context.lineCap = "butt";
+      context.stroke();
+      context.beginPath();
+      context.moveTo(current.x - thickness * .15, current.y);
+      context.lineTo(next.x - thickness * .15, next.y);
+      context.strokeStyle = `rgba(243,240,231,${(tone * .5).toFixed(3)})`;
+      context.lineWidth = Math.max(.45, thickness * .16);
+      context.stroke();
+      if (index > 0) {
+        const angle = Math.atan2(next.y - current.y, next.x - current.x);
+        const normalX = Math.cos(angle + Math.PI / 2) * thickness * .72;
+        const normalY = Math.sin(angle + Math.PI / 2) * thickness * .72;
+        context.beginPath();
+        context.moveTo(current.x - normalX, current.y - normalY);
+        context.lineTo(current.x + normalX, current.y + normalY);
+        context.strokeStyle = `rgba(34,51,41,${Math.min(.42, tone * 1.28).toFixed(3)})`;
+        context.lineWidth = 1;
+        context.lineCap = "round";
+        context.stroke();
+      }
+    }
+    stalk.leaves.forEach((leaf) => {
+      const current = nodes[leaf.segment]!;
+      const next = nodes[leaf.segment + 1]!;
+      const x = current.x + (next.x - current.x) * leaf.amount;
+      const y = current.y + (next.y - current.y) * leaf.amount;
+      const leafDepth = (leaf.segment + leaf.amount) / Math.max(1, nodes.length - 2);
+      const leafTone = bambooInkTone(stalk, leafDepth);
+      const tangent = Math.atan2(next.y - current.y, next.x - current.x);
+      const segmentVelocity = (next.x - next.oldX) - (current.x - current.oldX);
+      const branchAngle = tangent + leaf.side * leaf.branchAngle;
+      const branchX = x + Math.cos(branchAngle) * leaf.branchLength;
+      const branchY = y + Math.sin(branchAngle) * leaf.branchLength;
+      context.beginPath();
+      context.moveTo(x, y);
+      context.quadraticCurveTo(
+        x + Math.cos(branchAngle) * leaf.branchLength * .48,
+        y + Math.sin(branchAngle) * leaf.branchLength * .42,
+        branchX,
+        branchY
+      );
+      context.strokeStyle = `rgba(45,66,53,${(leafTone * .78).toFixed(3)})`;
+      context.lineWidth = .72;
+      context.lineCap = "round";
+      context.stroke();
+      const flutter = Math.sin(now * leaf.frequency + leaf.phase) * .008 + leaf.motion + Math.max(-.035, Math.min(.035, segmentVelocity * .03));
+      drawBambooLeaf(context, branchX, branchY, branchAngle + leaf.side * .16, leaf, leafTone, flutter);
+    });
+  });
+}
+
+export function growthBambooStage(growthPercent: number): BambooStage {
+  if (growthPercent < 33) return "shoots";
+  if (growthPercent <= 66) return "mixed";
+  return "grove";
+}
+
+function GrowthBamboo({ stage }: { stage: BambooStage }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const stalksRef = useRef<BambooStalk[]>([]);
+  const shootsRef = useRef<BambooShoot[]>([]);
+  const pointerRef = useRef<BambooPointer>({ x: -999, y: -999, velocityX: 0, velocityY: 0, lastX: 0, lastY: 0, updatedAt: 0, gusts: 0, inside: false });
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const landscape = canvas.closest(".growth-landscape");
+    if (!(landscape instanceof HTMLElement)) return;
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    let cssWidth = 0;
+    let cssHeight = 0;
+    let frame = 0;
+    let last = performance.now();
+    let visible = true;
+
+    const resize = () => {
+      const rect = canvas.getBoundingClientRect();
+      cssWidth = Math.max(1, rect.width);
+      cssHeight = Math.max(1, rect.height);
+      const ratio = Math.min(2, window.devicePixelRatio || 1);
+      canvas.width = Math.round(cssWidth * ratio);
+      canvas.height = Math.round(cssHeight * ratio);
+      context.setTransform(ratio, 0, 0, ratio, 0, 0);
+      stalksRef.current = stage === "shoots" ? [] : buildBamboo(cssWidth, cssHeight, stage);
+      shootsRef.current = buildBambooShoots(stage);
+      drawBamboo(context, stalksRef.current, shootsRef.current, cssWidth, cssHeight, performance.now());
+      canvas.dataset.motionEnergy = "0.000";
+      canvas.dataset.gustPhase = "idle";
+    };
+
+    const constrain = (stalk: BambooStalk, recovery: number) => {
+      const nodes = stalk.nodes;
+      const root = bambooRootPoint(cssWidth, cssHeight, stalk.rootT);
+      nodes[0]!.x = root.x;
+      nodes[0]!.y = root.y;
+      for (let pass = 0; pass < 5; pass += 1) {
+        for (let index = 1; index < nodes.length; index += 1) {
+          const parent = nodes[index - 1]!;
+          const node = nodes[index]!;
+          const dx = node.x - parent.x;
+          const dy = node.y - parent.y;
+          const distance = Math.max(.001, Math.hypot(dx, dy));
+          const correction = (distance - stalk.restLengths[index - 1]!) / distance;
+          const depth = index / (nodes.length - 1);
+          const parentShare = index === 1 ? 0 : .22 + depth * .18;
+          node.x -= dx * correction * (1 - parentShare);
+          node.y -= dy * correction * (1 - parentShare);
+          if (index > 1) {
+            parent.x += dx * correction * parentShare;
+            parent.y += dy * correction * parentShare;
+          }
+        }
+        for (let index = 1; index < nodes.length - 1; index += 1) {
+          const before = nodes[index - 1]!;
+          const node = nodes[index]!;
+          const after = nodes[index + 1]!;
+          const depth = index / (nodes.length - 1);
+          const bending = .115 * (1 - depth * .72);
+          node.x += ((before.x + after.x) * .5 - node.x) * bending;
+          node.y += ((before.y + after.y) * .5 - node.y) * bending;
+          const shape = (.055 + recovery * .035) * (1 - depth) ** 2;
+          node.x += (node.restX - node.x) * shape;
+          node.y += (node.restY - node.y) * shape;
+        }
+        nodes[0]!.x = root.x;
+        nodes[0]!.y = root.y;
+      }
+    };
+
+    const tick = (now: number) => {
+      frame = 0;
+      if (!visible || reducedMotion) return;
+      const dt = Math.min(1.6, (now - last) / 16.667);
+      last = now;
+      const pointer = pointerRef.current;
+      const moving = now - pointer.updatedAt < 82;
+      const sinceGust = pointer.updatedAt ? now - pointer.updatedAt : Number.POSITIVE_INFINITY;
+      const recovery = Math.max(0, Math.min(1, (sinceGust - BAMBOO_GUST_HOLD_MS) / BAMBOO_SETTLE_MS));
+      const gustPhase = sinceGust < BAMBOO_GUST_HOLD_MS ? "active" : recovery < 1 ? "settling" : "idle";
+      let energy = 0;
+      stalksRef.current.forEach((stalk) => {
+        const natural = Math.sin(now * stalk.frequency + stalk.phase) + .28 * Math.sin(now * stalk.frequency * .47 + stalk.phase * 1.63);
+        for (let index = 1; index < stalk.nodes.length; index += 1) {
+          const node = stalk.nodes[index]!;
+          const depth = index / (stalk.nodes.length - 1);
+          const effectiveDamping = stalk.damping - recovery * .012;
+          const velocityX = (node.x - node.oldX) * Math.pow(effectiveDamping, dt);
+          const velocityY = (node.y - node.oldY) * Math.pow(effectiveDamping, dt);
+          node.oldX = node.x;
+          node.oldY = node.y;
+          let forceX = natural * stalk.amplitude * depth ** 1.8;
+          let forceY = 0;
+          if (moving) {
+            const distance = Math.hypot(pointer.x - node.x, pointer.y - node.y);
+            if (distance < 150) {
+              const falloff = (1 - distance / 150) ** 2 * (0.28 + depth * .72);
+              forceX += pointer.velocityX * .018 * falloff;
+              forceY += pointer.velocityY * .004 * falloff;
+            }
+          }
+          node.x += velocityX + forceX * dt * dt;
+          node.y += velocityY + forceY * dt * dt;
+          energy += Math.abs(velocityX) + Math.abs(velocityY);
+        }
+        constrain(stalk, recovery);
+        stalk.leaves.forEach((leaf) => {
+          const current = stalk.nodes[leaf.segment]!;
+          const next = stalk.nodes[leaf.segment + 1]!;
+          const currentVelocity = current.x - current.oldX;
+          const nextVelocity = next.x - next.oldX;
+          const localVelocity = currentVelocity + (nextVelocity - currentVelocity) * leaf.amount;
+          const bendVelocity = nextVelocity - currentVelocity;
+          const target = Math.max(-.18, Math.min(.18, (localVelocity * .07 + bendVelocity * .11) * leaf.side));
+          const spring = (target - leaf.motion) * .16;
+          leaf.motionVelocity = (leaf.motionVelocity + spring * dt) * Math.pow(.84, dt);
+          leaf.motion += leaf.motionVelocity * dt;
+        });
+      });
+      drawBamboo(context, stalksRef.current, shootsRef.current, cssWidth, cssHeight, now);
+      if ((Math.round(now / 16) % 8) === 0) {
+        canvas.dataset.motionEnergy = energy.toFixed(3);
+        canvas.dataset.gustPhase = gustPhase;
+      }
+      frame = requestAnimationFrame(tick);
+    };
+
+    const start = () => {
+      if (frame || reducedMotion || stage === "shoots" || !visible) return;
+      last = performance.now();
+      frame = requestAnimationFrame(tick);
+    };
+    const move = (event: PointerEvent) => {
+      const rect = canvas.getBoundingClientRect();
+      const now = performance.now();
+      const previous = pointerRef.current;
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      const elapsed = Math.max(8, now - previous.updatedAt);
+      const velocityX = previous.inside ? Math.max(-34, Math.min(34, (x - previous.lastX) / elapsed * 16.667)) : 0;
+      const velocityY = previous.inside ? Math.max(-22, Math.min(22, (y - previous.lastY) / elapsed * 16.667)) : 0;
+      pointerRef.current = { x, y, velocityX, velocityY, lastX: x, lastY: y, updatedAt: now, gusts: previous.gusts + 1, inside: true };
+      canvas.dataset.gustCount = String(pointerRef.current.gusts);
+      start();
+    };
+    const leave = () => {
+      pointerRef.current = { ...pointerRef.current, x: -999, y: -999, velocityX: 0, velocityY: 0, inside: false };
+    };
+    const resizeObserver = new ResizeObserver(resize);
+    const intersectionObserver = new IntersectionObserver(([entry]) => {
+      visible = entry?.isIntersecting ?? true;
+      if (!visible && frame) {
+        cancelAnimationFrame(frame);
+        frame = 0;
+      } else if (visible) start();
+    }, { threshold: .02 });
+    resizeObserver.observe(canvas);
+    intersectionObserver.observe(canvas);
+    if (stage !== "shoots") {
+      landscape.addEventListener("pointermove", move, { passive: true });
+      landscape.addEventListener("pointerleave", leave);
+    }
+    resize();
+    start();
+    return () => {
+      if (frame) cancelAnimationFrame(frame);
+      resizeObserver.disconnect();
+      intersectionObserver.disconnect();
+      if (stage !== "shoots") {
+        landscape.removeEventListener("pointermove", move);
+        landscape.removeEventListener("pointerleave", leave);
+      }
+    };
+  }, [stage]);
+  const stalkCount = stage === "grove" ? 4 : stage === "mixed" ? 2 : 0;
+  const shootCount = stage === "grove" ? 0 : stage === "mixed" ? 2 : 4;
+  return <canvas
+    ref={canvasRef}
+    className="growth-bamboo"
+    data-motion-model="pbd-bamboo-wind-field"
+    data-growth-stage={stage}
+    data-stalk-count={stalkCount}
+    data-shoot-count={shootCount}
+    data-node-range={`${BAMBOO_NODE_MIN}-${BAMBOO_NODE_MAX}`}
+    data-leaf-shape="bezier-lanceolate"
+    data-tone-order="bottom-to-top"
+    data-leaf-response="greater-than-stalk"
+    data-gust-hold-ms={BAMBOO_GUST_HOLD_MS}
+    data-gust-phase="idle"
+    data-gust-count="0"
+    aria-hidden="true"
+  />;
+}
 
 const API = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:3000";
 const WINDOW_OPTIONS: Array<{ days: WindowDays; label: string }> = [
-  { days: 7, label: "最近 7 天" },
-  { days: 30, label: "最近 30 天" },
-  { days: 90, label: "最近 90 天" },
-  { days: 365, label: "最近 1 年" }
+  { days: 7, label: "七日" },
+  { days: 30, label: "一月" },
+  { days: 90, label: "一季" },
+  { days: 365, label: "一年" }
 ];
 const CHART_WIDTH = 720;
 const CHART_HEIGHT = 220;
 const CHART_PADDING = { top: 18, right: 18, bottom: 42, left: 48 };
 
 const localDate = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+async function request<T>(path: string, method = "GET", body?: Record<string, unknown>): Promise<T> {
+  const response = await fetch(`${API}${path}`, {
+    method,
+    headers: body ? { "content-type": "application/json" } : undefined,
+    body: body ? JSON.stringify(body) : undefined
+  });
+  if (!response.ok) throw new Error((await response.json().catch(() => ({})) as { error?: string }).error ?? "growth_request_failed");
+  return response.json() as Promise<T>;
+}
 const weekday = (value: string) => new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", weekday: "short" }).format(new Date(`${value}T12:00:00Z`)).replace("周", "");
 const compactDate = (value: string) => `${Number(value.slice(5, 7))}/${Number(value.slice(8, 10))}`;
 const dayLabel = (value: string, windowDays: WindowDays) => windowDays === 7 ? weekday(value) : value.slice(8);
@@ -104,60 +568,155 @@ function StateGrid({ days, windowDays }: { days: Summary["days"]; windowDays: Wi
   </div>;
 }
 
+function FeelingTraces({ satisfaction }: { satisfaction: Summary["satisfaction"] }) {
+  const values = [
+    { key: "satisfied", label: "满意", value: satisfaction.satisfied },
+    { key: "neutral", label: "一般", value: satisfaction.neutral },
+    { key: "dissatisfied", label: "不满意", value: satisfaction.dissatisfied }
+  ] as const;
+  const total = values.reduce((sum, item) => sum + item.value, 0);
+  return <div className="feeling-traces" data-empty={total === 0 ? "true" : "false"}>
+    {values.map((item) => <div className={`feeling-trace ${item.key}`} key={item.key}>
+      <i className="feeling-trace-dot" aria-hidden="true" />
+      <span>{item.label}</span>
+      <span className="feeling-trace-track" aria-hidden="true"><b style={{ width: total > 0 ? `${item.value / total * 100}%` : "0%" }} /></span>
+      <strong>{item.value}</strong>
+    </div>)}
+    {total === 0 ? <small>本周还没有留下主观反馈</small> : null}
+  </div>;
+}
+
+function GrowthLandscape({ summary }: { summary: Summary }) {
+  const feelingTotal = summary.satisfaction.satisfied + summary.satisfaction.neutral + summary.satisfaction.dissatisfied;
+  const feelingBalance = feelingTotal === 0
+    ? 0
+    : (summary.satisfaction.satisfied - summary.satisfaction.dissatisfied) / feelingTotal;
+  const todayTaskProgress = summary.days.find((day) => day.localDate === localDate()) ?? summary.days.at(-1);
+  const todayClosedTasks = todayTaskProgress?.closedTasks ?? 0;
+  const todayPlannedTasks = todayTaskProgress?.plannedTasks ?? 0;
+  const growthPercent = summary.garden.growthPercent;
+  const growthNarrative = growthPercent <= 0
+    ? "尚待落笔"
+    : growthPercent < 25
+      ? "初芽"
+      : growthPercent < 55
+        ? "舒枝"
+        : growthPercent < 80
+          ? "渐荫"
+          : "成景";
+  const bambooStage = growthBambooStage(growthPercent);
+  return <section
+    className="growth-landscape"
+    data-tone={feelingBalance > .18 ? "bright" : feelingBalance < -.18 ? "strained" : feelingTotal ? "steady" : "quiet"}
+    aria-label={`成长图景：${summary.garden.treeKind}，今日任务生长进度 ${growthPercent}%`}
+  >
+    <svg className="growth-landscape-ink" viewBox="0 0 1200 460" preserveAspectRatio="none" aria-hidden="true">
+      <path className="growth-mountain-back" d="M-30 365C105 330 169 216 291 257C398 293 426 348 546 286C661 226 735 141 848 208C955 271 1011 328 1230 218V460H-30Z" />
+      <path className="growth-mountain-front" d="M-30 407C111 368 238 321 360 362C478 401 562 361 665 315C785 263 883 333 987 359C1064 379 1135 347 1230 315V460H-30Z" />
+      <path className="growth-river" d="M52 421C245 393 389 424 573 402C752 381 922 418 1148 388" />
+    </svg>
+    <div className="growth-scene-copy">
+      <p className="section-kicker">{summary.garden.treeKind}</p>
+      <strong>{growthNarrative}</strong>
+      <span>本期留下的景</span>
+      <p>每一笔都来自任务、专注、感受与主动复盘的真实记录。</p>
+    </div>
+    <GrowthBamboo stage={bambooStage} />
+    <dl className="growth-scene-metrics" id="growth-scene-details">
+      <div><dt>有效专注</dt><dd>{summary.focusMinutes}<small>分钟</small></dd></div>
+      <div><dt>今日任务收束</dt><dd>{todayClosedTasks}<small>/{todayPlannedTasks} 项</small></dd></div>
+      <div><dt>今日生长进度</dt><dd>{growthPercent}<small>%</small></dd></div>
+    </dl>
+  </section>;
+}
+
 export function GrowthWorkspace() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [windowDays, setWindowDays] = useState<WindowDays>(7);
+  const [radarValues, setRadarValues] = useState<RadarValues>(() => numericRadarValues());
+  const [radarSaving, setRadarSaving] = useState(false);
+  const [radarSaved, setRadarSaved] = useState(false);
+  const [radarError, setRadarError] = useState<string | null>(null);
+
+  const loadSummary = useCallback(async (signal?: AbortSignal) => {
+    const body = await request<{ summary: Summary }>(`/api/v1/growth/summary?endDate=${localDate()}&days=${windowDays}`);
+    if (signal?.aborted) return;
+    setSummary(body.summary);
+    const radarInput = Object.fromEntries(body.summary.currentRadar.map((metric) => [metric.key, metric.value])) as Partial<Record<RadarKey, number | null>>;
+    const hasCurrentSignal = body.summary.currentRadarSaved || body.summary.currentRadar.some((metric) => typeof metric.value === "number" && metric.value > 0);
+    setRadarValues(hasCurrentSignal ? numericRadarValues(radarInput) : numericRadarValues());
+    setRadarSaved(body.summary.currentRadarSaved);
+  }, [windowDays]);
 
   useEffect(() => {
     const controller = new AbortController();
     setSummary(null);
     setError(null);
-    void fetch(`${API}/api/v1/growth/summary?endDate=${localDate()}&days=${windowDays}`, { signal: controller.signal })
-      .then(async (response) => {
-        if (!response.ok) throw new Error("growth_request_failed");
-        const body = await response.json() as { summary: Summary };
-        setSummary(body.summary);
-      })
-      .catch((loadError: unknown) => {
+    void loadSummary(controller.signal).catch((loadError: unknown) => {
         if (loadError instanceof DOMException && loadError.name === "AbortError") return;
         setError("无法读取成长数据，请确认 API 正在运行。");
       });
     return () => controller.abort();
-  }, [windowDays]);
+  }, [loadSummary]);
+
+  async function saveRadar() {
+    setRadarSaving(true); setRadarError(null);
+    try {
+      const review = await request<{ session: { id: string } }>(`/api/v1/reviews/${localDate()}`);
+      await request(`/api/v1/reviews/${review.session.id}/radar`, "POST", radarValues);
+      setRadarSaved(true);
+      await loadSummary();
+    } catch {
+      setRadarError("六维回看没有保存，请确认 API 正在运行后重试。");
+    } finally { setRadarSaving(false); }
+  }
 
   const rangeDescription = WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label ?? "当前范围";
 
   return <section className="page growth-page" aria-labelledby="growth-title" aria-busy={!summary && !error}>
     <div className="growth-heading">
       <div><p className="eyebrow">成长花园</p><h1 id="growth-title">生长来自留下的数据。</h1></div>
-      <div className="growth-range-switch" role="group" aria-label="成长时间范围">
+      <div className="growth-time-ruler" role="group" aria-label="成长时间范围">
         {WINDOW_OPTIONS.map((option) => <button type="button" key={option.days} aria-pressed={windowDays === option.days} onClick={() => setWindowDays(option.days)}>{option.label}</button>)}
       </div>
     </div>
     {!summary && !error ? <div className="growth-loading"><Leaf /><p>正在汇集{rangeDescription}的真实记录。</p></div> : summary ? <>
-      <section className="growth-hero" aria-label="成长概览">
-        <div className="growth-plant"><span className="plant-stem" style={{ height: `${Math.max(42, summary.garden.growthPercent * 1.5)}px` }} /><i /><b /></div>
-        <div><p className="section-kicker">当前树种</p><strong>{summary.garden.treeKind}</strong><p>由近期完成质量决定，专注时长推动生长进度。</p></div>
-        <div className="growth-hero-stats"><span><Timer />{summary.focusMinutes} 分钟</span><span><CheckCircle2 />{summary.closedTasks}/{summary.plannedTasks} 项结束</span><span><Sparkles />{summary.garden.points} 积分</span></div>
-      </section>
-      <div className="growth-grid">
-        <section className="growth-panel focus-trend">
+      <GrowthLandscape summary={summary} />
+      <details className="growth-ledger">
+        <summary><span>查看精确数据与积分账簿</span><small>第一眼看生长，第二层再看数字</small></summary>
+        <section className="growth-score-ledger" aria-label="成长积分构成">
+          <div><span>执行进度</span><strong>{summary.garden.pointsBreakdown.execution}/45</strong></div>
+          <div><span>有效专注</span><strong>{summary.garden.pointsBreakdown.focus}/25</strong></div>
+          <div><span>主观感受</span><strong>{summary.garden.pointsBreakdown.satisfaction}/20</strong></div>
+          <div><span>主动复盘</span><strong>{summary.garden.pointsBreakdown.review}/10</strong></div>
+          <small>{summary.garden.scoredDays > 0 ? `基于 ${summary.garden.scoredDays} 个有记录日期；任务数量本身不加分。` : "当前范围还没有可计分记录。"}</small>
+        </section>
+      </details>
+      <div className="growth-record-sections">
+        <section className="growth-record focus-trend">
           <div className="panel-heading"><div><p className="section-kicker">专注轨迹</p><h2>有效专注时长</h2></div><TrendingUp /></div>
           <FocusTrendChart trend={summary.focusTrend} />
         </section>
-        <section className="growth-panel">
+        <section className="growth-record">
           <div className="panel-heading"><div><p className="section-kicker">每日状态</p><h2>{stateTitle(windowDays)}</h2></div><Leaf /></div>
           <p className="growth-state-legend">绿色偏满意，黄色为混合或一般，红色偏不满意；灰色表示当天没有主观反馈。</p>
           <StateGrid days={summary.days} windowDays={windowDays} />
         </section>
-        <section className="growth-panel radar-panel">
-          <div className="panel-heading"><div><p className="section-kicker">六维回看</p><h2>系统预填与主动评价分开</h2></div><span>{summary.garden.quality}%</span></div>
-          <div className="radar-list">{summary.radar.map((metric) => <div key={metric.key}><span><span className="metric-label">{metric.label}</span><small>{metric.source === "system" ? "记录预填" : `${metric.sampleDays} 天已填`}</small></span><i><b style={{ width: `${metric.value ?? 0}%` }} /></i><strong>{metric.value ?? "未填"}</strong></div>)}</div>
+        <section className="growth-record radar-panel">
+          <div className="panel-heading"><div><p className="section-kicker">六维回看</p><h2>把今天的体验拖成一张图</h2></div><span>{summary.garden.quality}%</span></div>
+          <RadarEditor
+            values={radarValues}
+            onChange={(key, value) => { setRadarSaved(false); setRadarValues((current) => ({ ...current, [key]: value })); }}
+            onSave={() => void saveRadar()}
+            saving={radarSaving}
+            saved={radarSaved}
+          />
+          {radarError && <p className="growth-radar-error" role="alert">{radarError}</p>}
         </section>
-        <section className="growth-panel feeling-panel">
+        <section className="growth-record feeling-panel">
           <div className="panel-heading"><div><p className="section-kicker">主观感受</p><h2>专注之后的声音</h2></div><Sparkles /></div>
-          <div className="feeling-row"><span className="satisfied">满意 <strong>{summary.satisfaction.satisfied}</strong></span><span className="neutral">一般 <strong>{summary.satisfaction.neutral}</strong></span><span className="dissatisfied">不满意 <strong>{summary.satisfaction.dissatisfied}</strong></span></div>
+          <FeelingTraces satisfaction={summary.satisfaction} />
         </section>
       </div>
     </> : null}

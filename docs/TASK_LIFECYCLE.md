@@ -26,6 +26,13 @@ blocking category, cancellation, or deletion changes. It does not change for
 title, notes, difficulty, or transitions inside `open | active |
 awaiting_outcome`.
 
+A dated, open formal task with `scheduleKind = none` is eligible for the local
+Worker's day-end operation after the Shanghai date changes. The user's stored
+policy either moves `localDate` forward by one day or applies the ordinary
+recoverable soft deletion. Both operations increment `version` and
+`scheduleRevision`. The operation is logged once per source date and excludes
+backfills, ideas/questions, inbox entries, and every non-open or scheduled task.
+
 ## Outcomes and Events
 
 `task_outcomes` is append-only and contains task ID, optional focus session ID,

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 import { inArray, eq } from "drizzle-orm";
 import { connectVerifiedDatabase } from "@personal-ai/db/client";
@@ -11,9 +12,34 @@ const plans = new LongRangePlanService(connection.db);
 const trees = new LongRangeTaskTreeService(connection.db);
 afterAll(async () => { await connection.client.end(); });
 
+async function createPlanFixture(input: { title: string; periodStart: string; periodEnd: string; description: string | null; milestone?: { title: string; targetDate: string | null; notes: string | null } }) {
+  const planId = randomUUID();
+  await connection.db.insert(longRangePlans).values({
+    id: planId,
+    scope: "month",
+    title: input.title,
+    periodStart: input.periodStart,
+    periodEnd: input.periodEnd,
+    description: input.description,
+    status: "active",
+    version: 1
+  });
+  if (input.milestone) {
+    await connection.db.insert(longRangePlanMilestones).values({
+      id: randomUUID(),
+      longRangePlanId: planId,
+      title: input.milestone.title,
+      targetDate: input.milestone.targetDate,
+      notes: input.milestone.notes,
+      position: 0
+    });
+  }
+  return plans.get(planId);
+}
+
 describe("long-range task-tree candidates", () => {
   it("keeps AI output editable and creates tasks only after explicit confirmation", async () => {
-    const plan = await plans.create({ scope: "month", title: "2099 task tree", periodStart: "2099-05-01", periodEnd: "2099-05-31", description: "framework", milestones: [{ title: "资料范围", targetDate: "2099-05-08", notes: null }] });
+    const plan = await createPlanFixture({ title: "2099 task tree", periodStart: "2099-05-01", periodEnd: "2099-05-31", description: "framework", milestone: { title: "资料范围", targetDate: "2099-05-08", notes: null } });
     try {
       const candidate = await trees.createAiCandidate(plan.id, { expectedPlanVersion: plan.version, instructions: null }, { plan: async () => ({ summary: "先形成框架，再完成核验。", tasks: [{ title: "整理资料范围", targetDate: "2099-05-08", notes: "保留用户判断" }, { title: "复核阶段成果", targetDate: null, notes: null }] }) });
       expect(candidate.state).toBe("candidate");
@@ -42,13 +68,11 @@ describe("long-range task-tree candidates", () => {
   });
 
   it("keeps the plan and candidate table unchanged when AI generation fails", async () => {
-    const plan = await plans.create({
-      scope: "month",
+    const plan = await createPlanFixture({
       title: "2099 unavailable task tree",
       periodStart: "2099-07-01",
       periodEnd: "2099-07-31",
-      description: null,
-      milestones: []
+      description: null
     });
     try {
       await expect(trees.createAiCandidate(plan.id, {

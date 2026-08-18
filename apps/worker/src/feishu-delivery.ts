@@ -1,4 +1,5 @@
-import type { ReminderDeliveryContext, ReminderDeliveryProvider, ReminderJob } from "./worker-core.js";
+import { createHash } from "node:crypto";
+import type { ReminderDeliveryContext, ReminderDeliveryProvider, ReminderDeliveryResult, ReminderJob } from "./worker-core.js";
 
 export type FeishuConfig = {
   appId: string;
@@ -14,21 +15,28 @@ export class FeishuDeliveryProvider implements ReminderDeliveryProvider {
 
   constructor(private readonly config: FeishuConfig, private readonly fetcher: typeof fetch = fetch) {}
 
-  async deliver(job: ReminderJob, context: ReminderDeliveryContext): Promise<void> {
+  async deliver(job: ReminderJob, context: ReminderDeliveryContext): Promise<ReminderDeliveryResult> {
     const payload = parsePayload(job.payload);
     const token = await this.tenantAccessToken();
-    const response = await this.fetcher("https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id", {
-      method: "POST",
+    const updating = job.kind !== "task_start" && Boolean(context.remoteMessageId);
+    const response = await this.fetcher(updating
+      ? `https://open.feishu.cn/open-apis/im/v1/messages/${encodeURIComponent(context.remoteMessageId!)}`
+      : "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id", {
+      method: updating ? "PATCH" : "POST",
       headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-      body: JSON.stringify({
+      body: JSON.stringify(updating ? {
+        msg_type: "interactive",
+        content: JSON.stringify(buildReminderCard(payload, context))
+      } : {
         receive_id: this.config.targetOpenId,
         msg_type: "interactive",
-        content: JSON.stringify(buildReminderCard(payload, context, this.config.taskUrlBase))
+        content: JSON.stringify(buildReminderCard(payload, context))
       }),
       signal: AbortSignal.timeout(10_000)
     });
-    const result = await response.json().catch(() => ({})) as { code?: number; msg?: string };
+    const result = await response.json().catch(() => ({})) as { code?: number; msg?: string; data?: { message_id?: string } };
     if (!response.ok || result.code !== 0) throw new Error(`feishu_message_failed:${result.code ?? response.status}:${result.msg ?? "unknown"}`);
+    return { remoteMessageId: result.data?.message_id ?? context.remoteMessageId };
   }
 
   private async tenantAccessToken(): Promise<string> {
@@ -56,34 +64,73 @@ export function loadFeishuConfig(env: NodeJS.ProcessEnv): FeishuConfig | null {
   return { appId, appSecret, targetOpenId, taskUrlBase: env.APP_PUBLIC_URL?.trim() || undefined };
 }
 
-function parsePayload(value: unknown): { taskId: string; title: string; startAt: string; endAt: string; timeZone: string; scheduleRevision: number } {
+function parsePayload(value: unknown): { taskId: string; title: string; startAt: string; endAt: string; timeZone: string; scheduleRevision: number; cardState?: "started" } {
   if (!value || typeof value !== "object") throw new Error("invalid_reminder_payload");
   const payload = value as Record<string, unknown>;
   if (typeof payload.taskId !== "string" || typeof payload.title !== "string" || typeof payload.startAt !== "string"
     || typeof payload.endAt !== "string" || typeof payload.timeZone !== "string" || typeof payload.scheduleRevision !== "number") {
     throw new Error("invalid_reminder_payload");
   }
+  if (payload.cardState !== undefined && payload.cardState !== "started") throw new Error("invalid_reminder_payload");
   return payload as ReturnType<typeof parsePayload>;
 }
 
-function buildReminderCard(payload: ReturnType<typeof parsePayload>, context: ReminderDeliveryContext, taskUrlBase?: string) {
+function buildReminderCard(payload: ReturnType<typeof parsePayload>, context: ReminderDeliveryContext) {
   const time = new Intl.DateTimeFormat("zh-CN", { timeZone: payload.timeZone, hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(payload.startAt));
-  const isInProgress = context.timing === "in_progress";
-  const remainingMinutes = Math.max(0, Math.ceil((new Date(payload.endAt).getTime() - context.now.getTime()) / 60_000));
-  const actions: Array<Record<string, unknown>> = [
-    { tag: "button", text: { tag: "plain_text", content: "开始" }, type: "primary", value: { action: "start", taskId: payload.taskId, scheduleRevision: payload.scheduleRevision } },
-    { tag: "button", text: { tag: "plain_text", content: "另有安排" }, value: { action: "other_arrangement", taskId: payload.taskId, scheduleRevision: payload.scheduleRevision } },
-    { tag: "button", text: { tag: "plain_text", content: "打开任务" }, value: { action: "open_task", taskId: payload.taskId, scheduleRevision: payload.scheduleRevision } }
+  if (payload.cardState === "started") {
+    return {
+      config: { wide_screen_mode: true },
+      header: { template: "green", title: { tag: "plain_text", content: "任务已经开始" } },
+      elements: [
+        { tag: "div", text: { tag: "lark_md", content: `**${payload.title}**\n已在桌面软件或飞书完成一次开始确认；原卡片按钮已经失效。` } }
+      ]
+    };
+  }
+  const stage = context.now.getTime() >= new Date(payload.endAt).getTime()
+    ? "missed"
+    : context.now.getTime() >= new Date(payload.startAt).getTime()
+      ? "late"
+      : context.now.getTime() >= new Date(payload.startAt).getTime() - 60_000
+        ? "ready"
+        : "upcoming";
+  const sharedActions: Array<Record<string, unknown>> = [
+    { tag: "button", text: { tag: "plain_text", content: "另有安排" }, value: { action: "other_arrangement", taskId: payload.taskId, scheduleRevision: payload.scheduleRevision, commandId: commandId(payload, "other_arrangement") } },
+    { tag: "button", text: { tag: "plain_text", content: "取消任务" }, type: "danger", value: { action: "cancel_request", taskId: payload.taskId, scheduleRevision: payload.scheduleRevision, commandId: commandId(payload, "cancel_request") } }
   ];
-  if (taskUrlBase) actions.push({ tag: "button", text: { tag: "plain_text", content: "打开网页版" }, url: `${taskUrlBase.replace(/\/$/, "")}/?task=${encodeURIComponent(payload.taskId)}` });
+  const actions = stage === "ready"
+    ? [
+        { tag: "button", text: { tag: "plain_text", content: "开始任务" }, type: "primary", value: { action: "start", taskId: payload.taskId, scheduleRevision: payload.scheduleRevision, commandId: commandId(payload, "start") } },
+        ...sharedActions
+      ]
+    : stage === "late"
+      ? [
+          { tag: "button", text: { tag: "plain_text", content: "开始任务" }, disabled: true },
+          ...sharedActions
+        ]
+      : stage === "upcoming" ? sharedActions : [];
+  const copy = stage === "missed"
+    ? `**${payload.title}**\n固定时段内没有确认开始，已记录为未完成。`
+    : stage === "late"
+      ? `**${payload.title}**\n开始按钮已经过期。若仍在原任务时段内，请直接告诉 AI“我开始了这个任务”，系统只从实际开始时刻记录。`
+      : stage === "ready"
+        ? `**${payload.title}**\n还有 1 分钟开始。只有点击“开始任务”才会进入专注；未确认不会自动计时。`
+        : `**${payload.title}**\n将在 ${time} 开始。开始按钮会在前 1 分钟出现在这张卡片上。`;
   return {
     config: { wide_screen_mode: true },
-    header: { template: isInProgress ? "orange" : "green", title: { tag: "plain_text", content: `${time} · ${isInProgress ? "任务已开始" : "即将开始"}` } },
+    header: { template: stage === "missed" ? "red" : stage === "late" ? "grey" : stage === "ready" ? "orange" : "green", title: { tag: "plain_text", content: `${time} · ${stage === "missed" ? "任务未开始" : stage === "late" ? "等待迟到开始" : stage === "ready" ? "准备开始" : "即将开始"}` } },
     elements: [
-      { tag: "div", text: { tag: "lark_md", content: isInProgress
-        ? `**${payload.title}**\n原定任务已经开始，目前还剩约 ${remainingMinutes} 分钟。可以按剩余时间开始，也可以说明另有安排。`
-        : `**${payload.title}**\n可以现在进入 1 分钟准备，也可以说明另有安排。` } },
-      { tag: "action", actions }
+      { tag: "div", text: { tag: "lark_md", content: copy } },
+      ...(actions.length > 0 ? [{ tag: "action", actions }] : [])
     ]
   };
+}
+
+function commandId(payload: ReturnType<typeof parsePayload>, action: "start" | "other_arrangement" | "cancel_request"): string {
+  const bytes = createHash("sha256")
+    .update(`${payload.taskId}:${payload.scheduleRevision}:${action}`)
+    .digest().subarray(0, 16);
+  bytes[6] = (bytes[6]! & 0x0f) | 0x40;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }

@@ -5,6 +5,7 @@ import {
   appConversationMessages,
   appConversations,
   dailyBriefs,
+  focusSessionSegmentRuns,
   focusSessions,
   reviewMessages,
   reviewSessions,
@@ -12,6 +13,8 @@ import {
   taskOutcomes,
   tasks,
 } from "@personal-ai/db/schema";
+import { indexFocusSecondsBySession, normalizeRecordedFocus } from "./focus-accounting.js";
+import { reviewRadarSchema, reviewRadarSnapshotSchema, type ReviewRadar } from "@personal-ai/domain/review";
 
 export type ReviewPromptMessage = {
   role: "user" | "assistant";
@@ -67,6 +70,27 @@ export class ReviewReplyUnavailableError extends Error {
   }
 }
 
+export type ReviewRadarSnapshot = {
+  id: string;
+  reviewSessionId: string;
+  radar: ReviewRadar;
+  createdAt: string;
+};
+
+function parseRadarSnapshot(row: typeof reviewMessages.$inferSelect | undefined): ReviewRadarSnapshot | null {
+  if (!row || row.source !== "radar") return null;
+  try {
+    const parsed = reviewRadarSnapshotSchema.parse(JSON.parse(row.content));
+    return { id: row.id, reviewSessionId: row.reviewSessionId, radar: parsed.radar, createdAt: row.createdAt.toISOString() };
+  } catch {
+    return null;
+  }
+}
+
+function lastConversationMessage(rows: Array<typeof reviewMessages.$inferSelect>) {
+  return [...rows].reverse().find((message) => message.source === "app" || message.source === "ai");
+}
+
 function promptMessages(rows: Array<typeof reviewMessages.$inferSelect>): ReviewPromptMessage[] {
   return rows
     .filter((message) => message.source === "app" || message.source === "ai")
@@ -89,6 +113,9 @@ export class ReviewService {
       const taskIds = taskRows.map((task) => task.id);
       const outcomes = taskIds.length ? await transaction.select().from(taskOutcomes).where(inArray(taskOutcomes.taskId, taskIds)) : [];
       const focus = taskIds.length ? await transaction.select().from(focusSessions).where(inArray(focusSessions.taskId, taskIds)) : [];
+      const focusIds = focus.map((item) => item.id);
+      const focusRuns = focusIds.length ? await transaction.select().from(focusSessionSegmentRuns).where(inArray(focusSessionSegmentRuns.focusSessionId, focusIds)) : [];
+      const focusSecondsBySession = indexFocusSecondsBySession(focusRuns);
       const feedback = taskIds.length ? await transaction.select().from(taskFeedback).where(inArray(taskFeedback.taskId, taskIds)) : [];
       const briefs = await transaction.select().from(dailyBriefs).where(eq(dailyBriefs.reviewSessionId, session.id)).orderBy(asc(dailyBriefs.createdAt));
       const conversations = await transaction.select().from(appConversations).where(eq(appConversations.localDate, localDate));
@@ -96,7 +123,26 @@ export class ReviewService {
       const conversationMessages = conversationIds.length
         ? await transaction.select().from(appConversationMessages).where(inArray(appConversationMessages.conversationId, conversationIds)).orderBy(asc(appConversationMessages.createdAt), asc(appConversationMessages.id))
         : [];
-      return { session, messages, briefs, context: { tasks: taskRows, outcomes, focusSessions: focus, feedback, conversations, conversationMessages } };
+      const radarSnapshot = parseRadarSnapshot([...messages].reverse().find((message) => message.source === "radar"));
+      return { session, messages, radarSnapshot, briefs, context: { tasks: taskRows, outcomes, focusSessions: focus.map((item) => normalizeRecordedFocus(item, focusSecondsBySession)), feedback, conversations, conversationMessages } };
+    });
+  }
+
+  async saveRadarSnapshot(sessionId: string, radar: ReviewRadar) {
+    const parsedRadar = reviewRadarSchema.parse(radar);
+    return this.db.transaction(async (transaction) => {
+      const [session] = await transaction.select().from(reviewSessions).where(eq(reviewSessions.id, sessionId)).limit(1);
+      if (!session) throw new ReviewNotFoundError();
+      const [existing] = await transaction.select().from(reviewMessages)
+        .where(and(eq(reviewMessages.reviewSessionId, sessionId), eq(reviewMessages.source, "radar")))
+        .orderBy(asc(reviewMessages.createdAt), asc(reviewMessages.id)).limit(1);
+      const content = JSON.stringify({ version: 1, radar: parsedRadar });
+      const now = new Date();
+      const row = existing
+        ? (await transaction.update(reviewMessages).set({ content, createdAt: now }).where(eq(reviewMessages.id, existing.id)).returning())[0]!
+        : (await transaction.insert(reviewMessages).values({ id: randomUUID(), reviewSessionId: sessionId, source: "radar", content, createdAt: now }).returning())[0]!;
+      const [updatedSession] = await transaction.update(reviewSessions).set({ updatedAt: now }).where(eq(reviewSessions.id, sessionId)).returning();
+      return { session: updatedSession!, radarSnapshot: parseRadarSnapshot(row)! };
     });
   }
 
@@ -112,7 +158,7 @@ export class ReviewService {
 
   async replyLast(sessionId: string, responder: ReviewResponder) {
     const state = await this.readForReply(sessionId);
-    const last = state.messages.at(-1);
+    const last = lastConversationMessage(state.messages);
     if (!last || last.source !== "app") throw new ReviewNoPendingReplyError();
     let content: string;
     try {
@@ -168,7 +214,7 @@ export class ReviewService {
       const [session] = await transaction.select().from(reviewSessions).where(eq(reviewSessions.id, sessionId)).limit(1);
       if (!session) throw new ReviewNotFoundError();
       const messages = await transaction.select().from(reviewMessages).where(eq(reviewMessages.reviewSessionId, sessionId)).orderBy(asc(reviewMessages.createdAt));
-      const last = messages.at(-1);
+      const last = lastConversationMessage(messages);
       if (!last || last.id !== userMessageId || last.source !== "app") throw new ReviewNoPendingReplyError();
       const [assistantMessage] = await transaction.insert(reviewMessages).values({
         id: randomUUID(), reviewSessionId: sessionId, source: "ai", content: content.slice(0, 2_000),

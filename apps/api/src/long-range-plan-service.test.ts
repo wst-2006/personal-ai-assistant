@@ -1,9 +1,10 @@
+import { randomUUID } from "node:crypto";
 import { afterAll, describe, expect, it } from "vitest";
 import { connectVerifiedDatabase } from "@personal-ai/db/client";
 import { loadDatabaseConfig } from "@personal-ai/db/config";
-import { longRangePlanMilestones, longRangePlans } from "@personal-ai/db/schema";
+import { longRangePlanMilestones, longRangePlans, tasks } from "@personal-ai/db/schema";
 import { eq } from "drizzle-orm";
-import { LongRangePlanService, LongRangePlanVersionConflictError } from "./long-range-plan-service.js";
+import { LongRangePlanNotFoundError, LongRangePlanScopeLimitError, LongRangePlanService, LongRangePlanVersionConflictError } from "./long-range-plan-service.js";
 
 const connection = await connectVerifiedDatabase(loadDatabaseConfig());
 const service = new LongRangePlanService(connection.db);
@@ -59,11 +60,85 @@ describe("long-range plan persistence", () => {
 
       const reactivated = await service.setStatus(created.id, archived.version, "active");
       expect(reactivated).toMatchObject({ status: "active", version: 4, archivedAt: null });
+      await service.delete(created.id, reactivated.version);
+      await expect(service.get(created.id)).rejects.toBeInstanceOf(LongRangePlanNotFoundError);
     } finally {
       await connection.db.transaction(async (transaction) => {
         await transaction.delete(longRangePlanMilestones).where(eq(longRangePlanMilestones.longRangePlanId, created.id));
         await transaction.delete(longRangePlans).where(eq(longRangePlans.id, created.id));
       });
+    }
+  });
+
+  it("counts archived plans toward the three-plan limit for each scope", async () => {
+    const createdIds: string[] = [];
+    try {
+      const existing = await service.list("month", true);
+      const availableSlots = Math.max(0, 3 - existing.length);
+      for (let index = 0; index < availableSlots; index += 1) {
+        const created = await service.create({
+          scope: "month",
+          title: `容量边界验收 ${index + 1}`,
+          periodStart: `2098-0${index + 1}-01`,
+          periodEnd: `2098-0${index + 1}-28`,
+          description: "只用于验证每类最多三项。",
+          milestones: []
+        });
+        createdIds.push(created.id);
+      }
+      if (createdIds.length > 0) {
+        const newest = await service.get(createdIds.at(-1)!);
+        await service.setStatus(newest.id, newest.version, "archived");
+      }
+      await expect(service.create({
+        scope: "month",
+        title: "不应创建的第四项",
+        periodStart: "2098-12-01",
+        periodEnd: "2098-12-31",
+        description: null,
+        milestones: []
+      })).rejects.toBeInstanceOf(LongRangePlanScopeLimitError);
+    } finally {
+      for (const id of createdIds) {
+        await connection.db.delete(longRangePlanMilestones).where(eq(longRangePlanMilestones.longRangePlanId, id));
+        await connection.db.delete(longRangePlans).where(eq(longRangePlans.id, id));
+      }
+    }
+  });
+
+  it("deletes the plan while preserving generated tasks as independent tasks", async () => {
+    const planId = randomUUID();
+    const taskId = randomUUID();
+    try {
+      await connection.db.insert(longRangePlans).values({
+        id: planId,
+        scope: "semester",
+        title: "删除规划保留任务验收",
+        periodStart: "2097-09-01",
+        periodEnd: "2098-01-31",
+        description: "规划可以删除，任务不能被连带删除。",
+        status: "active",
+        version: 1
+      });
+      await connection.db.insert(tasks).values({
+        id: taskId,
+        title: "由规划生成但需要保留的任务",
+        recordKind: "formal",
+        lifecycleStatus: "open",
+        scheduleKind: "none",
+        localDate: "2097-09-01",
+        sourceLongRangePlanId: planId
+      });
+
+      await service.delete(planId, 1);
+
+      await expect(service.get(planId)).rejects.toBeInstanceOf(LongRangePlanNotFoundError);
+      const [preservedTask] = await connection.db.select().from(tasks).where(eq(tasks.id, taskId));
+      expect(preservedTask).toMatchObject({ id: taskId, sourceLongRangePlanId: null });
+    } finally {
+      await connection.db.delete(tasks).where(eq(tasks.id, taskId));
+      await connection.db.delete(longRangePlanMilestones).where(eq(longRangePlanMilestones.longRangePlanId, planId));
+      await connection.db.delete(longRangePlans).where(eq(longRangePlans.id, planId));
     }
   });
 });

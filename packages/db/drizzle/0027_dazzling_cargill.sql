@@ -1,0 +1,2 @@
+ALTER TABLE "focus_session_operations" DROP CONSTRAINT "focus_session_operations_operation_check";--> statement-breakpoint
+ALTER TABLE "focus_session_operations" ADD CONSTRAINT "focus_session_operations_operation_check" CHECK ("focus_session_operations"."operation" in ('create', 'begin', 'skip_preparation', 'respond_start', 'other_arrangement', 'end', 'skip_final_break', 'evaluate'));
