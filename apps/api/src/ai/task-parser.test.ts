@@ -105,4 +105,29 @@ describe("DeepSeekTaskParser", () => {
     );
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it("teaches the parser that the plan prefix is an existing-plan instruction", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({
+        title: "把所有任务往后延一小时",
+        entryType: "task",
+        date: null,
+        startAt: null,
+        endAt: null,
+        schedulePrecision: null,
+        notes: "这是计划调整请求，需要回到计划调整流程确认。",
+        missingFields: ["date", "schedulePrecision"]
+      }) } }]
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const candidate = await new DeepSeekTaskParser(config).parse({
+      text: "计划：把我所有的任务往后延一个小时",
+      referenceDate: "2026-08-03",
+      timeZone: "Asia/Shanghai"
+    });
+
+    expect(candidate.notes).toContain("计划调整请求");
+    expect(JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body)).messages[0].content).toContain("计划：");
+  });
 });

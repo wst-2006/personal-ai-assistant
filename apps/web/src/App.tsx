@@ -1,17 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent } from "react";
-import { BarChart3, Bot, CalendarDays, Check, HeartPulse, LoaderCircle, Map, NotebookPen, RefreshCw, Send, Settings2, Sparkles, Target, X } from "lucide-react";
+import { BarChart3, Bot, CalendarDays, Check, HardDriveDownload, HeartPulse, LoaderCircle, Map, NotebookPen, RefreshCw, Send, Settings2, Sparkles, Target, X } from "lucide-react";
 import { DiaryWorkspace } from "./DiaryWorkspace";
 import { FocusWorkspace } from "./FocusWorkspace";
 import { GrowthWorkspace } from "./GrowthWorkspace";
 import { HealthWorkspace } from "./HealthWorkspace";
 import { LongRangePlansWorkspace } from "./LongRangePlansWorkspace";
 import { PlanChangeDrawer, type PlanChangeAdjustmentReview } from "./PlanChangeDrawer";
+import { PlanShiftDrawer } from "./PlanShiftDrawer";
 import { ReviewWorkspace } from "./ReviewWorkspace";
 import { SettingsWorkspace } from "./SettingsWorkspace";
 import { InitialInkLoadingScreen } from "./SeasonalAtmosphere";
 import { TodayWorkspace, type PlanChangeTaskEditRequest } from "./TodayWorkspace";
 import { loadUserProfile, type UserProfile } from "./user-profile-client";
-import { PRODUCT_SCHEDULE_END_MINUTE, PRODUCT_SCHEDULE_START_MINUTE } from "@personal-ai/domain/task";
+import { extractPlanInstruction, PRODUCT_SCHEDULE_END_MINUTE, PRODUCT_SCHEDULE_START_MINUTE } from "@personal-ai/domain/task";
+import { Component, type ErrorInfo, type ReactNode } from "react";
 
 type EntryType = "task" | "idea" | "question";
 type ScheduleKind = "none" | "daypart" | "exact";
@@ -46,6 +48,23 @@ type Conversation = {
   createdAt: string;
   updatedAt: string;
 };
+
+class WorkspaceErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(_error: Error, _info: ErrorInfo) {
+    // Keep a render failure recoverable instead of replacing the whole desktop shell with a blank page.
+  }
+
+  render() {
+    if (!this.state.hasError) return this.props.children;
+    return <section className="workspace-render-error" role="alert"><strong>这一页暂时无法显示</strong><p>任务数据没有被删除。可以先回到今日页，或重新打开这一页。</p><div><button type="button" onClick={() => this.setState({ hasError: false })}>重试</button><button type="button" onClick={() => window.location.reload()}>重新加载软件</button></div></section>;
+  }
+}
 type ConversationMessage = {
   id: string;
   conversationId: string;
@@ -228,6 +247,7 @@ export function App() {
   const [aiCandidate, setAiCandidate] = useState<CandidateDraft | null>(null);
   const [candidateConflictPrompt, setCandidateConflictPrompt] = useState<CandidateConflictPrompt | null>(null);
   const [planChange, setPlanChange] = useState<PlanChangeContext | null>(null);
+  const [planShiftText, setPlanShiftText] = useState<string | null>(null);
   const [planChangeTaskEditRequest, setPlanChangeTaskEditRequest] = useState<PlanChangeTaskEditRequest | null>(null);
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [conversationMessages, setConversationMessages] = useState<ConversationMessage[]>([]);
@@ -428,6 +448,7 @@ export function App() {
 
   function openAiDrawer() {
     setPlanChange(null);
+    setPlanShiftText(null);
     setAiOpen(true);
     void loadConversation();
   }
@@ -436,6 +457,7 @@ export function App() {
     setAiCandidate(null);
     setAiParseError(null);
     setPlanChange(null);
+    setPlanShiftText(null);
     setAiInput(prompt);
     setAiOpen(true);
     void loadConversation();
@@ -449,10 +471,12 @@ export function App() {
   function closeAiDrawer() {
     setAiOpen(false);
     setPlanChange(null);
+    setPlanShiftText(null);
   }
 
   function openPlanChange(task: { id: string; title: string }) {
     setAiCandidate(null);
+    setPlanShiftText(null);
     setPlanChange({ taskId: task.id, taskTitle: task.title });
     setAiOpen(true);
   }
@@ -499,6 +523,14 @@ export function App() {
   async function parseWithAi() {
     const text = aiInput.trim();
     if (!text) return;
+    if (extractPlanInstruction(text) !== null) {
+      setAiLoading(false);
+      setAiCandidate(null);
+      setAiParseError(null);
+      setPlanChange(null);
+      setPlanShiftText(text);
+      return;
+    }
     setAiLoading(true); setError(null); setAiParseError(null);
     try {
       const result = await requestJson<{ candidate: NaturalLanguageTaskCandidate }>("/api/v1/ai/tasks/parse", "POST", { text, referenceDate: today, timeZone: "Asia/Shanghai" });
@@ -609,6 +641,13 @@ export function App() {
   async function sendConversationMessage() {
     const content = aiInput.trim();
     if (!conversation || !content) return;
+    if (extractPlanInstruction(content) !== null) {
+      setAiCandidate(null);
+      setAiParseError(null);
+      setPlanChange(null);
+      setPlanShiftText(content);
+      return;
+    }
     setConversationSending(true);
     setError(null);
     try {
@@ -671,7 +710,7 @@ export function App() {
       <button className={`rail-settings-button ${view === "settings" ? "active" : ""}`} type="button" aria-label="设置" aria-current={view === "settings" ? "page" : undefined} onClick={() => navigateToView("settings")}><Settings2 /><span>设置</span></button>
     </aside>
     <section className="app-canvas">
-      <header className="topbar"><div className="context-line"><span className="live-dot" />{displayDate()}<span>/</span>{activeNavLabel}</div><div className="topbar-actions"><button className="quiet-icon mobile-settings-shortcut" type="button" aria-label="设置" title="设置" onClick={() => navigateToView("settings")}><Settings2 /></button><button className="ai-trigger" type="button" onClick={openAiDrawer}><Bot /> 与 AI 一起整理</button></div></header>
+      <header className="topbar"><div className="context-line"><span className="live-dot" />{displayDate()}<span>/</span>{activeNavLabel}</div><div className="topbar-actions"><button className="quiet-icon mobile-settings-shortcut" type="button" aria-label="设置" title="设置" onClick={() => navigateToView("settings")}><Settings2 /></button><a className="quiet-icon backup-trigger" href={`${apiBaseUrl}/api/v1/backups/export`} download aria-label="备份所有数据" title="备份所有数据"><HardDriveDownload /></a><button className="ai-trigger" type="button" onClick={openAiDrawer}><Bot /> 与 AI 一起整理</button></div></header>
       {error && <div className="error-banner" role="alert"><X />{error}<button type="button" aria-label="关闭错误提示" onClick={() => setError(null)}><X /></button></div>}
       <div className={`view-transition-stage ${workspaceLayers.length > 1 ? "changing-sheet" : ""}`} data-view={view} aria-live="polite">
         {workspaceLayers.map((layer) => {
@@ -686,7 +725,7 @@ export function App() {
             key={layer.view}
             style={{ "--sheet-scroll-offset": `${layer.scrollOffset}px` } as CSSProperties}
           >
-            {renderWorkspace(layer.view, layer.role)}
+            <WorkspaceErrorBoundary>{renderWorkspace(layer.view, layer.role)}</WorkspaceErrorBoundary>
           </div>;
         })}
         {workspaceLayers.some((layer) => layer.role === "outgoing") && <span className="paper-change-ridge" aria-hidden="true" data-direction={workspaceLayers[0]?.direction ?? "forward"} />}
@@ -694,8 +733,8 @@ export function App() {
     </section>
     <aside className={`ai-drawer ${aiOpen ? "open" : ""}`} aria-label={planChange ? "计划变更协商" : "AI 助手"} aria-hidden={!aiOpen}>
       <div className="drawer-header"><div><span className="bot-orb"><Bot /></span><div><p>{planChange ? "计划变更协商" : "AI 整理助手"}</p><strong>{planChange ? "建议可见，决定仍在你手上" : "把一句话变得清楚"}</strong></div></div><button className="quiet-icon" type="button" aria-label="关闭 AI 助手" onClick={closeAiDrawer}><X /></button></div>
-      {planChange ? <PlanChangeDrawer taskId={planChange.taskId} taskTitle={planChange.taskTitle} onReviewAdjustment={reviewPlanChangeAdjustment} onBackToTimeline={returnToTimelineFromPlanChange} /> : !aiCandidate ? <div className="drawer-entry">
-        <div className="drawer-prompt"><p>说说你想记下什么。</p><small>对话会保存在本机；AI 只会在你确认后整理或保存候选。</small></div>
+      {planChange ? <PlanChangeDrawer taskId={planChange.taskId} taskTitle={planChange.taskTitle} onReviewAdjustment={reviewPlanChangeAdjustment} onBackToTimeline={returnToTimelineFromPlanChange} /> : planShiftText ? <PlanShiftDrawer initialText={planShiftText} onDone={() => { setPlanShiftText(null); setAiInput(""); setAiOpen(false); setTodayRefreshToken((value) => value + 1); }} /> : !aiCandidate ? <div className="drawer-entry">
+        <div className="drawer-prompt"><p>说说你想记下什么。</p><small>新任务直接描述；调整已有排期请以“计划：”或“计划 ”开头。任何变更都要由你确认。</small></div>
         <section className="conversation-thread" aria-live="polite" aria-label="今天的软件内对话">
           <div className="conversation-heading"><p className="section-kicker">软件内对话</p>{conversationLoading && <LoaderCircle className="spin" aria-label="正在读取软件内对话" />}</div>
           {conversationMessages.length === 0 && !conversationLoading ? <p className="conversation-empty">从这里开始的一句话，会被保存在今天的本机对话里。</p> : conversationMessages.map((message) => <article key={message.id} className={`conversation-message ${message.role}`}><span>{message.role === "user" ? "我" : "AI"}</span><p>{message.content}</p></article>)}

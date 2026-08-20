@@ -9,7 +9,7 @@ const backupService: BackupExporter = {
       formatVersion: logicalBackupFormatVersion,
       exportedAt: "2026-08-02T12:34:56.789Z",
       data: {
-        inboxEntries: [], feishuIntakeCandidates: [], healthProfiles: [], healthWeekConversations: [], healthWeekConversationMessages: [], healthWeekPlans: [], healthDailyReferences: [], healthSleepAnalyses: [], healthWeekAutoGenerations: [], tasks: [], taskLegacyMetadata: [], taskOutcomes: [], taskFeedback: [], taskLifecycleEvents: [], taskConflictAcceptances: [], reminderJobs: [], desktopCommandRequests: [], focusStructures: [], focusStructureSegments: [], focusSessions: [], focusSessionSegmentRuns: [], focusTimerJobs: [], longRangePlans: [], longRangePlanMilestones: [], longRangePlanTaskTreeCandidates: [], userProfiles: [], unscheduledTaskDayEndRuns: [], reviewSessions: [], reviewMessages: [], appConversations: [], appConversationMessages: [], dailyBriefs: [], cyberDiaries: []
+        inboxEntries: [], feishuIntakeCandidates: [], healthProfiles: [], healthWeekConversations: [], healthWeekConversationMessages: [], healthWeekPlans: [], healthDailyActuals: [], healthDailyReferences: [], healthSleepAnalyses: [], healthWeekAutoGenerations: [], tasks: [], taskLegacyMetadata: [], taskOutcomes: [], taskFeedback: [], taskLifecycleEvents: [], taskConflictAcceptances: [], reminderJobs: [], desktopCommandRequests: [], focusStructures: [], focusStructureSegments: [], focusSessions: [], focusSessionSegmentRuns: [], focusTimerJobs: [], longRangePlans: [], longRangePlanMilestones: [], longRangePlanTaskTreeCandidates: [], userProfiles: [], unscheduledTaskDayEndRuns: [], reviewSessions: [], reviewMessages: [], appConversations: [], appConversationMessages: [], dailyBriefs: [], cyberDiaries: []
       }
     };
   }

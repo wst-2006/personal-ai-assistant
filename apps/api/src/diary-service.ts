@@ -101,10 +101,13 @@ export function buildDiaryDayData(taskRows: TaskRow[], sessions: FocusRow[], out
   const plannedTasks = plannedTaskRows.length;
   const rawFocusSeconds = formalSessions.reduce((sum, session) => sum + session.rawActiveSeconds, 0);
   const effectiveFocusSeconds = formalSessions.reduce((sum, session) => sum + recordedFocusSeconds(session, focusSecondsBySession), 0);
+  const latestFormalFeedback = [...latestFeedbackByTask.entries()]
+    .filter(([taskId]) => formalTaskIds.has(taskId))
+    .map(([, item]) => item);
   const satisfaction = {
-    satisfied: formalFeedback.filter((item) => item.satisfaction === "satisfied").length,
-    neutral: formalFeedback.filter((item) => item.satisfaction === "neutral").length,
-    dissatisfied: formalFeedback.filter((item) => item.satisfaction === "dissatisfied").length
+    satisfied: latestFormalFeedback.filter((item) => item.satisfaction === "satisfied").length,
+    neutral: latestFormalFeedback.filter((item) => item.satisfaction === "neutral").length,
+    dissatisfied: latestFormalFeedback.filter((item) => item.satisfaction === "dissatisfied").length
   };
   const latestFormalOutcomes = [...latestOutcomeByTask.entries()].filter(([taskId]) => formalTaskIds.has(taskId)).map(([, outcome]) => outcome);
   const latestOutcomes = latestFormalOutcomes;
@@ -114,13 +117,13 @@ export function buildDiaryDayData(taskRows: TaskRow[], sessions: FocusRow[], out
   const focusMinutes = Math.round(effectiveFocusSeconds / 60);
   const mainlineProgress = progressAverage(plannedTaskRows.filter((task) => task.sourceLongRangePlanId !== null), latestOutcomeByTask);
   const overallExecution = progressAverage(plannedTaskRows, latestOutcomeByTask);
-  const feedbackScore = formalFeedback.length
-    ? Math.round(formalFeedback.reduce((sum, item) => sum + (item.satisfaction === "satisfied" ? 100 : item.satisfaction === "neutral" ? 60 : 20), 0) / formalFeedback.length)
+  const feedbackScore = latestFormalFeedback.length
+    ? Math.round(latestFormalFeedback.reduce((sum, item) => sum + (item.satisfaction === "satisfied" ? 100 : item.satisfaction === "neutral" ? 60 : 20), 0) / latestFormalFeedback.length)
     : rawFocusSeconds > 0 ? Math.min(100, percentage(effectiveFocusSeconds, rawFocusSeconds)) : 0;
   const radarValues = { mainlineProgress, overallExecution, focusQuality: feedbackScore, energyState: null, wellbeing: null, growthGain: null };
   const radar = radarDefinitions.map((definition) => ({ ...definition, value: radarValues[definition.key] }));
   const treeKind = quality >= 80 ? "常青树" : quality >= 45 ? "银杏" : outcomeCount > 0 ? "苔藓" : "种子";
-  const pointsBreakdown = dailyGrowthBreakdown(overallExecution, focusMinutes, formalFeedback, hasReviewMessage);
+  const pointsBreakdown = dailyGrowthBreakdown(overallExecution, focusMinutes, latestFormalFeedback, hasReviewMessage);
   const points = Object.values(pointsBreakdown).reduce((sum, value) => sum + value, 0);
   return {
     tasks: taskRows.map((task) => ({
@@ -132,9 +135,9 @@ export function buildDiaryDayData(taskRows: TaskRow[], sessions: FocusRow[], out
       latestSatisfaction: latestFeedbackByTask.get(task.id)?.satisfaction ?? null,
       latestFeedbackNote: latestFeedbackByTask.get(task.id)?.note ?? null
     })),
-    plannedTasks, closedTasks, outcomeCount, completeCount,
+    plannedTasks, closedTasks, completedTasks: completeCount, outcomeCount, completeCount,
     rawFocusMinutes: Math.round(rawFocusSeconds / 60), effectiveFocusMinutes: focusMinutes, satisfaction,
-    radar, stateTone: stateTone(formalFeedback),
+    radar, stateTone: stateTone(latestFormalFeedback),
     tree: { kind: treeKind, points, pointsBreakdown, growthPercent: Math.min(100, Math.round(focusMinutes / 90 * 100)), quality }
   };
 }

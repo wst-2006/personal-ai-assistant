@@ -216,6 +216,22 @@ describe("inbox endpoints", () => {
 });
 
 describe("AI task parsing", () => {
+  it("routes plan-prefixed instructions away from new-task parsing", async () => {
+    const parser: TaskParser = { async parse() { throw new Error("must not run"); } };
+    const aiApp = buildApp({ taskService: new TaskService(new MemoryTaskStore()), taskParser: parser });
+    try {
+      const response = await aiApp.inject({
+        method: "POST",
+        url: "/api/v1/ai/tasks/parse",
+        payload: { text: "计划：把所有任务往后延半小时", referenceDate: "2026-08-19", timeZone: "Asia/Shanghai" }
+      });
+      expect(response.statusCode).toBe(409);
+      expect(response.json()).toMatchObject({ error: "plan_change_requires_context" });
+    } finally {
+      await aiApp.close();
+    }
+  });
+
   it("returns a candidate without writing a task", async () => {
     const parser: TaskParser = {
       async parse() {

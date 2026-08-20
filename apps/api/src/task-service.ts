@@ -48,6 +48,30 @@ export type TaskListResult = {
   historicalOverlaps: TaskConflictPair[];
 };
 
+export type BulkShiftAdjustment = {
+  taskId: string;
+  title: string;
+  expectedVersion: number;
+  expectedScheduleRevision: number;
+  currentStartAt: string;
+  currentEndAt: string;
+  nextStartAt: string;
+  nextEndAt: string;
+};
+
+export type BulkShiftPreview = {
+  localDate: string | null;
+  offsetMinutes: number;
+  adjustments: BulkShiftAdjustment[];
+  skipped: Array<{ taskId: string; title: string; reason: string }>;
+};
+
+export class BulkShiftValidationError extends Error {
+  constructor(readonly skipped: Array<{ taskId: string; title: string; reason: string }>) {
+    super("Bulk task shift cannot be applied.");
+  }
+}
+
 export class TaskNotFoundError extends Error {}
 
 export class TaskVersionConflictError extends Error {
@@ -241,6 +265,104 @@ export class TaskService {
     return { tasks: listedTasks, blockingConflicts, historicalOverlaps };
   }
 
+  async previewBulkShift(localDate: string | null, offsetMinutes: number): Promise<BulkShiftPreview> {
+    const tasks = (await this.store.listTasks(localDate ?? undefined)).filter((task) => task.recordKind === "formal");
+    const adjustments: BulkShiftAdjustment[] = [];
+    const skipped: BulkShiftPreview["skipped"] = [];
+    for (const task of tasks) {
+      if (task.lifecycleStatus !== "open") {
+        skipped.push({ taskId: task.id, title: task.title, reason: "任务已开始、等待结果或已结束，不能批量移动" });
+        continue;
+      }
+      if (task.scheduleKind !== "exact" || !task.startAt || !task.endAt) {
+        skipped.push({ taskId: task.id, title: task.title, reason: "未设置精确起止时间" });
+        continue;
+      }
+      const nextStart = new Date(task.startAt.getTime() + offsetMinutes * 60_000);
+      const nextEnd = new Date(task.endAt.getTime() + offsetMinutes * 60_000);
+      try {
+        assertProductScheduleBounds({ scheduleKind: "exact", startAt: nextStart, endAt: nextEnd, timeZone: task.timeZone });
+        assertScheduleWindow({ scheduleKind: "exact", startAt: nextStart, endAt: nextEnd, timeZone: task.timeZone });
+        if (localDateAtTimeZone(nextStart, task.timeZone) !== localDateAtTimeZone(task.startAt, task.timeZone)
+          || localDateAtTimeZone(nextEnd, task.timeZone) !== localDateAtTimeZone(task.endAt, task.timeZone)) throw new TaskScheduleBoundsError();
+      } catch (error) {
+        skipped.push({ taskId: task.id, title: task.title, reason: error instanceof TaskScheduleBoundsError ? "顺延后超出当天 07:00–23:00 可排时段" : "顺延后的时间无效" });
+        continue;
+      }
+      adjustments.push({
+        taskId: task.id,
+        title: task.title,
+        expectedVersion: task.version,
+        expectedScheduleRevision: task.scheduleRevision,
+        currentStartAt: task.startAt.toISOString(),
+        currentEndAt: task.endAt.toISOString(),
+        nextStartAt: nextStart.toISOString(),
+        nextEndAt: nextEnd.toISOString()
+      });
+    }
+    return { localDate, offsetMinutes, adjustments, skipped };
+  }
+
+  async bulkShift(localDate: string | null, offsetMinutes: number, expected: Array<Pick<BulkShiftAdjustment, "taskId" | "expectedVersion" | "expectedScheduleRevision">>): Promise<{ tasks: StoredTask[] }> {
+    if (!Number.isInteger(offsetMinutes) || offsetMinutes === 0 || offsetMinutes % 30 !== 0 || Math.abs(offsetMinutes) > 12 * 60) {
+      throw new BulkShiftValidationError([]);
+    }
+    return this.store.runSerializable(async (transaction) => {
+      const ids = new Set(expected.map((item) => item.taskId));
+      const targets: Array<{ current: StoredTask; nextStart: Date; nextEnd: Date }> = [];
+      const skipped: BulkShiftPreview["skipped"] = [];
+      for (const item of expected) {
+        const current = await transaction.getTask(item.taskId);
+        if (!current || current.version !== item.expectedVersion || current.scheduleRevision !== item.expectedScheduleRevision) {
+          throw current ? new TaskVersionConflictError(current) : new TaskNotFoundError("Task not found.");
+        }
+        if (current.lifecycleStatus !== "open" || current.recordKind !== "formal" || current.scheduleKind !== "exact" || !current.startAt || !current.endAt) {
+          skipped.push({ taskId: current.id, title: current.title, reason: "任务当前不能批量移动" });
+          continue;
+        }
+        if (localDate !== null && current.localDate !== localDate) {
+          skipped.push({ taskId: current.id, title: current.title, reason: "任务不属于已确认的作用日期" });
+          continue;
+        }
+        const nextStart = new Date(current.startAt.getTime() + offsetMinutes * 60_000);
+        const nextEnd = new Date(current.endAt.getTime() + offsetMinutes * 60_000);
+        if (localDateAtTimeZone(nextStart, current.timeZone) !== localDateAtTimeZone(current.startAt, current.timeZone)
+          || localDateAtTimeZone(nextEnd, current.timeZone) !== localDateAtTimeZone(current.endAt, current.timeZone)) {
+          skipped.push({ taskId: current.id, title: current.title, reason: "顺延后超出当天可排时段" });
+          continue;
+        }
+        assertProductScheduleBounds({ scheduleKind: "exact", startAt: nextStart, endAt: nextEnd, timeZone: current.timeZone });
+        assertScheduleWindow({ scheduleKind: "exact", startAt: nextStart, endAt: nextEnd, timeZone: current.timeZone });
+        targets.push({ current, nextStart, nextEnd });
+      }
+      if (skipped.length > 0) throw new BulkShiftValidationError(skipped);
+      const conflicts: TaskConflict[] = [];
+      for (const target of targets) {
+        const overlaps = await transaction.listExactOverlaps(target.nextStart, target.nextEnd, blockingStatuses, target.current.id);
+        for (const overlap of overlaps) {
+          if (!ids.has(overlap.id)) conflicts.push(toConflict(overlap));
+        }
+      }
+      if (conflicts.length > 0) throw new TaskTimeConflictError(conflicts, conflictFingerprint(conflicts.map((item) => ({ id: item.taskId, scheduleRevision: item.scheduleRevision }))));
+      const updated: StoredTask[] = [];
+      for (const target of targets) {
+        const task = await transaction.updateTask(target.current.id, target.current.version, {
+          startAt: target.nextStart,
+          endAt: target.nextEnd,
+          localDate: localDateAtTimeZone(target.nextStart, target.current.timeZone),
+          version: target.current.version + 1,
+          scheduleRevision: target.current.scheduleRevision + 1,
+          updatedAt: new Date()
+        });
+        if (!task) throw await this.versionOrMissing(transaction, target.current.id);
+        await transaction.invalidateFocusStructures(task.id, task.scheduleRevision, "bulk plan shift");
+        await transaction.syncReminderForTask(task);
+        updated.push(task);
+      }
+      return { tasks: updated };
+    });
+  }
+
   listDeleted(localDate?: string): Promise<StoredTask[]> {
     return this.store.listDeletedTasks(localDate);
   }
@@ -248,12 +370,14 @@ export class TaskService {
   async get(id: string): Promise<{
     task: StoredTask;
     outcomes: StoredTaskOutcome[];
+    feedback: StoredTaskFeedback[];
     blockingConflicts: TaskConflict[];
     historicalOverlaps: TaskConflict[];
   }> {
     const task = await this.store.getTask(id);
     if (!task) throw new TaskNotFoundError("Task not found.");
     const outcomes = await this.store.listOutcomes(id);
+    const feedback = await this.store.listFeedback(id);
     const blocking = task.scheduleKind === "exact" && task.startAt && task.endAt && isBlocking(task.lifecycleStatus)
       ? await this.store.listExactOverlaps(task.startAt, task.endAt, blockingStatuses, task.id)
       : [];
@@ -264,7 +388,7 @@ export class TaskService {
     const historical = task.scheduleKind === "exact" && task.startAt && task.endAt
       ? await this.store.listExactOverlaps(task.startAt, task.endAt, ["closed"], task.id)
       : [];
-    return { task, outcomes, blockingConflicts, historicalOverlaps: historical.map(toConflict) };
+    return { task, outcomes, feedback, blockingConflicts, historicalOverlaps: historical.map(toConflict) };
   }
 
   async update(id: string, patch: TaskPatch): Promise<{ task: StoredTask; historicalOverlaps: TaskConflict[] }> {
@@ -309,6 +433,33 @@ export class TaskService {
 
   async cancel(id: string, expectedVersion: number, reason?: string): Promise<StoredTask> {
     return this.transition(id, expectedVersion, "cancelled", "app", reason, ["open"], true);
+  }
+
+  async cancelAndTrash(id: string, expectedVersion: number, reason?: string): Promise<StoredTask> {
+    return this.store.runSerializable(async (transaction) => {
+      const current = await this.requireCurrentVersion(transaction, id, expectedVersion);
+      if (current.lifecycleStatus !== "open") {
+        throw new InvalidTaskTransitionError(current.lifecycleStatus, "cancel and trash");
+      }
+      const now = new Date();
+      const updated = await transaction.updateTask(id, expectedVersion, {
+        lifecycleStatus: "cancelled",
+        deletedAt: now,
+        version: current.version + 1,
+        scheduleRevision: current.scheduleRevision + 1,
+        updatedAt: now
+      });
+      if (!updated) throw await this.versionOrMissing(transaction, id);
+      await transaction.invalidateFocusStructures(updated.id, updated.scheduleRevision, "task cancelled and moved to trash");
+      await transaction.syncReminderForTask(updated);
+      await transaction.insertLifecycleEvent({
+        id: randomUUID(), taskId: id, fromStatus: "open", toStatus: "cancelled", source: "app", reason
+      });
+      await transaction.insertLifecycleEvent({
+        id: randomUUID(), taskId: id, fromStatus: "cancelled", toStatus: "deleted", source: "app", reason: reason ?? "cancelled task moved to trash"
+      });
+      return updated;
+    });
   }
 
   async start(id: string, expectedVersion: number, source: TaskEventSource = "app"): Promise<StoredTask> {
@@ -490,6 +641,44 @@ export class TaskService {
         id: randomUUID(), taskId: id, fromStatus: current.lifecycleStatus as TaskLifecycle,
         toStatus: "closed", source: input.source, reason: input.note
       });
+      return { task: updated, outcome, feedback };
+    });
+  }
+
+  async correctOutcome(
+    id: string,
+    input: {
+      expectedVersion: number;
+      expectedOutcomeId: string;
+      outcome: TaskOutcome;
+      progressPercent: number;
+      source: TaskEventSource;
+      satisfaction: TaskSatisfaction;
+      note?: string | null;
+    }
+  ): Promise<{ task: StoredTask; outcome: StoredTaskOutcome; feedback: StoredTaskFeedback }> {
+    return this.store.runSerializable(async (transaction) => {
+      const current = await this.requireCurrentVersion(transaction, id, input.expectedVersion);
+      if (current.lifecycleStatus !== "closed" || current.localDate !== localDateAtTimeZone(new Date(), "Asia/Shanghai")) {
+        throw new InvalidTaskTransitionError(current.lifecycleStatus, "correct today's outcome for");
+      }
+      const previous = await transaction.getOutcome(input.expectedOutcomeId, id);
+      if (!previous) throw new TaskVersionConflictError(current);
+      const now = new Date();
+      const outcome = await transaction.insertOutcome({
+        id: randomUUID(), taskId: id, focusSessionId: previous.focusSessionId,
+        outcome: input.outcome, progressPercent: input.progressPercent, source: input.source, note: input.note
+      });
+      const feedback = await transaction.insertFeedback({
+        id: randomUUID(), taskId: id, focusSessionId: previous.focusSessionId,
+        satisfaction: input.satisfaction, note: input.note
+      });
+      const updated = await transaction.updateTask(id, input.expectedVersion, {
+        currentOutcome: input.outcome,
+        version: current.version + 1,
+        updatedAt: now
+      });
+      if (!updated) throw await this.versionOrMissing(transaction, id);
       return { task: updated, outcome, feedback };
     });
   }

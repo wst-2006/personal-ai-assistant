@@ -10,6 +10,11 @@ const connection = await connectVerifiedDatabase(loadDatabaseConfig());
 
 afterAll(async () => { await connection.client.end(); });
 
+function uniqueFutureDate(): string {
+  const offset = Number.parseInt(randomUUID().replaceAll("-", "").slice(0, 6), 16) % 6_000;
+  return new Date(Date.UTC(2080, 0, 1 + offset)).toISOString().slice(0, 10);
+}
+
 describe("GrowthService", () => {
   it("reports 55 focus minutes for an ended 55 + 5 structured session before evaluation", async () => {
     const localDate = "2099-10-14";
@@ -66,7 +71,7 @@ describe("GrowthService", () => {
   });
 
   it("aggregates saved diary ratings and derives state color from subjective feedback", async () => {
-    const localDate = "2099-10-15";
+    const localDate = uniqueFutureDate();
     const ids = {
       review: randomUUID(), message: randomUUID(), brief: randomUUID(), diary: randomUUID(),
       task: randomUUID(), session: randomUUID(), outcome: randomUUID(), feedback: randomUUID(),
@@ -105,7 +110,8 @@ describe("GrowthService", () => {
       expect(summary.radar.find((metric) => metric.key === "mainlineProgress")).toMatchObject({ value: 100, sampleDays: 1, source: "system" });
       expect(summary.radar.find((metric) => metric.key === "energyState")).toMatchObject({ value: 80, sampleDays: 1, source: "user" });
       expect(summary.garden.quality).toBe(70);
-      expect(summary.garden.growthPercent).toBe(100);
+      expect(summary.garden.growthPercent).toBe(25);
+      expect(summary.completedTasks).toBe(0);
       expect(summary.garden).toMatchObject({
         points: 52,
         scoredDays: 1,

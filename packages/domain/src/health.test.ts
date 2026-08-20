@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createManualHealthPlanCandidateSchema, generatedHealthPlanContentSchema, healthPlanContentSchema, healthSleepRevisionCandidateSchema, healthWeekStartSchema, localDatesForHealthWeek, sleepImageAnalysisRequestSchema, sleepImageAnalysisSchema } from "./health.js";
+import { createManualHealthPlanCandidateSchema, generatedHealthPlanContentSchema, healthPlanContentSchema, healthSleepRevisionCandidateSchema, healthWeekStartSchema, localDatesForHealthWeek, saveHealthDailyActualSchema, sleepImageAnalysisRequestSchema, sleepImageAnalysisSchema } from "./health.js";
 
 const day = {
   nutritionDirection: "正常餐盘结构，优先蛋白质和两类蔬菜。",
@@ -36,6 +36,12 @@ describe("health reference contracts", () => {
     expect(healthPlanContentSchema.safeParse({ overview: "本周以恢复和稳定饮食为主。", supplements: ["查看标签，避免成分重复。"], days: Array.from({ length: 7 }, () => day) }).success).toBe(true);
     expect(healthPlanContentSchema.safeParse({ overview: "x", supplements: ["x"], days: [day] }).success).toBe(false);
     expect(healthPlanContentSchema.safeParse({ overview: "本周", supplements: ["提示"], days: Array.from({ length: 7 }, () => ({ ...day, proteinRangeGrams: { minimum: 120, maximum: 90 } })) }).success).toBe(false);
+  });
+
+  it("accepts one daily total for protein, fiber, and water without meal splitting", () => {
+    expect(saveHealthDailyActualSchema.safeParse({ proteinGrams: 96, fiberGrams: 28, waterMilliliters: 2300 }).success).toBe(true);
+    expect(saveHealthDailyActualSchema.safeParse({ proteinGrams: null, fiberGrams: null, waterMilliliters: null }).success).toBe(true);
+    expect(saveHealthDailyActualSchema.safeParse({ proteinGrams: 96.5, fiberGrams: 28, waterMilliliters: 2300 }).success).toBe(false);
   });
 
   it("requires executable fields only for newly AI-generated plans while preserving old stored records", () => {

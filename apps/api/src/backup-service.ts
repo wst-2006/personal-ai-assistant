@@ -12,6 +12,7 @@ import {
   focusStructures,
   focusTimerJobs,
   feishuIntakeCandidates,
+  healthDailyActuals,
   healthDailyReferences,
   healthProfiles,
   healthSleepAnalyses,
@@ -37,7 +38,7 @@ import {
 } from "@personal-ai/db/schema";
 
 export const logicalBackupFormat = "personal-ai-assistant.backup" as const;
-export const logicalBackupFormatVersion = 7 as const;
+export const logicalBackupFormatVersion = 8 as const;
 
 export type LogicalBackup = {
   format: typeof logicalBackupFormat;
@@ -50,6 +51,7 @@ export type LogicalBackup = {
     healthWeekConversations: Array<typeof healthWeekConversations.$inferSelect>;
     healthWeekConversationMessages: Array<typeof healthWeekConversationMessages.$inferSelect>;
     healthWeekPlans: Array<typeof healthWeekPlans.$inferSelect>;
+    healthDailyActuals: Array<typeof healthDailyActuals.$inferSelect>;
     healthDailyReferences: Array<typeof healthDailyReferences.$inferSelect>;
     healthSleepAnalyses: Array<typeof healthSleepAnalyses.$inferSelect>;
     healthWeekAutoGenerations: Array<typeof healthWeekAutoGenerations.$inferSelect>;
@@ -102,6 +104,7 @@ export class BackupService implements BackupExporter {
       const healthWeekConversationRows = await transaction.select().from(healthWeekConversations).orderBy(asc(healthWeekConversations.weekStart), asc(healthWeekConversations.id));
       const healthWeekConversationMessageRows = await transaction.select().from(healthWeekConversationMessages).orderBy(asc(healthWeekConversationMessages.createdAt), asc(healthWeekConversationMessages.id));
       const healthWeekPlanRows = await transaction.select().from(healthWeekPlans).orderBy(asc(healthWeekPlans.weekStart), asc(healthWeekPlans.createdAt), asc(healthWeekPlans.id));
+      const healthDailyActualRows = await transaction.select().from(healthDailyActuals).orderBy(asc(healthDailyActuals.localDate));
       const healthDailyReferenceRows = await transaction.select().from(healthDailyReferences).orderBy(asc(healthDailyReferences.localDate), asc(healthDailyReferences.dayIndex), asc(healthDailyReferences.id));
       const healthSleepAnalysisRows = await transaction.select().from(healthSleepAnalyses).orderBy(asc(healthSleepAnalyses.localDate), asc(healthSleepAnalyses.createdAt), asc(healthSleepAnalyses.id));
       const healthWeekAutoGenerationRows = await transaction.select().from(healthWeekAutoGenerations).orderBy(asc(healthWeekAutoGenerations.weekStart));
@@ -141,6 +144,7 @@ export class BackupService implements BackupExporter {
           healthWeekConversations: healthWeekConversationRows,
           healthWeekConversationMessages: healthWeekConversationMessageRows,
           healthWeekPlans: healthWeekPlanRows,
+          healthDailyActuals: healthDailyActualRows,
           healthDailyReferences: healthDailyReferenceRows,
           healthSleepAnalyses: healthSleepAnalysisRows,
           healthWeekAutoGenerations: healthWeekAutoGenerationRows,

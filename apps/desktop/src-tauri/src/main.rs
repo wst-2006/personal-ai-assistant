@@ -14,6 +14,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use tauri::{AppHandle, Manager, RunEvent, WindowEvent};
 
+#[cfg(windows)]
+use windows::Devices::Geolocation::{GeolocationAccessStatus, Geolocator, PositionAccuracy};
+
 mod focus_companion;
 
 const MAIN_WINDOW_LABEL: &str = "main";
@@ -46,6 +49,49 @@ struct LocalRuntime {
     bundled_launch: Mutex<Option<BundledLaunch>>,
     monitor_started: AtomicBool,
     stopping: AtomicBool,
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DeviceCoordinates {
+    latitude: f64,
+    longitude: f64,
+}
+
+#[tauri::command]
+fn device_location() -> Result<DeviceCoordinates, String> {
+    #[cfg(windows)]
+    {
+        let access = Geolocator::RequestAccessAsync()
+            .map_err(|error| format!("location_access_request_failed: {error}"))?
+            .get()
+            .map_err(|error| format!("location_access_request_failed: {error}"))?;
+        if access != GeolocationAccessStatus::Allowed {
+            return Err("location_permission_denied".to_string());
+        }
+
+        let locator = Geolocator::new()
+            .map_err(|error| format!("location_service_unavailable: {error}"))?;
+        locator
+            .SetDesiredAccuracy(PositionAccuracy::Default)
+            .map_err(|error| format!("location_accuracy_failed: {error}"))?;
+        let point = locator
+            .GetGeopositionAsync()
+            .map_err(|error| format!("location_request_failed: {error}"))?
+            .get()
+            .map_err(|error| format!("location_request_failed: {error}"))?
+            .Coordinate()
+            .and_then(|coordinate| coordinate.Point())
+            .and_then(|point| point.Position())
+            .map_err(|error| format!("location_coordinates_failed: {error}"))?;
+        return Ok(DeviceCoordinates {
+            latitude: point.Latitude,
+            longitude: point.Longitude,
+        });
+    }
+
+    #[cfg(not(windows))]
+    Err("native_location_not_supported".to_string())
 }
 
 impl LocalRuntime {
@@ -383,10 +429,10 @@ impl LocalRuntime {
             .append(true)
             .open(stderr_path)
             .map_err(|error| format!("failed to open bundled {service} stderr log: {error}"))?;
-        let entrypoint_argument = entrypoint.strip_prefix(runtime).unwrap_or(entrypoint);
+        let entrypoint_argument = node_entrypoint_argument(runtime, entrypoint);
         let mut command = Command::new(node);
         command
-            .arg(entrypoint_argument)
+            .arg(&entrypoint_argument)
             .current_dir(runtime)
             .env("NODE_ENV", "production")
             .env("PERSONAL_AI_ENV_FILE", env_file)
@@ -408,6 +454,37 @@ impl LocalRuntime {
         for managed in children.drain(..) {
             stop_process_tree(managed.child);
         }
+    }
+}
+
+fn node_entrypoint_argument(runtime: &Path, entrypoint: &Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        // Tauri can expose resource paths with the Windows extended-path prefix.
+        // Normalize that prefix before making the script path relative; otherwise
+        // Node may receive only the drive marker (for example, `C:`) as argv[1].
+        let runtime_text = normalize_windows_path_text(&runtime.to_string_lossy());
+        let entrypoint_text = normalize_windows_path_text(&entrypoint.to_string_lossy());
+        let runtime_path = Path::new(&runtime_text);
+        let entrypoint_path = Path::new(&entrypoint_text);
+        if let Ok(relative) = entrypoint_path.strip_prefix(runtime_path) {
+            let mut relative_path = PathBuf::from(".");
+            relative_path.push(relative);
+            return relative_path;
+        }
+        return PathBuf::from(entrypoint_text);
+    }
+
+    #[cfg(not(windows))]
+    {
+        entrypoint
+            .strip_prefix(runtime)
+            .map(|relative| {
+                let mut relative_path = PathBuf::from(".");
+                relative_path.push(relative);
+                relative_path
+            })
+            .unwrap_or_else(|_| entrypoint.to_path_buf())
     }
 }
 
@@ -444,10 +521,10 @@ fn run_bundled_migrations(
         .append(true)
         .open(&stderr_path)
         .map_err(|error| format!("failed to open migration stderr log: {error}"))?;
-    let migration_argument = migration.strip_prefix(runtime).unwrap_or(migration);
+    let migration_argument = node_entrypoint_argument(runtime, migration);
     let mut command = Command::new(node);
     command
-        .arg(migration_argument)
+        .arg(&migration_argument)
         .current_dir(runtime)
         .env("NODE_ENV", "production")
         .env("PERSONAL_AI_ENV_FILE", env_file)
@@ -948,9 +1025,16 @@ fn main() {
             show_main_window(app);
         }))
         .invoke_handler(tauri::generate_handler![
+            device_location,
             focus_companion::focus_mini_settings,
             focus_companion::focus_mini_hide,
             focus_companion::focus_mini_minimize,
+            focus_companion::focus_evaluation_hide,
+            focus_companion::focus_evaluation_minimize,
+            focus_companion::focus_evaluation_start_drag,
+            focus_companion::focus_preparation_hide,
+            focus_companion::focus_preparation_minimize,
+            focus_companion::focus_preparation_start_drag,
             focus_companion::focus_mini_open_main,
             focus_companion::focus_mini_start_drag,
             focus_companion::focus_mini_set_always_on_top,
@@ -1039,4 +1123,38 @@ fn main() {
         RunEvent::Exit => app.state::<LocalRuntime>().stop(),
         _ => {}
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::node_entrypoint_argument;
+    use std::path::{Path, PathBuf};
+
+    #[cfg(windows)]
+    #[test]
+    fn normalizes_extended_windows_runtime_paths_before_spawning_node() {
+        let runtime = Path::new(r"\\?\C:\runtime");
+        let entrypoint = Path::new(r"\\?\C:\runtime\api\dist\server.js");
+        assert_eq!(
+            node_entrypoint_argument(runtime, entrypoint),
+            PathBuf::from(".")
+                .join("api")
+                .join("dist")
+                .join("server.js")
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn uses_a_runtime_relative_node_entrypoint() {
+        let runtime = Path::new("/runtime");
+        let entrypoint = Path::new("/runtime/api/dist/server.js");
+        assert_eq!(
+            node_entrypoint_argument(runtime, entrypoint),
+            PathBuf::from(".")
+                .join("api")
+                .join("dist")
+                .join("server.js")
+        );
+    }
 }

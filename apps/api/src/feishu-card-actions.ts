@@ -75,11 +75,11 @@ export class FeishuCardActionService {
         };
       }
       if (action.data.action === "cancel_confirm") {
-        await this.taskService.cancel(detail.task.id, detail.task.version, "飞书二次确认取消任务");
+        await this.taskService.cancelAndTrash(detail.task.id, detail.task.version, "飞书二次确认取消任务");
         return {
           type: "success",
-          message: "任务已取消。",
-          card: statusCard("任务已取消", detail.task.title, "不会再启动或发送后续提醒。", "red")
+          message: "任务已取消并移入回收站。",
+          card: statusCard("任务已取消", detail.task.title, "不会再启动或发送后续提醒；如需恢复，请在软件回收站操作。", "red")
         };
       }
       if (action.data.action === "start") {

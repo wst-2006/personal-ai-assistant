@@ -1,4 +1,4 @@
-import { taskInputSchema, taskPatchSchema } from "@personal-ai/domain/task";
+import { localDateAtTimeZone, taskInputSchema, taskPatchSchema } from "@personal-ai/domain/task";
 import { describe, expect, it } from "vitest";
 import {
   InboxEntryConflictError,
@@ -101,6 +101,65 @@ describe("TaskService lifecycle and revisions", () => {
     expect(detail.outcomes).toHaveLength(2);
     expect(detail.outcomes.map((item) => item.outcome).sort()).toEqual(["complete", "partial"]);
     expect(task.currentOutcome).toBe("complete");
+  });
+
+  it("corrects only today's evaluation without reopening the task or changing its schedule revision", async () => {
+    const store = new MemoryTaskStore();
+    const service = new TaskService(store);
+    let task = (await service.create(taskInputSchema.parse({
+      title: "Today evaluation correction",
+      scheduleKind: "none",
+      localDate: localDateAtTimeZone(new Date(), "Asia/Shanghai")
+    }))).task;
+    const recorded = await service.recordOutcome(task.id, {
+      expectedVersion: task.version,
+      outcome: "partial",
+      progressPercent: 40,
+      source: "app",
+      satisfaction: "neutral",
+      note: "first"
+    });
+    task = recorded.task;
+    const scheduleRevision = task.scheduleRevision;
+
+    const corrected = await service.correctOutcome(task.id, {
+      expectedVersion: task.version,
+      expectedOutcomeId: recorded.outcome.id,
+      outcome: "complete",
+      progressPercent: 100,
+      source: "app",
+      satisfaction: "satisfied",
+      note: "corrected"
+    });
+
+    expect(corrected.task).toMatchObject({ lifecycleStatus: "closed", currentOutcome: "complete", version: task.version + 1, scheduleRevision });
+    const detail = await service.get(task.id);
+    expect(detail.outcomes).toHaveLength(2);
+    expect(detail.feedback).toHaveLength(2);
+    expect(detail.outcomes.map((item) => item.note)).toContain("first");
+    expect(detail.outcomes.map((item) => item.note)).toContain("corrected");
+  });
+
+  it("rejects evaluation correction for a previous day", async () => {
+    const service = new TaskService(new MemoryTaskStore());
+    let task = (await service.create(unscheduled("Past evaluation"))).task;
+    const recorded = await service.recordOutcome(task.id, {
+      expectedVersion: task.version,
+      outcome: "complete",
+      progressPercent: 100,
+      source: "app",
+      satisfaction: "satisfied"
+    });
+    task = recorded.task;
+
+    await expect(service.correctOutcome(task.id, {
+      expectedVersion: task.version,
+      expectedOutcomeId: recorded.outcome.id,
+      outcome: "partial",
+      progressPercent: 80,
+      source: "app",
+      satisfaction: "neutral"
+    })).rejects.toBeInstanceOf(InvalidTaskTransitionError);
   });
 
   it("rejects invalid transitions and stale versions", async () => {
@@ -226,6 +285,56 @@ describe("TaskService reminder scheduling", () => {
     await service.create(unscheduled());
     await service.create(taskInputSchema.parse({ title: "Morning note", scheduleKind: "daypart", localDate: "2026-07-27", daypart: "morning" }));
     expect(store.reminderJobs).toHaveLength(0);
+  });
+
+  it("previews and applies a confirmed bulk shift in one transaction", async () => {
+    const store = new MemoryTaskStore();
+    const service = new TaskService(store);
+    await service.create(exact("First", "09:00", "10:00"));
+    await service.create(exact("Second", "10:00", "11:00"));
+    await service.create(unscheduled("No exact time"));
+
+    const preview = await service.previewBulkShift("2026-07-27", 30);
+    expect(preview.adjustments.map((item) => [item.title, item.nextStartAt.slice(11, 16)])).toEqual([
+      ["First", "01:30"],
+      ["Second", "02:30"]
+    ]);
+    expect(preview.skipped).toEqual([expect.objectContaining({ title: "No exact time" })]);
+
+    const result = await service.bulkShift("2026-07-27", 30, preview.adjustments);
+    expect(result.tasks.map((task) => task.scheduleRevision)).toEqual([2, 2]);
+    expect(store.tasks.filter((task) => task.scheduleKind === "exact").map((task) => task.startAt?.toISOString().slice(11, 16))).toEqual(["01:30", "02:30"]);
+  });
+
+  it("rolls back a bulk shift when one confirmed version is stale", async () => {
+    const store = new MemoryTaskStore();
+    const service = new TaskService(store);
+    const first = (await service.create(exact("First", "09:00", "10:00"))).task;
+    await service.create(exact("Second", "10:00", "11:00"));
+    const preview = await service.previewBulkShift("2026-07-27", 30);
+    await service.update(first.id, taskPatchSchema.parse({ expectedVersion: first.version, title: "Changed" }));
+
+    await expect(service.bulkShift("2026-07-27", 30, preview.adjustments)).rejects.toBeInstanceOf(TaskVersionConflictError);
+    expect(store.tasks.filter((task) => task.scheduleKind === "exact").map((task) => task.startAt?.toISOString().slice(11, 16))).toEqual(["01:00", "02:00"]);
+  });
+
+  it("rejects a confirmed task that falls outside the previewed date scope", async () => {
+    const store = new MemoryTaskStore();
+    const service = new TaskService(store);
+    const task = (await service.create(taskInputSchema.parse({
+      title: "Tomorrow task",
+      scheduleKind: "exact",
+      startAt: "2026-07-28T09:00:00+08:00",
+      endAt: "2026-07-28T10:00:00+08:00",
+      timeZone: "Asia/Shanghai"
+    }))).task;
+
+    await expect(service.bulkShift("2026-07-27", 30, [{
+      taskId: task.id,
+      expectedVersion: task.version,
+      expectedScheduleRevision: task.scheduleRevision
+    }])).rejects.toMatchObject({ skipped: [expect.objectContaining({ reason: "任务不属于已确认的作用日期" })] });
+    expect(store.tasks[0]?.startAt?.toISOString()).toBe("2026-07-28T01:00:00.000Z");
   });
 });
 

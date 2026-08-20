@@ -12,6 +12,10 @@ Stored tasks use a lifecycle that is independent from scheduling:
   outcome. Append-only outcome history is retained.
 - Any non-active task can be soft-deleted. Deletion is independent from the
   lifecycle.
+- The user-facing `Cancel task` command performs `open -> cancelled` and then
+  soft-deletes the same task into the recycle bin; restoring it keeps the
+  cancelled lifecycle until the user explicitly re-enables it. `Other
+  arrangement` remains the separate `open` to unscheduled operation.
 - A recovery process may move an orphaned `active` task to
   `awaiting_outcome`; this transition is idempotent and records a system event.
 
@@ -49,6 +53,13 @@ AI candidates are not stored as task lifecycle states. The user confirms a
 candidate before a task is created. Objective outcome remains separate from
 subjective satisfaction.
 
+An existing-plan instruction marked by `计划：` or `计划 ` is also not a task
+state. A supported bulk shift follows `instruction -> preview -> confirmed`
+and writes only at `confirmed`. The preview is bound to every selected task's
+`version` and `scheduleRevision` plus the visible date scope. Any stale,
+out-of-scope, locked, conflicting, or otherwise invalid selected task aborts
+the whole serializable transaction; no partial schedule transition is allowed.
+
 ## Focus Session
 
 Creating a new focus session first requires an `open`, formal, exact task with
@@ -60,6 +71,18 @@ The normal explicit-confirmation path is:
 
 `scheduled -> preparing -> armed -> running -> ended -> evaluated`
 
+The preparation companion is a confirmation surface only. `preparing -> armed`
+immediately hides that surface; `armed -> running` at the fixed start time
+creates or restores the running companion window automatically.
+
+The preparation decisions `other_arrangement` and `cancel_task` are each one
+local transactional command over both the focus session and its task. The first
+performs `preparing|armed|awaiting_late_start -> stopped_for_change` and changes
+the task from `exact` to `none` while keeping it `open`; the second performs the
+same session transition, `open -> cancelled`, and soft-deletes the task into
+the recycle bin. A failed command changes neither record, so the UI cannot
+expose a stopped session paired with an unchanged task.
+
 The local Worker enters `preparing` at `startAt - 1 minute`. `Start task` during
 that minute performs `preparing -> armed`; `armed -> running` occurs at the
 fixed `startAt`. If no start confirmation exists at `startAt`, the session
@@ -67,6 +90,12 @@ performs `preparing -> awaiting_late_start`. A desktop start command or an
 explicit Feishu AI message while a focus segment still remains performs
 `awaiting_late_start -> running` and records the actual start time. Repeated
 start commands for `armed` or `running` are idempotent.
+
+Only one session may be in `running` or recovery-only `paused` at a time. The
+API and Worker take the same transaction lock before `armed -> running`, first
+finalize any earlier session whose fixed end has arrived, and reject or retry
+the new start if another session is still genuinely running. An `ended`
+session waiting for evaluation does not block the next scheduled task.
 
 Preparation and `awaiting_late_start` are not execution. They do not activate
 the task, create focus seconds, or imply completion. Reaching the fixed end
@@ -99,6 +128,14 @@ records the actually executed focus time. For a structured session this is the
 sum of executed focus segments and excludes breaks; for an unstructured legacy
 session it is the recorded active time.
 
+A single durable `segment_transition` timer row is advanced to the next segment
+boundary after each transition. The Worker also reconciles any `running` or
+legacy `paused` session whose fixed end has passed, and the current-snapshot API
+performs the same recovery before choosing the visible session. A missed,
+stale, or interrupted timer therefore cannot leave the task indefinitely
+`active`; recovery performs `running -> ended` and `active -> awaiting_outcome`
+with the fixed end preserved.
+
 Entering `ended` replaces the desktop timer composition with an independent
 evaluation composition. This is a presentation change over the same persisted
 session, not a second session or inferred state. The evaluation records an
@@ -108,6 +145,32 @@ performs `ended -> evaluated`; closing or hiding the window leaves the session
 in `ended` and allows the tray to restore it. Evaluation records outcome,
 progress and satisfaction but does not clear or recalculate the already
 recorded focus duration.
+
+The automatic evaluation surface has a 90-second presentation timeout measured
+from the persisted `endedAt` boundary. Timeout or explicit close leaves the
+session in `ended`; it only marks that automatic surface dismissed locally.
+The task remains discoverable in the pending-evaluation list and can be opened
+again by task title. The already persisted `effectiveFocusSeconds` is never
+conditional on evaluation submission, close, or timeout.
+
+When automatic evaluation is disabled, the presentation is skipped but the
+state transition is unchanged: the session remains `ended` and the task
+remains `awaiting_outcome`. No system outcome, progress value, satisfaction,
+or note is created on the user's behalf.
+
+Desktop presentation is not a focus-session state. Execution/rest,
+overlapping T-1 preparation, and evaluation read separate snapshots. An
+overlapping preparation surface appears above the current execution/rest
+surface. A newly ended session may show a centered evaluation surface while
+another session is already executing at the configured companion position.
+Hiding, minimizing, moving, or timing out one surface does not transition or
+hide either of the other sessions.
+
+Selection of a current focus session prioritizes every executing or preparatory
+state over `ended`. Only when no execution session exists may the latest
+`ended` session become the current evaluation snapshot. This prevents an older
+pending evaluation from hiding a newer running task; `ended` still does not
+block a new task from running.
 
 Every eligible exact task has four revision-bound durable transitions: T-15
 creates one Feishu reminder card, T-1 updates the same card with `Start task`
@@ -207,6 +270,13 @@ food or movement opens an ordinary AI conversation but is not a plan state
 transition. “Convert to task” opens an unsaved formal-task form; only the
 separate task-form confirmation creates the task, and the health reference is
 not changed or marked complete.
+
+Daily health actuals are a separate date-keyed user ledger, not a weekly-plan
+state. Saving replaces the selected date's protein, dietary-fibre, and water
+totals; saving all three as empty removes that date's record. AI candidates,
+plan confirmation, supersession, and sleep revisions never create, infer,
+evaluate, or overwrite these actual values. Progress visualization is derived
+only from the saved actual and the currently active reference range.
 
 ## Long-range plan collaboration
 

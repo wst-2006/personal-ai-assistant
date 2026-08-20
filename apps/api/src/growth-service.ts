@@ -6,16 +6,19 @@ import { cyberDiaries, focusSessionSegmentRuns, focusSessions, reviewMessages, r
 import { buildDiaryDayData, type DailyGrowthBreakdown, type DailyStateTone } from "./diary-service.js";
 
 type RadarKey = "mainlineProgress" | "overallExecution" | "focusQuality" | "energyState" | "wellbeing" | "growthGain";
-export type GrowthWindowDays = 7 | 30 | 90 | 365;
+export type GrowthWindowDays = 1 | 7 | 30 | 90 | 365;
 type Day = {
   localDate: string;
   focusMinutes: number;
   closedTasks: number;
+  completedTasks: number;
   plannedTasks: number;
   tone: DailyStateTone;
   radar: Array<{ key: RadarKey; label: string; value: number | null; source: "system" | "user" }>;
   points: number;
   pointsBreakdown: DailyGrowthBreakdown;
+  executionPercent: number;
+  satisfactionPercent: number;
   hasData: boolean;
 };
 
@@ -51,6 +54,26 @@ function averageBreakdown(days: Day[]): DailyGrowthBreakdown {
     satisfaction: average(activeDays.map((day) => day.pointsBreakdown.satisfaction)) ?? 0,
     review: average(activeDays.map((day) => day.pointsBreakdown.review)) ?? 0
   };
+}
+
+function satisfactionPercent(satisfaction: { satisfied: number; neutral: number; dissatisfied: number }) {
+  const count = satisfaction.satisfied + satisfaction.neutral + satisfaction.dissatisfied;
+  if (count === 0) return 0;
+  return Math.round((satisfaction.satisfied * 100 + satisfaction.neutral * 60 + satisfaction.dissatisfied * 20) / count);
+}
+
+function taskCountGrowthCap(plannedTasks: number) {
+  if (plannedTasks <= 0) return 0;
+  if (plannedTasks <= 2) return 45;
+  if (plannedTasks <= 4) return 75;
+  return 100;
+}
+
+function bambooCount(completedTasks: number) {
+  if (completedTasks <= 0) return 0;
+  if (completedTasks <= 2) return 1;
+  if (completedTasks <= 4) return 2;
+  return 4;
 }
 
 function weekKey(localDate: string) {
@@ -123,6 +146,13 @@ export class GrowthService {
       if (localDate && radar) savedRadarByDate.set(localDate, radar);
     }
 
+    const latestFeedbackByTask = new Map<string, (typeof feedback)[number]>();
+    for (const item of feedback) {
+      const previous = latestFeedbackByTask.get(item.taskId);
+      if (!previous || item.createdAt > previous.createdAt) latestFeedbackByTask.set(item.taskId, item);
+    }
+    const latestFeedback = [...latestFeedbackByTask.values()];
+
     const days: Day[] = dates.map((localDate) => {
       const dayTasks = taskRows.filter((task) => task.localDate === localDate);
       const dayTaskIds = new Set(dayTasks.map((task) => task.id));
@@ -135,10 +165,12 @@ export class GrowthService {
          dayTasks.flatMap((task) => segmentRunsByTaskId.get(task.id) ?? [])
        );
       const saved = savedRadarByDate.get(localDate);
+      const executionPercent = dayData.radar.find((metric) => metric.key === "overallExecution")?.value ?? 0;
       return {
         localDate,
         focusMinutes: dayData.effectiveFocusMinutes,
         closedTasks: dayData.closedTasks,
+        completedTasks: dayData.completedTasks,
         plannedTasks: dayData.plannedTasks,
         tone: dayData.stateTone,
         radar: dayData.radar.map((metric) => ({
@@ -148,19 +180,25 @@ export class GrowthService {
         })),
         points: dayData.tree.points,
         pointsBreakdown: dayData.tree.pointsBreakdown,
+        executionPercent,
+        satisfactionPercent: satisfactionPercent(dayData.satisfaction),
         hasData: dayData.plannedTasks > 0 || dayData.rawFocusMinutes > 0 || reviewedDateSet.has(localDate)
       };
     });
     const focusMinutes = days.reduce((sum, day) => sum + day.focusMinutes, 0);
     const plannedTasks = days.reduce((sum, day) => sum + day.plannedTasks, 0);
     const closedTasks = days.reduce((sum, day) => sum + day.closedTasks, 0);
+    const completedTasks = days.reduce((sum, day) => sum + day.completedTasks, 0);
     const currentDay = days.find((day) => day.localDate === endLocalDate) ?? days.at(-1);
-    const growthPercent = currentDay && currentDay.plannedTasks > 0
-      ? Math.min(100, Math.round(currentDay.closedTasks / currentDay.plannedTasks * 100))
-      : 0;
-    const satisfied = feedback.filter((item) => item.satisfaction === "satisfied").length;
-    const neutral = feedback.filter((item) => item.satisfaction === "neutral").length;
-    const dissatisfied = feedback.filter((item) => item.satisfaction === "dissatisfied").length;
+    const growthCap = taskCountGrowthCap(currentDay?.plannedTasks ?? 0);
+    const executionPercent = currentDay?.executionPercent ?? 0;
+    const currentSatisfactionPercent = currentDay?.satisfactionPercent ?? 0;
+    const baseGrowthScore = Math.round(executionPercent * 0.7 + currentSatisfactionPercent * 0.3);
+    const growthPercent = Math.min(growthCap, Math.round(baseGrowthScore * growthCap / 100));
+    const currentBambooCount = bambooCount(currentDay?.completedTasks ?? 0);
+    const satisfied = latestFeedback.filter((item) => item.satisfaction === "satisfied").length;
+    const neutral = latestFeedback.filter((item) => item.satisfaction === "neutral").length;
+    const dissatisfied = latestFeedback.filter((item) => item.satisfaction === "dissatisfied").length;
     const latestOutcomeByTask = new Map<string, (typeof outcomes)[number]>();
     for (const outcome of outcomes) {
       const previous = latestOutcomeByTask.get(outcome.taskId);
@@ -168,7 +206,7 @@ export class GrowthService {
     }
     const latestOutcomes = [...latestOutcomeByTask.values()];
     const quality = latestOutcomes.length ? Math.round(latestOutcomes.reduce((sum, outcome) => sum + outcome.progressPercent, 0) / latestOutcomes.length) : 0;
-    const treeKind = quality >= 80 ? "常青树" : quality >= 45 ? "银杏" : latestOutcomes.length > 0 ? "苔藓" : "种子";
+    const treeKind = growthPercent >= 80 ? "竹林" : growthPercent >= 50 ? "新竹" : growthPercent > 0 ? "竹笋" : "空庭";
     const firstRadar = days[0]?.radar ?? [];
     const radar = radarOrder.map((key) => {
       const definition = firstRadar.find((metric) => metric.key === key)!;
@@ -183,11 +221,12 @@ export class GrowthService {
     const pointsBreakdown = averageBreakdown(days);
     return {
       range: { start, end: endLocalDate },
-      days: days.map(({ radar: _radar, hasData: _hasData, ...day }) => day),
+      days: days.map(({ radar: _radar, executionPercent: _executionPercent, satisfactionPercent: _satisfactionPercent, hasData: _hasData, ...day }) => day),
       focusTrend: buildFocusTrend(days, dayCount),
       focusMinutes,
       plannedTasks,
       closedTasks,
+      completedTasks,
       reviewedDays: reviewedDateSet.size,
       satisfaction: { satisfied, neutral, dissatisfied },
       radar,
@@ -198,6 +237,11 @@ export class GrowthService {
         pointsBreakdown,
         scoredDays: activeDays.length,
         growthPercent,
+        growthCap,
+        baseGrowthScore,
+        executionPercent,
+        satisfactionPercent: currentSatisfactionPercent,
+        bambooCount: currentBambooCount,
         treeKind,
         quality
       }

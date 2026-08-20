@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isWithinProductScheduleWindow, naturalLanguageTaskCandidateSchema, taskBackfillInputSchema, taskInputSchema, taskOutcomeInputSchema } from "./task.js";
+import { extractPlanInstruction, inferPlanInstructionDate, isWithinProductScheduleWindow, naturalLanguageTaskCandidateSchema, taskBackfillInputSchema, taskInputSchema, taskOutcomeInputSchema } from "./task.js";
 
 const exactTask = {
   title: "Deep work",
@@ -8,6 +8,23 @@ const exactTask = {
   endAt: "2026-07-27T10:00:00+08:00",
   timeZone: "Asia/Shanghai"
 };
+
+describe("plan instruction routing", () => {
+  it("accepts a colon or a space after the plan marker without capturing ordinary task titles", () => {
+    expect(extractPlanInstruction("计划：把所有任务往后延半小时")).toBe("把所有任务往后延半小时");
+    expect(extractPlanInstruction("计划 把所有任务往后延半小时")).toBe("把所有任务往后延半小时");
+    expect(extractPlanInstruction("计划")).toBe("");
+    expect(extractPlanInstruction("计划经济学作业")).toBeNull();
+  });
+
+  it("infers bounded relative dates but leaves open-ended ranges for explicit confirmation", () => {
+    expect(inferPlanInstructionDate("计划：把今天所有任务往后延半小时", "2026-08-19")).toBe("2026-08-19");
+    expect(inferPlanInstructionDate("计划 明天的任务提前半小时", "2026-08-19")).toBe("2026-08-20");
+    expect(inferPlanInstructionDate("计划：后天全部任务顺延半小时", "2026-08-19")).toBe("2026-08-21");
+    expect(inferPlanInstructionDate("计划：从今天起所有任务顺延半小时", "2026-08-19")).toBeNull();
+    expect(inferPlanInstructionDate("计划：调整 2026-08-23 的任务", "2026-08-19")).toBe("2026-08-23");
+  });
+});
 
 describe("task scheduling validation", () => {
   it("derives exact dates on the server by rejecting client localDate", () => {

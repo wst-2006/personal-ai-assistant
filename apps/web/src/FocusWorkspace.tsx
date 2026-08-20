@@ -7,7 +7,10 @@ import {
   Eye,
   PencilLine,
   Play,
+  X,
 } from "lucide-react";
+import type { FocusTheme } from "@personal-ai/domain/user-profile";
+import { CyberFocusEvaluation } from "./CyberFocusEvaluation";
 import { FocusStructureEditor, type FocusStructureRecord } from "./FocusStructureEditor";
 import {
   FocusEvaluationForm,
@@ -57,6 +60,7 @@ type Session = {
   preparingEndsAt: string | null;
   activeSinceAt: string | null;
   pausedAt: string | null;
+  endedAt: string | null;
   pausedTotalSeconds: number;
   rawActiveSeconds: number;
   effectiveFocusSeconds: number;
@@ -68,6 +72,8 @@ type Session = {
   stoppedReason: string | null;
 };
 type UserSoundProfile = {
+  focusTheme?: FocusTheme;
+  focusEvaluationEnabled?: boolean;
   focusFlipSoundEnabled?: boolean;
   focusStartSoundEnabled?: boolean;
   breakStartSoundEnabled?: boolean;
@@ -158,7 +164,12 @@ export function FocusWorkspace({
   const [progress, setProgress] = useState("100");
   const [satisfaction, setSatisfaction] = useState<FocusSatisfaction>("satisfied");
   const [note, setNote] = useState("");
-  const [pickerExpanded, setPickerExpanded] = useState(false);
+  const [waitingExpanded, setWaitingExpanded] = useState(false);
+  const [pendingExpanded, setPendingExpanded] = useState(false);
+  const [evaluationSession, setEvaluationSession] = useState<Session | null>(null);
+  const [evaluationTask, setEvaluationTask] = useState<Task | null>(null);
+  const [evaluationDeadlineMs, setEvaluationDeadlineMs] = useState<number | null>(null);
+  const [focusTheme, setFocusTheme] = useState<FocusTheme>("ink");
   const [arrangementOpen, setArrangementOpen] = useState(false);
   const [editArrangementOpen, setEditArrangementOpen] = useState(false);
   const [soundPreferences, setSoundPreferences] = useState<FocusSoundPreferences>(defaultFocusSoundPreferences);
@@ -177,6 +188,7 @@ export function FocusWorkspace({
       breakEnd: profileResult.profile.breakEndSoundEnabled ?? true,
       focusEnd: profileResult.profile.focusEndSoundEnabled ?? true
     });
+    setFocusTheme(profileResult.profile.focusTheme ?? "ink");
     const additionalTaskIds = [...new Set([
       current.session?.taskId,
       preferredTaskId
@@ -192,7 +204,7 @@ export function FocusWorkspace({
     const preferredTask = preferredTaskId
       ? additionalTasks.find((task) => task?.id === preferredTaskId) ?? null
       : null;
-    const visible = list.tasks.filter(isFocusStartEligibleTask);
+    const visible = list.tasks.filter((task) => task.lifecycleStatus === "awaiting_outcome" || isFocusStartEligibleTask(task));
     if (currentSessionTask?.recordKind === "formal" && !visible.some((task) => task.id === currentSessionTask.id)) {
       visible.push(currentSessionTask);
     }
@@ -205,18 +217,43 @@ export function FocusWorkspace({
       return leftTime - rightTime || left.title.localeCompare(right.title, "zh-CN");
     });
     setTasks(visible);
-    setSession(current.session);
+    const nextExecutionSession = current.session && ["scheduled", "reminded", "preparing", "armed", "awaiting_late_start", "running", "paused"].includes(current.session.state)
+      ? current.session
+      : null;
+    const endedAtMs = current.session?.endedAt ? new Date(current.session.endedAt).getTime() : Number.NaN;
+    const evaluationDeadline = endedAtMs + 90_000;
+    const evaluationDismissed = current.session?.state === "ended"
+      && window.localStorage.getItem(`personal-ai.focus-evaluation-dismissed.${current.session.id}`) === "1";
+    if (
+      (profileResult.profile.focusEvaluationEnabled ?? true)
+      &&
+      current.session?.state === "ended"
+      && currentSessionTask
+      && Number.isFinite(evaluationDeadline)
+      && evaluationDeadline > Date.now()
+      && !evaluationDismissed
+    ) {
+      setEvaluationSession(current.session);
+      setEvaluationTask(currentSessionTask);
+      setEvaluationDeadlineMs(evaluationDeadline);
+      setOutcome("complete");
+      setProgress("100");
+      setSatisfaction("satisfied");
+      setNote("");
+    }
+    setSession(nextExecutionSession);
     const visibleIds = new Set(visible.map((task) => task.id));
-    const sessionTaskId = current.session?.taskId && visibleIds.has(current.session.taskId)
-      ? current.session.taskId
+    const startableIds = new Set(visible.filter(isFocusStartEligibleTask).map((task) => task.id));
+    const sessionTaskId = nextExecutionSession?.taskId && visibleIds.has(nextExecutionSession.taskId)
+      ? nextExecutionSession.taskId
       : null;
     const preferredEligibleId = isFocusStartEligibleTask(preferredTask) && visibleIds.has(preferredTask.id)
       ? preferredTask.id
       : null;
     setSelectedId((currentId) => sessionTaskId
       ?? preferredEligibleId
-      ?? (currentId && visibleIds.has(currentId) ? currentId : null)
-      ?? visible[0]?.id
+      ?? (currentId && startableIds.has(currentId) ? currentId : null)
+      ?? visible.find(isFocusStartEligibleTask)?.id
       ?? null);
   }, [preferredTaskId]);
   useEffect(() => {
@@ -281,14 +318,24 @@ export function FocusWorkspace({
     return () => { cancelled = true; };
   }, [session?.focusStructureId, session?.taskId]);
   useEffect(() => {
-    if (!session) return;
+    if (!session && !evaluationSession) return;
     const update = () => {
       setNowMs(Date.now());
     };
     update();
     const timer = window.setInterval(update, 1000);
     return () => window.clearInterval(timer);
-  }, [session]);
+  }, [evaluationSession, session]);
+  useEffect(() => {
+    if (!evaluationSession || !evaluationDeadlineMs) return;
+    const timer = window.setTimeout(() => {
+      window.localStorage.setItem(`personal-ai.focus-evaluation-dismissed.${evaluationSession.id}`, "1");
+      setEvaluationSession(null);
+      setEvaluationTask(null);
+      setEvaluationDeadlineMs(null);
+    }, Math.max(0, evaluationDeadlineMs - Date.now()));
+    return () => window.clearTimeout(timer);
+  }, [evaluationDeadlineMs, evaluationSession?.id]);
   useEffect(() => {
     if (!session || !["reminded", "scheduled", "preparing", "armed", "awaiting_late_start", "running"].includes(session.state)) return;
     const timer = window.setInterval(() => void load().catch(() => undefined), 15_000);
@@ -503,12 +550,36 @@ export function FocusWorkspace({
     }
   }
   function chooseOutcome(value: FocusOutcome) {
+    setEvaluationDeadlineMs(null);
     setOutcome(value);
     setProgress(progressForOutcome(value));
     setError(null);
   }
+  async function openPendingEvaluation(task: Task) {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await request<{ session: Session | null }>(`/api/v1/focus-sessions/tasks/${task.id}/current`);
+      if (!result.session || result.session.state !== "ended") {
+        setError("这项任务没有可填写的待评价专注记录。");
+        return;
+      }
+      setEvaluationSession(result.session);
+      setEvaluationTask(task);
+      setEvaluationDeadlineMs(null);
+      setOutcome("complete");
+      setProgress("100");
+      setSatisfaction("satisfied");
+      setNote("");
+    } catch {
+      setError("无法读取这项任务的待评价记录，请刷新后重试。");
+    } finally {
+      setBusy(false);
+    }
+  }
   async function evaluate() {
-    if (!session) return;
+    if (!evaluationSession) return;
+    setEvaluationDeadlineMs(null);
     const value = Number(progress);
     if (!validFocusEvaluation(outcome, progress)) {
       setError("请填写与完成情况一致的客观进度。");
@@ -517,15 +588,18 @@ export function FocusWorkspace({
     setBusy(true);
     setError(null);
     try {
-      await request(`/api/v1/focus-sessions/${session.id}/evaluate`, "POST", {
-        expectedVersion: session.version,
+      await request(`/api/v1/focus-sessions/${evaluationSession.id}/evaluate`, "POST", {
+        expectedVersion: evaluationSession.version,
         commandId: crypto.randomUUID(),
         outcome,
         progressPercent: value,
         satisfaction,
         note: note.trim() || null,
       });
-      setSession(null);
+      window.localStorage.removeItem(`personal-ai.focus-evaluation-dismissed.${evaluationSession.id}`);
+      setEvaluationSession(null);
+      setEvaluationTask(null);
+      setEvaluationDeadlineMs(null);
       setNote("");
       await load();
     } catch {
@@ -638,6 +712,13 @@ export function FocusWorkspace({
     ? clock(new Date(currentSegmentTiming.endsAt).toISOString(), displayTask.timeZone)
     : fixedEndLabel;
   const executionStage = ["reminded", "scheduled", "preparing", "armed", "awaiting_late_start", "running"].includes(stage);
+  const waitingTasks = tasks.filter(isFocusStartEligibleTask);
+  const pendingEvaluationTasks = tasks.filter((task) => task.lifecycleStatus === "awaiting_outcome");
+  const displayedWaitingTasks = waitingExpanded ? waitingTasks : waitingTasks.slice(0, 3);
+  const displayedPendingTasks = pendingExpanded ? pendingEvaluationTasks : pendingEvaluationTasks.slice(0, 3);
+  const evaluationSecondsLeft = evaluationDeadlineMs
+    ? Math.max(0, Math.ceil((evaluationDeadlineMs - nowMs) / 1_000))
+    : null;
 
   useEffect(() => {
     const immersive = isWorkspaceCurrent && executionStage;
@@ -684,34 +765,6 @@ export function FocusWorkspace({
     && selected?.id === session.taskId
     && ["preparing", "armed", "awaiting_late_start", "running", "ended"].includes(session.state)
   );
-
-  if (stage === "ended" && session) {
-    return (
-      <section className="focus-workspace page focus-workspace-ended" aria-labelledby="focus-page-evaluation-title">
-        <div className="focus-ended-page">
-          <button className="back-button" onClick={onBack}>
-            <ChevronLeft />
-            回到时间轴
-          </button>
-          <FocusEvaluationForm
-            headingId="focus-page-evaluation-title"
-            taskTitle={displayTask?.title ?? "本次专注"}
-            outcome={outcome}
-            progress={progress}
-            satisfaction={satisfaction}
-            note={note}
-            busy={busy}
-            error={error}
-            onOutcomeChange={chooseOutcome}
-            onProgressChange={(value) => { setProgress(value); setError(null); }}
-            onSatisfactionChange={(value) => { setSatisfaction(value); setError(null); }}
-            onNoteChange={setNote}
-            onSubmit={() => void evaluate()}
-          />
-        </div>
-      </section>
-    );
-  }
 
   return (
     <section className={`focus-workspace page ${executionStage ? "focus-workspace-executing" : ""}`} aria-labelledby="focus-title">
@@ -843,33 +896,43 @@ export function FocusWorkspace({
           <p className="focus-stopped">{session?.stoppedReason ?? "这次提醒已停止。"}，任务仍保留在你的安排中。</p>
         )}
       </div>
-      {!executionStage && <aside className="focus-picker" aria-label="今日任务">
-        <div className="focus-picker-heading"><p className="section-kicker">今日题签</p><span>此刻只做一件</span></div>
-        <div className="focus-task-slips">
-          {tasks.length === 0 ? (
-            <p>今天还没有可开始的已排期任务。</p>
-          ) : (
-            (pickerExpanded ? tasks : tasks.slice(0, 3)).map((task) => (
-              <button
-                className={`focus-task-slip ${task.id === selected?.id ? "selected" : ""}`}
-                onClick={() => setSelectedId(task.id)}
-                key={task.id}
-              >
-                <span>
-                  {task.lifecycleStatus === "awaiting_outcome"
-                    ? "待补结果"
-                    : task.lifecycleStatus === "active"
-                      ? "进行中"
-                      : "待开始"}
-                </span>
+      {!executionStage && <aside className="focus-picker focus-picker-split" aria-label="今日专注任务">
+        <section className="focus-picker-section" aria-labelledby="waiting-focus-heading">
+          <div className="focus-picker-heading"><p className="section-kicker" id="waiting-focus-heading">等待专注的任务</p><span>{waitingTasks.length} 项</span></div>
+          <div className="focus-task-slips">
+            {displayedWaitingTasks.length === 0 ? <p>今天没有等待专注的已排期任务。</p> : displayedWaitingTasks.map((task) => (
+              <button className={`focus-task-slip ${task.id === selected?.id ? "selected" : ""}`} onClick={() => setSelectedId(task.id)} key={task.id}>
+                <span>待开始</span>
                 <strong>{task.title}</strong>
                 <small>{task.startAt && task.endAt ? `${clock(task.startAt, task.timeZone)}–${clock(task.endAt, task.timeZone)}` : "未设置精确时间"}</small>
               </button>
-            ))
-          )}
-        </div>
-        {tasks.length > 3 && <button className="focus-picker-toggle" type="button" onClick={() => setPickerExpanded((value) => !value)}>{pickerExpanded ? "收起其他任务" : `查看其他 ${tasks.length - 3} 项`}<ChevronDown className={pickerExpanded ? "expanded" : ""} /></button>}
+            ))}
+          </div>
+          {waitingTasks.length > 3 && <button className="focus-picker-toggle" type="button" onClick={() => setWaitingExpanded((value) => !value)}>{waitingExpanded ? "收起等待任务" : `查看其他 ${waitingTasks.length - 3} 项`}<ChevronDown className={waitingExpanded ? "expanded" : ""} /></button>}
+        </section>
+        <section className="focus-picker-section pending" aria-labelledby="pending-evaluation-heading">
+          <div className="focus-picker-heading"><p className="section-kicker" id="pending-evaluation-heading">没有完成评价的任务</p><span>{pendingEvaluationTasks.length} 项</span></div>
+          <div className="focus-task-slips">
+            {displayedPendingTasks.length === 0 ? <p>目前没有待评价任务。</p> : displayedPendingTasks.map((task) => (
+              <button className="focus-task-slip pending" disabled={busy} onClick={() => void openPendingEvaluation(task)} key={task.id}>
+                <span>待评价</span>
+                <strong>{task.title}</strong>
+                <small>打开对应主题评价</small>
+              </button>
+            ))}
+          </div>
+          {pendingEvaluationTasks.length > 3 && <button className="focus-picker-toggle" type="button" onClick={() => setPendingExpanded((value) => !value)}>{pendingExpanded ? "收起待评价任务" : `查看其他 ${pendingEvaluationTasks.length - 3} 项`}<ChevronDown className={pendingExpanded ? "expanded" : ""} /></button>}
+        </section>
       </aside>}
+      {evaluationSession && evaluationTask ? <div className="task-dialog-backdrop focus-evaluation-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) { window.localStorage.setItem(`personal-ai.focus-evaluation-dismissed.${evaluationSession.id}`, "1"); setEvaluationSession(null); setEvaluationTask(null); setEvaluationDeadlineMs(null); } }}>
+        <section className={`themed-outcome-dialog focus-page-evaluation-dialog focus-theme-${focusTheme}`} role="dialog" aria-modal="true" aria-labelledby="focus-page-evaluation-title">
+          <header className="themed-outcome-titlebar"><span>评价任务：{evaluationTask.title}</span><button type="button" aria-label="关闭评价" onClick={() => { window.localStorage.setItem(`personal-ai.focus-evaluation-dismissed.${evaluationSession.id}`, "1"); setEvaluationSession(null); setEvaluationTask(null); setEvaluationDeadlineMs(null); }}><X /></button></header>
+          <div className="themed-outcome-body">
+            {evaluationSecondsLeft !== null ? <p className="focus-evaluation-timeout" role="status">尚未操作，{evaluationSecondsLeft} 秒后自动关闭并保留为待评价</p> : null}
+            {focusTheme === "cyber" ? <CyberFocusEvaluation taskTitle={evaluationTask.title} outcome={outcome} progress={progress} satisfaction={satisfaction} note={note} busy={busy} error={error} onOutcomeChange={chooseOutcome} onProgressChange={(value) => { setEvaluationDeadlineMs(null); setProgress(value); setError(null); }} onSatisfactionChange={(value) => { setEvaluationDeadlineMs(null); setSatisfaction(value); setError(null); }} onNoteChange={(value) => { setEvaluationDeadlineMs(null); setNote(value); }} onSubmit={() => void evaluate()} /> : <FocusEvaluationForm headingId="focus-page-evaluation-title" taskTitle={evaluationTask.title} outcome={outcome} progress={progress} satisfaction={satisfaction} note={note} busy={busy} error={error} onOutcomeChange={chooseOutcome} onProgressChange={(value) => { setEvaluationDeadlineMs(null); setProgress(value); setError(null); }} onSatisfactionChange={(value) => { setEvaluationDeadlineMs(null); setSatisfaction(value); setError(null); }} onNoteChange={(value) => { setEvaluationDeadlineMs(null); setNote(value); }} onSubmit={() => void evaluate()} />}
+          </div>
+        </section>
+      </div> : null}
       {error && (
         <div className="focus-error" role="alert">
           {error}

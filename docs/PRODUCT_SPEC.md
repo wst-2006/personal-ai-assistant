@@ -17,6 +17,11 @@ creates search-backed daily briefs when explicitly requested.
   difficulty, task-type, and continuous-focus metadata are rejected by the
   task API and form. Historical values remain in a legacy archive only.
 - Tasks, ideas, and questions are distinct entry types.
+- Choosing `Cancel task` from the task menu, preparation window, or Feishu
+  confirmation cancels the task and immediately soft-deletes it into the local
+  recycle bin. It remains recoverable during the retention window; `Other
+  arrangement` is the separate action that returns an open task to the
+  unscheduled list.
 - A dated formal task with `scheduleKind = none` follows the user's explicit
   persisted day-end preference. The default and current preference is to carry
   it to the following day. The alternative removes it from active views by
@@ -37,6 +42,18 @@ creates search-backed daily briefs when explicitly requested.
   follows the ordinary soft-delete version contract.
 - AI may advise on conflicts and changes but never changes a confirmed plan
   without an explicit user decision.
+- An input beginning with `计划：` or `计划 ` is an existing-plan instruction,
+  never a new-task candidate. The application routes supported bulk time shifts
+  to a visible preview. Relative dates such as today, tomorrow, and the day
+  after tomorrow may prefill the scope, but the user can edit that scope before
+  confirmation. An omitted date means all dates and must be stated in the
+  preview rather than inferred silently.
+- A confirmed bulk time shift may target only open formal tasks with exact
+  start and end times. Unscheduled, daypart, started, awaiting-outcome, closed,
+  cancelled, cross-day, out-of-window, conflicting, stale, or out-of-scope
+  tasks are never silently moved. The preview shows old and new dated times;
+  the final write is one serializable, version-bound transaction and rolls back
+  completely when confirmation is stale or invalid.
 - A plan-change consultation may return transient schedule candidates only for
   existing `open` tasks. Each candidate is bound to the task `version` and
   `scheduleRevision`; selecting it merely opens the normal editable task form.
@@ -56,11 +73,19 @@ creates search-backed daily briefs when explicitly requested.
   Structured sessions count only executed focus segments; breaks remain
   excluded. Legacy ended/evaluated sessions without a populated effective
   value fall back to their recorded active seconds.
+- Disabling the automatic task-end evaluation surface changes presentation
+  only. The ended session still records its effective focus duration and the
+  task remains `awaiting_outcome`; the system never invents a `complete`, 100%
+  outcome or subjective feedback. The user may record the result later from
+  the current day's task or pending-evaluation list.
 - Every eligible exact task enters a one-minute desktop preparation surface at
   `startAt - 1 minute`. Preparation, a persisted schedule, and reminder delivery
   never count as execution by themselves. The task produces focus time only
   after the user explicitly chooses `Start task` in the desktop or Feishu card,
   or explicitly tells the Feishu AI that the task has started.
+- After the user confirms `Start task` during preparation, the preparation
+  window hides immediately; it does not remain as a second timer. At the fixed
+  `startAt`, the running focus window is created or restored automatically.
 - A start confirmation during the one-minute preparation arms the task to begin
   at its fixed `startAt`. If no confirmation exists at `startAt`, the session
   enters a temporary `awaiting_late_start` state rather than running or closing.
@@ -76,6 +101,11 @@ creates search-backed daily briefs when explicitly requested.
   schedule and background accounting continue. Beginning preparation locks the
   current task's confirmed focus structure when one exists. Unrelated tasks and
   pending evaluations remain independent.
+- At most one focus session may be genuinely running at a time. Before a new
+  task enters `running`, the local API or Worker finalizes any earlier session
+  whose fixed end has arrived; a still-running earlier session blocks or delays
+  the new start. Sessions already waiting for evaluation remain independent and
+  do not block the next task.
 - The focus room uses a restrained ink-clepsydra presentation with one large
   remaining-time value and a growing ink stroke. Minute-tick, first focus start,
   break start, break end, and final task end sounds are distinct, independently
@@ -112,12 +142,26 @@ creates search-backed daily briefs when explicitly requested.
   When automatic display is enabled, a newly preparing or running session opens
   the companion at the visible lower-right work area. Pin and position-lock
   controls live in the title bar; the timer footer contains only named execution
-  actions. When the persisted session enters `ended`, the companion always
+  actions. The preparation surface contains `Start task`, `Other arrangement`
+  and `Cancel task`; start confirmation hides preparation immediately, while
+  the latter two decisions update the session and task together and show a
+  two-second success message before hiding. When the persisted session enters `ended`, the companion always
   restores and expands into a dedicated evaluation surface instead of retaining
   the timer composition. Objective outcome/progress and subjective satisfaction
   remain separate inputs; optional process notes are never converted into a
-  diary. Saving returns to the main application and hides the evaluation window.
+  diary. The evaluation uses the focus theme currently selected in
+  Personalization. Its automatic surface closes after 90 seconds without input
+  and leaves the session available as an explicitly named pending evaluation;
+  this timeout does not delay, recalculate or discard focus duration already
+  recorded when the final rest ended. Saving returns to the main application and hides the evaluation window.
   Notifications are limited to focus start, phase changes and completion.
+- Desktop execution/rest, overlapping T-1 preparation, and evaluation use three
+  independent native surfaces. The execution/rest companion stays at its
+  configured position. While it is still active, the next task's preparation
+  surface appears immediately above it. A final-rest completion opens the
+  evaluation surface in the center while a next task may continue in the normal
+  companion. Hiding or minimizing one surface must not hide, move, or change the
+  state of another surface.
 - Every task reserves a final rest: 30 minutes defaults to 25 minutes focus plus
   5 minutes rest; 60 minutes defaults to 55 plus 5; 90 minutes defaults to 80
   plus 10; 120 minutes and longer cap the final rest at 15 minutes. Segmented
@@ -128,6 +172,21 @@ creates search-backed daily briefs when explicitly requested.
   structure. Earlier segments are recorded as skipped; elapsed time is not
   fabricated, compressed, or rearranged. The final rest may be explicitly
   skipped and recorded.
+- Segment boundaries reuse one durable timer job instead of silently dropping
+  a same-kind successor. The local Worker and current-session API also reconcile
+  overdue running sessions at their persisted fixed end, so a missed timer,
+  application restart, or stale job cannot leave a completed task marked
+  `active` or suppress its evaluation indefinitely.
+- Intermediate rests close at their boundary and advance to the next focus
+  segment without creating an evaluation. Only the final rest completes the
+  task and creates a pending evaluation. When an executing session and older
+  pending evaluations coexist, the executing session remains the current timer;
+  pending evaluations stay separately selectable by task title.
+- A task's saved outcome and subjective feedback may be corrected from the task
+  list only on that task's Shanghai calendar date. Correction appends new
+  outcome/feedback history, keeps the task `closed`, and never reopens or
+  restarts it. Earlier unreviewed sessions retain their recorded focus duration
+  but do not receive invented subjective feedback.
 - Exact tasks maintain durable T-15, T-1, T0 and fixed-end reminder transitions.
   T-15 sends one Feishu card with only `Other arrangement` and the two-step
   `Cancel task` action. T-1 updates that same card to add `Start task`. T0
@@ -212,6 +271,12 @@ creates search-backed daily briefs when explicitly requested.
   completion progress, medical prescriptions, forced tracking or automatic
   tasks. Older stored references without the richer fields remain readable and
   visibly report that the field was not provided instead of inventing values.
+- Daily actual intake is a separate user-authored ledger keyed by local date.
+  It records only total protein grams, dietary-fibre grams, and water volume for
+  the day; it does not split meals. Real progress bars compare these saved
+  values with the active daily reference range and clearly distinguish missing,
+  below-range, in-range, and above-range values. Replacing or revising a weekly
+  reference never overwrites actual records, and AI never fills them in.
 - The manual health editor exposes the same richer fields but keeps each richer
   group optional for backward compatibility. Saving creates or updates only a
   versioned candidate; the active week changes only after explicit confirmation.

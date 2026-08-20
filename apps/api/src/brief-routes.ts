@@ -21,6 +21,13 @@ export async function briefRoutes(app: FastifyInstance, options: { briefService:
       throw error;
     }
   });
+  app.post("/reviews/:id/location-weather", async (request, reply) => {
+    const params = idParams.safeParse(request.params);
+    const input = z.object({ locationName: z.string().trim().max(120).optional(), latitude: z.number().min(-90).max(90).optional(), longitude: z.number().min(-180).max(180).optional() }).strict().safeParse(request.body ?? {});
+    if (!params.success || !input.success || ((input.data.latitude === undefined) !== (input.data.longitude === undefined))) return reply.status(400).send({ error: "invalid_location_weather" });
+    try { return reply.status(201).send({ brief: await options.briefService.recordLocationWeather(params.data.id, input.data) }); }
+    catch (error) { if (error instanceof BriefNotFoundError) return reply.status(404).send({ error: "review_session_not_found" }); throw error; }
+  });
   app.post("/briefs/standalone", async (request, reply) => {
     if (options.standaloneEnabled === false) return reply.status(404).send({ error: "standalone_brief_disabled" });
     const input = generateStandaloneBriefSchema.safeParse(request.body);

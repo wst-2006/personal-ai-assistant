@@ -20,6 +20,7 @@ function snapshot(
       plannedStartAt: preparing ? new Date(now + 45_000).toISOString() : new Date(now - 20 * 60_000).toISOString(),
       plannedEndAt: new Date(now + runningRemainingMs).toISOString(),
       pausedAt: null,
+      endedAt: state === "ended" ? new Date(now).toISOString() : null,
       rawActiveSeconds: 1_200,
     },
     task: {
@@ -112,11 +113,36 @@ test.describe("独立专注窗口", () => {
 
     await page.goto("/?focus-mini=1");
     await expect(page.getByRole("button", { name: "开始任务" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "另有安排" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "取消任务" })).toBeVisible();
+    await expect(page.locator(".focus-mini-quote")).toHaveCount(0);
     await expect(page.getByText("桌面或飞书确认一次即可")).toBeVisible();
     await page.getByRole("button", { name: "开始任务" }).click();
     await expect(page.getByText("已确认", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "开始任务" })).toHaveCount(0);
     expect(confirmCount).toBe(1);
+  });
+
+  test("评价框 90 秒无操作后自动隐藏并保留待评价状态", async ({ page }) => {
+    const fixedNow = new Date("2026-08-19T10:00:00.000Z");
+    await page.clock.install();
+    await page.clock.setFixedTime(fixedNow);
+    await page.setViewportSize({ width: 540, height: 620 });
+    await routeProfile(page);
+    await page.route(`${apiBase}/api/v1/focus-sessions/current`, (route) => {
+      const value = snapshot("ended", { now: fixedNow.getTime() });
+      return route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ session: value.session, snapshot: value }),
+      });
+    });
+
+    await page.goto("/?focus-mini=1");
+    await expect(page.getByText("尚未操作，90 秒后自动关闭并保留为待评价")).toBeVisible();
+    await page.clock.fastForward(90_000);
+    await expect(page.getByRole("heading", { name: "为这一段留下真实记录" })).toHaveCount(0);
+    expect(await page.evaluate(() => localStorage.getItem("personal-ai.focus-evaluation-dismissed.00000000-0000-4000-8000-000000000101"))).toBe("1");
   });
 
   test("结束后使用独立评价构图并分别保存客观结果与主观感受", async ({ page }) => {

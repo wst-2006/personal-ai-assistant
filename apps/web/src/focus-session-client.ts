@@ -22,6 +22,7 @@ export type FocusSessionSnapshot = {
     plannedStartAt: string | null;
     plannedEndAt: string | null;
     pausedAt: string | null;
+    endedAt: string | null;
     rawActiveSeconds: number;
   };
   task: {
@@ -78,25 +79,53 @@ export type FocusEvaluationPayload = {
 
 const API = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:3000";
 
-export async function loadFocusSnapshot(signal?: AbortSignal): Promise<FocusSessionSnapshot | null> {
-  const response = await fetch(`${API}/api/v1/focus-sessions/current`, { signal });
+export async function loadFocusSnapshot(
+  signal?: AbortSignal,
+  surface: "current" | "execution" | "evaluation" | "preparation" = "current",
+): Promise<FocusSessionSnapshot | null> {
+  const path = surface === "execution"
+    ? "/api/v1/focus-sessions/current-execution"
+    : surface === "evaluation"
+      ? "/api/v1/focus-sessions/pending-evaluation"
+      : surface === "preparation"
+        ? "/api/v1/focus-sessions/overlapping-preparation"
+      : "/api/v1/focus-sessions/current";
+  const response = await fetch(`${API}${path}`, { signal });
   if (!response.ok) throw new Error("focus_snapshot_unavailable");
   return ((await response.json()) as FocusSnapshotResponse).snapshot;
 }
 
 export async function runFocusSessionAction(
   snapshot: FocusSessionSnapshot,
-  action: "skip-preparation" | "skip-final-break",
+  action: "skip-preparation" | "skip-final-break" | "other-arrangement",
 ): Promise<FocusSessionSnapshot | null> {
   const response = await fetch(`${API}/api/v1/focus-sessions/${snapshot.session.id}/${action}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       expectedVersion: snapshot.session.version,
+      ...(action === "other-arrangement" ? { reason: "用户选择另有安排" } : {}),
     }),
   });
   if (!response.ok) throw new Error("focus_action_failed");
   return loadFocusSnapshot();
+}
+
+export async function resolveFocusPreparationDecision(
+  snapshot: FocusSessionSnapshot,
+  decision: "other-arrangement" | "cancel-task",
+): Promise<void> {
+  const response = await fetch(`${API}/api/v1/focus-sessions/${snapshot.session.id}/resolve-preparation`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      expectedVersion: snapshot.session.version,
+      commandId: crypto.randomUUID(),
+      decision: decision === "cancel-task" ? "cancel_task" : "other_arrangement",
+      reason: decision === "cancel-task" ? "用户从准备窗口取消任务" : "用户从准备窗口选择另有安排",
+    }),
+  });
+  if (!response.ok) throw new Error("focus_preparation_decision_failed");
 }
 
 export async function evaluateFocusSession(

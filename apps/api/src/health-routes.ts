@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { createHealthPlanCandidateSchema, createManualHealthPlanCandidateSchema, healthCollaborationMessageInputSchema, healthPlanConfirmationSchema, healthSleepRevisionCandidateSchema, healthWeekStartSchema, saveHealthProfileSchema, sleepImageAnalysisRequestSchema, updateManualHealthPlanCandidateSchema } from "@personal-ai/domain/health";
+import { createHealthPlanCandidateSchema, createManualHealthPlanCandidateSchema, healthCollaborationMessageInputSchema, healthPlanConfirmationSchema, healthSleepRevisionCandidateSchema, healthWeekStartSchema, saveHealthDailyActualSchema, saveHealthProfileSchema, sleepImageAnalysisRequestSchema, updateManualHealthPlanCandidateSchema } from "@personal-ai/domain/health";
 import { reviewDateSchema } from "@personal-ai/domain/review";
 import { z } from "zod";
 import {
@@ -107,6 +107,19 @@ export async function healthRoutes(app: FastifyInstance, options: {
     if (!params.success) return reply.status(400).send({ error: "invalid_health_reference_date" });
     const reference = await healthService.getDay(params.data.localDate);
     return { reference: reference ? { plan: reference.plan, day: { ...reference.day, content: reference.day.content } } : null };
+  });
+
+  app.get("/health/days/:localDate/actual", async (request, reply) => {
+    const params = sleepAnalysisParams.safeParse(request.params);
+    if (!params.success) return reply.status(400).send({ error: "invalid_health_actual_date" });
+    return { actual: await healthService.getDailyActual(params.data.localDate) };
+  });
+
+  app.put("/health/days/:localDate/actual", async (request, reply) => {
+    const params = sleepAnalysisParams.safeParse(request.params);
+    const input = saveHealthDailyActualSchema.safeParse(request.body);
+    if (!params.success || !input.success) return reply.status(400).send({ error: "invalid_health_daily_actual" });
+    return { actual: await healthService.saveDailyActual(params.data.localDate, input.data) };
   });
 
   app.get("/health/sleep-analyses/:localDate", async (request, reply) => {

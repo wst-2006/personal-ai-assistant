@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Leaf, Sparkles, TrendingUp } from "lucide-react";
+import { CalendarDays, ChevronLeft, ChevronRight, Leaf, Sparkles, TrendingUp } from "lucide-react";
 import { RadarEditor, numericRadarValues, type RadarKey, type RadarValues } from "./ReviewRadar";
 
 type Tone = "quiet" | "steady" | "bright" | "strained";
@@ -7,18 +7,20 @@ type TrendGranularity = "day" | "week" | "month";
 type TrendPoint = { startDate: string; endDate: string; focusMinutes: number };
 type PointsBreakdown = { execution: number; focus: number; satisfaction: number; review: number };
 type Summary = {
-  days: Array<{ localDate: string; focusMinutes: number; closedTasks: number; plannedTasks: number; tone: Tone; points: number; pointsBreakdown: PointsBreakdown }>;
+  range: { start: string; end: string };
+  days: Array<{ localDate: string; focusMinutes: number; closedTasks: number; completedTasks: number; plannedTasks: number; tone: Tone; points: number; pointsBreakdown: PointsBreakdown }>;
   focusTrend: { granularity: TrendGranularity; points: TrendPoint[] };
   focusMinutes: number;
   plannedTasks: number;
   closedTasks: number;
+  completedTasks: number;
   satisfaction: { satisfied: number; neutral: number; dissatisfied: number };
   radar: Array<{ key: string; label: string; value: number | null; source: "system" | "user"; sampleDays: number }>;
   currentRadar: Array<{ key: string; label: string; value: number | null; source: "system" | "user" }>;
   currentRadarSaved: boolean;
-  garden: { points: number; pointsBreakdown: PointsBreakdown; scoredDays: number; growthPercent: number; treeKind: string; quality: number };
+  garden: { points: number; pointsBreakdown: PointsBreakdown; scoredDays: number; growthPercent: number; growthCap: number; baseGrowthScore: number; executionPercent: number; satisfactionPercent: number; bambooCount: number; treeKind: string; quality: number };
 };
-type WindowDays = 7 | 30 | 90 | 365;
+type WindowDays = 1 | 7 | 30;
 type BambooStage = "shoots" | "mixed" | "grove";
 
 type BambooPoint = { x: number; y: number; oldX: number; oldY: number; restX: number; restY: number };
@@ -57,10 +59,16 @@ function bambooRootPoint(width: number, height: number, amount: number) {
   return { x, y };
 }
 
-function buildBamboo(width: number, height: number, stage: BambooStage) {
+function bambooRoots(count: number, offset = 0) {
+  const roots = count + offset >= 4 ? [.49, .61, .72, .83] : count + offset === 2 ? [.64, .81] : count + offset === 1 ? [.73] : [];
+  return roots.slice(offset, offset + count);
+}
+
+function buildBamboo(width: number, height: number, stage: BambooStage, bambooCount: number) {
   const random = seededRandom(0x5a17c9);
-  const roots = stage === "grove" ? [.49, .61, .72, .83] : [.64, .81];
-  const heightRatios = stage === "grove" ? [.68, .89, .76, .96] : [.38, .53];
+  const stalkCount = stage === "grove" ? bambooCount : stage === "mixed" ? Math.ceil(bambooCount / 2) : 0;
+  const roots = bambooRoots(stalkCount);
+  const heightRatios = stage === "grove" ? [.68, .89, .76, .96] : [.28, .37];
   const thicknesses = stage === "grove" ? [2.7, 3.5, 3.1, 4] : [2.6, 3.1];
   // Keep the four stalks on one ink family; the visible gradient is vertical,
   // from a washed root to a heavier upper stroke.
@@ -115,10 +123,11 @@ function buildBamboo(width: number, height: number, stage: BambooStage) {
   });
 }
 
-function buildBambooShoots(stage: BambooStage): BambooShoot[] {
-  if (stage === "grove") return [];
-  const roots = stage === "shoots" ? [.54, .64, .75, .84] : [.53, .72];
-  const heights = stage === "shoots" ? [.19, .29, .23, .34] : [.25, .34];
+function buildBambooShoots(stage: BambooStage, bambooCount: number): BambooShoot[] {
+  const shootCount = stage === "shoots" ? bambooCount : stage === "mixed" ? Math.floor(bambooCount / 2) : 0;
+  const stalkCount = stage === "mixed" ? Math.ceil(bambooCount / 2) : 0;
+  const roots = bambooRoots(shootCount, stage === "mixed" ? stalkCount : 0);
+  const heights = stage === "shoots" ? [.19, .29, .23, .34] : [.23, .29];
   return roots.map((rootT, index) => ({
     rootT,
     heightRatio: heights[index]!,
@@ -201,8 +210,12 @@ function bambooInkThickness(stalk: BambooStalk, depth: number) {
   return stalk.thickness * (.8 + depth * .28);
 }
 
-function drawBamboo(context: CanvasRenderingContext2D, stalks: BambooStalk[], shoots: BambooShoot[], width: number, height: number, now: number) {
+function drawBamboo(context: CanvasRenderingContext2D, stalks: BambooStalk[], shoots: BambooShoot[], width: number, height: number, now: number, reveal = 1) {
   context.clearRect(0, 0, width, height);
+  context.save();
+  context.beginPath();
+  context.rect(0, height * (1 - reveal), width, height * reveal);
+  context.clip();
   shoots.forEach((shoot) => drawBambooShoot(context, shoot, width, height));
   stalks.forEach((stalk) => {
     const nodes = stalk.nodes;
@@ -266,15 +279,16 @@ function drawBamboo(context: CanvasRenderingContext2D, stalks: BambooStalk[], sh
       drawBambooLeaf(context, branchX, branchY, branchAngle + leaf.side * .16, leaf, leafTone, flutter);
     });
   });
+  context.restore();
 }
 
 export function growthBambooStage(growthPercent: number): BambooStage {
-  if (growthPercent < 33) return "shoots";
-  if (growthPercent <= 66) return "mixed";
+  if (growthPercent < 50) return "shoots";
+  if (growthPercent < 80) return "mixed";
   return "grove";
 }
 
-function GrowthBamboo({ stage }: { stage: BambooStage }) {
+function GrowthBamboo({ stage, bambooCount }: { stage: BambooStage; bambooCount: number }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stalksRef = useRef<BambooStalk[]>([]);
   const shootsRef = useRef<BambooShoot[]>([]);
@@ -292,6 +306,8 @@ function GrowthBamboo({ stage }: { stage: BambooStage }) {
     let frame = 0;
     let last = performance.now();
     let visible = true;
+    const revealStart = performance.now();
+    const revealDuration = 1_200;
 
     const resize = () => {
       const rect = canvas.getBoundingClientRect();
@@ -301,9 +317,9 @@ function GrowthBamboo({ stage }: { stage: BambooStage }) {
       canvas.width = Math.round(cssWidth * ratio);
       canvas.height = Math.round(cssHeight * ratio);
       context.setTransform(ratio, 0, 0, ratio, 0, 0);
-      stalksRef.current = stage === "shoots" ? [] : buildBamboo(cssWidth, cssHeight, stage);
-      shootsRef.current = buildBambooShoots(stage);
-      drawBamboo(context, stalksRef.current, shootsRef.current, cssWidth, cssHeight, performance.now());
+      stalksRef.current = buildBamboo(cssWidth, cssHeight, stage, bambooCount);
+      shootsRef.current = buildBambooShoots(stage, bambooCount);
+      drawBamboo(context, stalksRef.current, shootsRef.current, cssWidth, cssHeight, performance.now(), reducedMotion ? 1 : 0);
       canvas.dataset.motionEnergy = "0.000";
       canvas.dataset.gustPhase = "idle";
     };
@@ -396,16 +412,17 @@ function GrowthBamboo({ stage }: { stage: BambooStage }) {
           leaf.motion += leaf.motionVelocity * dt;
         });
       });
-      drawBamboo(context, stalksRef.current, shootsRef.current, cssWidth, cssHeight, now);
+      const reveal = reducedMotion ? 1 : Math.min(1, (now - revealStart) / revealDuration);
+      drawBamboo(context, stalksRef.current, shootsRef.current, cssWidth, cssHeight, now, reveal);
       if ((Math.round(now / 16) % 8) === 0) {
         canvas.dataset.motionEnergy = energy.toFixed(3);
         canvas.dataset.gustPhase = gustPhase;
       }
-      frame = requestAnimationFrame(tick);
+      if (reveal < 1 || stage !== "shoots") frame = requestAnimationFrame(tick);
     };
 
     const start = () => {
-      if (frame || reducedMotion || stage === "shoots" || !visible) return;
+      if (frame || reducedMotion || !visible) return;
       last = performance.now();
       frame = requestAnimationFrame(tick);
     };
@@ -450,9 +467,9 @@ function GrowthBamboo({ stage }: { stage: BambooStage }) {
         landscape.removeEventListener("pointerleave", leave);
       }
     };
-  }, [stage]);
-  const stalkCount = stage === "grove" ? 4 : stage === "mixed" ? 2 : 0;
-  const shootCount = stage === "grove" ? 0 : stage === "mixed" ? 2 : 4;
+  }, [bambooCount, stage]);
+  const stalkCount = stage === "grove" ? bambooCount : stage === "mixed" ? Math.ceil(bambooCount / 2) : 0;
+  const shootCount = stage === "grove" ? 0 : stage === "mixed" ? Math.floor(bambooCount / 2) : bambooCount;
   return <canvas
     ref={canvasRef}
     className="growth-bamboo"
@@ -473,10 +490,9 @@ function GrowthBamboo({ stage }: { stage: BambooStage }) {
 
 const API = import.meta.env.VITE_API_BASE_URL ?? "http://127.0.0.1:3000";
 const WINDOW_OPTIONS: Array<{ days: WindowDays; label: string }> = [
-  { days: 7, label: "七日" },
-  { days: 30, label: "一月" },
-  { days: 90, label: "一季" },
-  { days: 365, label: "一年" }
+  { days: 1, label: "日" },
+  { days: 7, label: "周" },
+  { days: 30, label: "月" }
 ];
 const CHART_WIDTH = 720;
 const CHART_HEIGHT = 220;
@@ -494,8 +510,16 @@ async function request<T>(path: string, method = "GET", body?: Record<string, un
 }
 const weekday = (value: string) => new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", weekday: "short" }).format(new Date(`${value}T12:00:00Z`)).replace("周", "");
 const compactDate = (value: string) => `${Number(value.slice(5, 7))}/${Number(value.slice(8, 10))}`;
-const dayLabel = (value: string, windowDays: WindowDays) => windowDays === 7 ? weekday(value) : value.slice(8);
-const stateTitle = (windowDays: WindowDays) => windowDays === 7 ? "一周留下的色块" : windowDays === 30 ? "一个月留下的色块" : windowDays === 90 ? "近三个月状态图" : "一年状态图";
+const dayLabel = (value: string, windowDays: WindowDays) => windowDays === 7 ? weekday(value) : `${Number(value.slice(5, 7))}/${Number(value.slice(8, 10))}`;
+const stateTitle = (windowDays: WindowDays) => windowDays === 1 ? "当天留下的记录" : windowDays === 7 ? "一周留下的色块" : "一个月留下的色块";
+function shiftDate(value: string, amount: number) {
+  const date = new Date(`${value}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + amount);
+  return date.toISOString().slice(0, 10);
+}
+function dateTitle(value: string) {
+  return new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Shanghai", year: "numeric", month: "long", day: "numeric", weekday: "short" }).format(new Date(`${value}T12:00:00+08:00`));
+}
 const trendPeriodLabel = (point: TrendPoint, granularity: TrendGranularity) => {
   if (granularity === "month") return `${Number(point.startDate.slice(5, 7))}月`;
   if (granularity === "week") return `${compactDate(point.startDate)} 起`;
@@ -547,8 +571,8 @@ function StateGrid({ days, windowDays }: { days: Summary["days"]; windowDays: Wi
   const compact = windowDays >= 90;
   if (!compact) {
     return <div className={`state-grid ${windowDays === 30 ? "month-state-grid" : ""}`}>
-      {days.map((day) => <div key={day.localDate} className={`state-cell ${day.tone}`} title={`${day.localDate} · ${day.focusMinutes} 分钟 · ${day.closedTasks} 项结束`}>
-        <strong>{dayLabel(day.localDate, windowDays)}</strong><span>{day.focusMinutes}m</span><small>{day.closedTasks} 项</small>
+      {days.map((day) => <div key={day.localDate} className={`state-cell ${day.tone}`} title={`${day.localDate} · ${day.focusMinutes} 分钟 · ${day.completedTasks}/${day.plannedTasks} 项完成`}>
+        <strong>{dayLabel(day.localDate, windowDays)}</strong><span>{day.focusMinutes}m</span><small>{day.completedTasks}/{day.plannedTasks} 项</small>
       </div>)}
     </div>;
   }
@@ -561,8 +585,8 @@ function StateGrid({ days, windowDays }: { days: Summary["days"]; windowDays: Wi
         key={day.localDate}
         className={`state-cell ${day.tone}`}
         role="img"
-        aria-label={`${day.localDate}，有效专注 ${day.focusMinutes} 分钟，结束 ${day.closedTasks} 项任务`}
-        title={`${day.localDate} · ${day.focusMinutes} 分钟 · ${day.closedTasks} 项结束`}
+        aria-label={`${day.localDate}，有效专注 ${day.focusMinutes} 分钟，完成 ${day.completedTasks} 项任务，共计划 ${day.plannedTasks} 项`}
+        title={`${day.localDate} · ${day.focusMinutes} 分钟 · ${day.completedTasks}/${day.plannedTasks} 项完成`}
       />)}
     </div>
   </div>;
@@ -591,24 +615,22 @@ function GrowthLandscape({ summary }: { summary: Summary }) {
   const feelingBalance = feelingTotal === 0
     ? 0
     : (summary.satisfaction.satisfied - summary.satisfaction.dissatisfied) / feelingTotal;
-  const todayTaskProgress = summary.days.find((day) => day.localDate === localDate()) ?? summary.days.at(-1);
-  const todayClosedTasks = todayTaskProgress?.closedTasks ?? 0;
-  const todayPlannedTasks = todayTaskProgress?.plannedTasks ?? 0;
+  const selectedDay = summary.days.find((day) => day.localDate === summary.range.end) ?? summary.days.at(-1);
+  const selectedCompletedTasks = selectedDay?.completedTasks ?? 0;
+  const selectedPlannedTasks = selectedDay?.plannedTasks ?? 0;
   const growthPercent = summary.garden.growthPercent;
   const growthNarrative = growthPercent <= 0
     ? "尚待落笔"
-    : growthPercent < 25
-      ? "初芽"
-      : growthPercent < 55
-        ? "舒枝"
-        : growthPercent < 80
-          ? "渐荫"
-          : "成景";
+    : growthPercent < 50
+      ? "竹笋初生"
+      : growthPercent < 80
+        ? "笋竹相间"
+        : "成竹成景";
   const bambooStage = growthBambooStage(growthPercent);
   return <section
     className="growth-landscape"
     data-tone={feelingBalance > .18 ? "bright" : feelingBalance < -.18 ? "strained" : feelingTotal ? "steady" : "quiet"}
-    aria-label={`成长图景：${summary.garden.treeKind}，今日任务生长进度 ${growthPercent}%`}
+    aria-label={`成长图景：${summary.garden.treeKind}，${summary.range.end} 成长评分 ${growthPercent}/100`}
   >
     <svg className="growth-landscape-ink" viewBox="0 0 1200 460" preserveAspectRatio="none" aria-hidden="true">
       <path className="growth-mountain-back" d="M-30 365C105 330 169 216 291 257C398 293 426 348 546 286C661 226 735 141 848 208C955 271 1011 328 1230 218V460H-30Z" />
@@ -621,12 +643,16 @@ function GrowthLandscape({ summary }: { summary: Summary }) {
       <span>本期留下的景</span>
       <p>每一笔都来自任务、专注、感受与主动复盘的真实记录。</p>
     </div>
-    <GrowthBamboo stage={bambooStage} />
+    <GrowthBamboo stage={bambooStage} bambooCount={summary.garden.bambooCount} />
     <dl className="growth-scene-metrics" id="growth-scene-details">
       <div><dt>有效专注</dt><dd>{summary.focusMinutes}<small>分钟</small></dd></div>
-      <div><dt>今日任务收束</dt><dd>{todayClosedTasks}<small>/{todayPlannedTasks} 项</small></dd></div>
-      <div><dt>今日生长进度</dt><dd>{growthPercent}<small>%</small></dd></div>
+      <div><dt>所选日任务完成</dt><dd>{selectedCompletedTasks}<small>/{selectedPlannedTasks} 项</small></dd></div>
+      <div><dt>所选日成长评分</dt><dd>{growthPercent}<small>/100</small></dd></div>
     </dl>
+    <details className="growth-score-detail">
+      <summary>查看今日评分</summary>
+      <p>完成情况 {summary.garden.executionPercent}% · 满意程度 {summary.garden.satisfactionPercent}% · 任务数量上限 {summary.garden.growthCap} 分</p>
+    </details>
   </section>;
 }
 
@@ -634,20 +660,21 @@ export function GrowthWorkspace() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [windowDays, setWindowDays] = useState<WindowDays>(7);
+  const [selectedDate, setSelectedDate] = useState(localDate);
   const [radarValues, setRadarValues] = useState<RadarValues>(() => numericRadarValues());
   const [radarSaving, setRadarSaving] = useState(false);
   const [radarSaved, setRadarSaved] = useState(false);
   const [radarError, setRadarError] = useState<string | null>(null);
 
   const loadSummary = useCallback(async (signal?: AbortSignal) => {
-    const body = await request<{ summary: Summary }>(`/api/v1/growth/summary?endDate=${localDate()}&days=${windowDays}`);
+    const body = await request<{ summary: Summary }>(`/api/v1/growth/summary?endDate=${selectedDate}&days=${windowDays}`);
     if (signal?.aborted) return;
     setSummary(body.summary);
     const radarInput = Object.fromEntries(body.summary.currentRadar.map((metric) => [metric.key, metric.value])) as Partial<Record<RadarKey, number | null>>;
     const hasCurrentSignal = body.summary.currentRadarSaved || body.summary.currentRadar.some((metric) => typeof metric.value === "number" && metric.value > 0);
     setRadarValues(hasCurrentSignal ? numericRadarValues(radarInput) : numericRadarValues());
     setRadarSaved(body.summary.currentRadarSaved);
-  }, [windowDays]);
+  }, [selectedDate, windowDays]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -663,7 +690,7 @@ export function GrowthWorkspace() {
   async function saveRadar() {
     setRadarSaving(true); setRadarError(null);
     try {
-      const review = await request<{ session: { id: string } }>(`/api/v1/reviews/${localDate()}`);
+      const review = await request<{ session: { id: string } }>(`/api/v1/reviews/${selectedDate}`);
       await request(`/api/v1/reviews/${review.session.id}/radar`, "POST", radarValues);
       setRadarSaved(true);
       await loadSummary();
@@ -673,15 +700,25 @@ export function GrowthWorkspace() {
   }
 
   const rangeDescription = WINDOW_OPTIONS.find((option) => option.days === windowDays)?.label ?? "当前范围";
+  const currentDate = localDate();
+  const canMoveForward = selectedDate < currentDate;
 
   return <section className="page growth-page" aria-labelledby="growth-title" aria-busy={!summary && !error}>
     <div className="growth-heading">
       <div><p className="eyebrow">成长花园</p><h1 id="growth-title">生长来自留下的数据。</h1></div>
-      <div className="growth-time-ruler" role="group" aria-label="成长时间范围">
+      <div className="growth-history-tools">
+        <div className="growth-date-navigator" role="group" aria-label="历史日期">
+          <button type="button" className="icon-button" aria-label="前一天" title="前一天" onClick={() => setSelectedDate((value) => shiftDate(value, -1))}><ChevronLeft /></button>
+          <label><CalendarDays /><input type="date" value={selectedDate} max={currentDate} onChange={(event) => { if (event.target.value && event.target.value <= currentDate) setSelectedDate(event.target.value); }} /></label>
+          <button type="button" className="icon-button" aria-label="后一天" title="后一天" disabled={!canMoveForward} onClick={() => setSelectedDate((value) => shiftDate(value, 1))}><ChevronRight /></button>
+        </div>
+        <div className="growth-time-ruler" role="group" aria-label="专注数据范围">
         {WINDOW_OPTIONS.map((option) => <button type="button" key={option.days} aria-pressed={windowDays === option.days} onClick={() => setWindowDays(option.days)}>{option.label}</button>)}
+        </div>
       </div>
     </div>
     {!summary && !error ? <div className="growth-loading"><Leaf /><p>正在汇集{rangeDescription}的真实记录。</p></div> : summary ? <>
+      <div className="growth-selected-date"><span>{dateTitle(summary.range.end)}</span><small>{rangeDescription}数据 · 可切换历史日期</small></div>
       <GrowthLandscape summary={summary} />
       <details className="growth-ledger">
         <summary><span>查看精确数据与积分账簿</span><small>第一眼看生长，第二层再看数字</small></summary>
@@ -704,7 +741,7 @@ export function GrowthWorkspace() {
           <StateGrid days={summary.days} windowDays={windowDays} />
         </section>
         <section className="growth-record radar-panel">
-          <div className="panel-heading"><div><p className="section-kicker">六维回看</p><h2>把今天的体验拖成一张图</h2></div><span>{summary.garden.quality}%</span></div>
+          <div className="panel-heading"><div><p className="section-kicker">六维回看</p><h2>把所选日的体验拖成一张图</h2></div><span>{summary.garden.quality}%</span></div>
           <RadarEditor
             values={radarValues}
             onChange={(key, value) => { setRadarSaved(false); setRadarValues((current) => ({ ...current, [key]: value })); }}

@@ -237,7 +237,10 @@ select:focus {
 }
 
 .view-transition-stage {
-  contain: paint;
+  /* Fixed dialogs and anchored menus must stay relative to the viewport. Paint
+     containment would create a new containing block and make them drift or
+     clip when the main window is resized. */
+  contain: none;
 }
 
 /* --------------------------------------------------------------------------
@@ -485,7 +488,7 @@ select:focus {
 .review-location-caption label { display: grid; gap: 6px; margin-top: 10px; }
 .review-location-caption label span { font-size: 10px; }
 .review-location-caption input { min-height: 38px; padding: 0 8px; border-width: 0 0 1px; border-radius: 0; background: transparent; }
-.review-location-art { position: absolute; z-index: 1; top: 0; right: 0; bottom: 0; width: 58%; background-image: linear-gradient(90deg, var(--canvas-paper), transparent 34%), linear-gradient(rgba(243,240,231,.42), rgba(243,240,231,.42)), url('/art/qingming-riverside.jpg'); background-position: center, center, 61% center; background-size: cover, cover, auto 100%; background-repeat: no-repeat; filter: saturate(.58) sepia(.12); opacity: .44; mix-blend-mode: multiply; }
+.review-location-art { position: absolute; z-index: 1; top: 0; right: 0; bottom: 0; width: 58%; background-image: linear-gradient(90deg, var(--canvas-paper), transparent 34%), linear-gradient(rgba(243,240,231,.42), rgba(243,240,231,.42)), url('/art/qingming-riverside.jpg'); background-position: center, center, 72% bottom; background-size: cover, cover, min(900px, 100%) auto; background-repeat: no-repeat; filter: saturate(.58) sepia(.12); opacity: .44; mix-blend-mode: multiply; }
 
 .review-close-scroll {
   display: grid;
@@ -764,7 +767,16 @@ html[data-focus-immersive="true"] .focus-picker:hover { opacity: .82; }
 
 /* Growth: the living landscape is the first layer, precise analytics the next. */
 .growth-heading { align-items: end; margin-bottom: 26px; }
-.growth-time-ruler { position: relative; display: grid; min-width: min(440px, 46vw); grid-template-columns: repeat(4, 1fr); }
+.growth-history-tools { display: grid; justify-items: end; gap: 10px; }
+.growth-date-navigator { display: flex; align-items: center; gap: 8px; }
+.growth-date-navigator label { display: flex; align-items: center; gap: 7px; min-height: 36px; padding: 0 10px; border-bottom: 1px solid var(--editorial-rule); color: var(--canvas-pine); }
+.growth-date-navigator label svg { width: 15px; height: 15px; color: var(--canvas-vermilion); }
+.growth-date-navigator input { width: 132px; border: 0; color: var(--canvas-pine); background: transparent; font-family: var(--font-data); font-size: 11px; }
+.growth-date-navigator input:focus { outline: none; }
+.growth-date-navigator .icon-button { display: inline-grid; width: 32px; height: 32px; place-items: center; padding: 0; border: 1px solid rgba(37,39,34,.16); color: var(--canvas-pine); background: transparent; }
+.growth-date-navigator .icon-button svg { width: 16px; height: 16px; }
+.growth-date-navigator .icon-button:disabled { cursor: not-allowed; opacity: .35; }
+.growth-time-ruler { position: relative; display: grid; min-width: min(300px, 32vw); grid-template-columns: repeat(3, 1fr); }
 .growth-time-ruler::before { position: absolute; right: 5%; bottom: 0; left: 5%; height: 1px; background: var(--editorial-rule); content: ""; }
 .growth-time-ruler button { position: relative; min-height: 44px; padding: 0 6px 13px; border: 0; color: var(--canvas-blue-gray); background: transparent; font-family: var(--font-display); font-size: 13px; }
 .growth-time-ruler button::after { position: absolute; bottom: -2px; left: 50%; width: 5px; height: 5px; border: 1px solid var(--canvas-blue-gray); border-radius: 50%; background: var(--canvas-paper); content: ""; transform: translateX(-50%); }
@@ -779,6 +791,9 @@ html[data-focus-immersive="true"] .focus-picker:hover { opacity: .82; }
   border-bottom: 1px solid var(--editorial-rule);
   background: linear-gradient(180deg, rgba(255,255,255,.2), transparent 42%);
 }
+.growth-selected-date { display: flex; align-items: baseline; justify-content: space-between; gap: 20px; margin: 0 0 12px; color: var(--canvas-pine); }
+.growth-selected-date span { font-family: var(--font-display); font-size: 16px; }
+.growth-selected-date small { color: var(--canvas-blue-gray); font-size: 10px; }
 .growth-landscape::before { position: absolute; top: 54px; right: 15%; width: 58px; height: 58px; border-radius: 50%; background: rgba(161,79,63,.12); box-shadow: 0 0 52px rgba(161,79,63,.12); content: ""; }
 .growth-landscape[data-tone="bright"]::before { background: rgba(161,79,63,.22); }
 .growth-landscape[data-tone="strained"]::before { background: rgba(140,151,143,.13); box-shadow: none; }
@@ -976,7 +991,7 @@ html[data-focus-immersive="true"] .focus-picker:hover { opacity: .82; }
 .long-range-scope button[aria-selected="true"] { color: var(--canvas-vermilion); background: transparent; box-shadow: none; }
 .long-range-scope button[aria-selected="true"]::after { background: var(--canvas-vermilion); }
 
-.long-range-layout { grid-template-columns: minmax(230px,.42fr) minmax(0,1.58fr); gap: clamp(30px, 5vw, 72px); }
+.long-range-layout { grid-template-columns: minmax(280px,.58fr) minmax(0,1.42fr); gap: clamp(30px, 5vw, 72px); }
 .long-range-list {
   overflow: visible;
   border: 0;
@@ -990,6 +1005,7 @@ html[data-focus-immersive="true"] .focus-picker:hover { opacity: .82; }
 .long-range-item:hover { padding-left: 12px; background: linear-gradient(90deg, rgba(82,100,90,.07), transparent); }
 .long-range-item.active { padding-left: 12px; color: var(--canvas-ink); background: linear-gradient(90deg, rgba(161,79,63,.08), transparent); box-shadow: inset 2px 0 var(--canvas-vermilion); }
 .long-range-item-period { color: var(--canvas-vermilion); }
+.long-range-item small { line-height: 1.5; }
 
 .long-range-editor {
   gap: 30px;
@@ -1002,7 +1018,24 @@ html[data-focus-immersive="true"] .focus-picker:hover { opacity: .82; }
 .long-range-editor > header { padding-bottom: 18px; border-bottom: 1px solid var(--editorial-rule); }
 .long-range-editor h2 { font-family: var(--font-display); font-size: clamp(25px, 3vw, 34px); }
 .plan-version { border-radius: 0; background: transparent; }
-.long-range-fields { gap: 20px 26px; }
+.plan-stepper { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); border-bottom: 1px solid var(--editorial-rule); }
+.plan-stepper button { display: grid; justify-items: start; gap: 6px; min-height: 58px; padding: 8px 12px 12px; border: 1px solid transparent; border-right-color: rgba(37,39,34,.1); color: var(--canvas-blue-gray); background: transparent; text-align: left; cursor: pointer; transition: color 180ms ease, background 180ms ease, border-color 180ms ease; }
+.plan-stepper button:last-child { border-right: 0; }
+.plan-stepper button span { color: var(--canvas-vermilion); font-family: var(--font-data); font-size: 10px; }
+.plan-stepper button:hover:not(.active) { color: var(--canvas-pine); background: rgba(82,100,90,.06); }
+.plan-stepper button.active { color: #f7f3e9; font-weight: 650; background: var(--canvas-pine); border-color: var(--canvas-pine); box-shadow: 0 6px 16px rgba(37,65,54,.14); }
+.plan-stepper button.active span { color: rgba(247,243,233,.72); }
+.plan-step-panel { display: grid; gap: 22px; }
+.plan-step-heading { display: flex; align-items: end; justify-content: space-between; gap: 18px; }
+.plan-step-heading h3 { margin: 5px 0 0; color: var(--canvas-pine); font-family: var(--font-display); font-size: 24px; font-weight: 500; }
+.plan-step-heading > span { color: var(--canvas-blue-gray); font-size: 10px; }
+.long-range-fields { grid-template-columns: minmax(0,1.3fr) minmax(145px,.7fr) minmax(0,1fr) minmax(0,1fr); gap: 20px 16px; }
+.long-range-date-row { display: contents; }
+.plan-original-idea { display: grid; gap: 12px; min-height: 330px; padding: 26px 24px 22px; border: 1px solid rgba(37,39,34,.14); background: linear-gradient(135deg, rgba(255,255,255,.42), rgba(82,100,90,.045)); }
+.plan-original-idea > span { color: var(--canvas-pine); font-family: var(--font-display); font-size: 18px; }
+.plan-original-idea textarea { min-height: 220px; padding: 16px 0; border: 0; border-bottom: 1px solid rgba(37,39,34,.18); background: transparent; font-family: var(--font-display); font-size: 18px; line-height: 1.85; resize: vertical; }
+.plan-original-idea small { color: var(--canvas-blue-gray); font-size: 10px; }
+.plan-idea-step .plan-organize-button { justify-self: start; }
 .long-range-fields input,
 .long-range-fields textarea,
 .long-range-fields select,
@@ -1025,6 +1058,8 @@ html[data-focus-immersive="true"] .focus-picker:hover { opacity: .82; }
   box-shadow: none;
 }
 .task-tree-result { background: rgba(82,100,90,.07); }
+.long-range-actions { align-items: center; flex-wrap: wrap; padding-top: 18px; border-top: 1px solid var(--editorial-rule); }
+.long-range-actions .step-back-icon { transform: rotate(180deg); }
 
 /* Tool candidates may enter as bounded tools, but never with the old card
    unfold motion used by the discarded dashboard treatment. */
@@ -1337,6 +1372,15 @@ html[data-focus-immersive="true"] .focus-picker:hover { opacity: .82; }
   .diary-points-breakdown > div:nth-child(-n+2) { border-bottom: 1px solid var(--editorial-rule); }
   .diary-sheet { padding-inline: 36px 8px; }
   .long-range-scope button { padding-inline: 8px; }
+  .plan-stepper button { min-height: 52px; padding-right: 6px; font-size: 11px; }
+  .plan-step-heading { align-items: flex-start; flex-direction: column; gap: 6px; }
+  .long-range-fields { grid-template-columns: 1fr; }
+  .long-range-date-row { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 10px; }
+  .plan-original-idea { min-height: 290px; padding-inline: 16px; }
+  .plan-original-idea textarea { font-size: 16px; }
+  .long-range-actions { align-items: stretch; flex-direction: column; }
+  .long-range-actions .primary-button,
+  .long-range-actions .quiet-button { width: 100%; }
   .health-context-card { grid-template-columns: 38px minmax(0,1fr); }
   .health-context-card > button { grid-column: 1 / -1; width: 100%; }
   .health-generation, .health-plan-header, .health-sleep-card > header { align-items: stretch; flex-direction: column; }
@@ -1495,7 +1539,7 @@ html[data-focus-immersive="true"] .focus-picker:hover { opacity: .82; }
 
 .review-roll-actions { position: relative; display: grid; grid-template-columns: minmax(0,1fr); gap: 0; }
 .review-location-caption { min-height: 154px; grid-template-columns: minmax(230px,.58fr) minmax(280px,1.42fr); clip-path: polygon(0 8%,7% 4%,17% 9%,28% 5%,40% 10%,51% 4%,63% 8%,76% 3%,88% 8%,100% 2%,98% 83%,89% 89%,78% 84%,66% 92%,53% 86%,41% 94%,28% 87%,16% 93%,6% 87%,0 92%); }
-.review-location-art { inset: 0; width: auto; background-image: linear-gradient(90deg,var(--canvas-paper) 0 31%,rgba(243,240,231,.84) 42%,rgba(243,240,231,.2) 62%,transparent 78%),linear-gradient(rgba(243,240,231,.28),rgba(243,240,231,.28)),url('/art/thousand-li-mountains.jpg'); background-position: center,center,76% 67%; background-size: cover,cover,auto 128%; filter: saturate(.78) contrast(.92); opacity: .67; }
+.review-location-art { inset: 0; width: auto; background-image: linear-gradient(90deg,var(--canvas-paper) 0 31%,rgba(243,240,231,.84) 42%,rgba(243,240,231,.2) 62%,transparent 78%),linear-gradient(rgba(243,240,231,.28),rgba(243,240,231,.28)),url('/art/qingming-riverside.jpg'); background-position: center,center,72% bottom; background-size: cover,cover,min(900px, 100%) auto; filter: saturate(.68) sepia(.08) contrast(.96); opacity: .67; }
 .review-close-scroll { position: absolute; z-index: 4; right: clamp(13px,3vw,38px); bottom: 43px; padding: 8px 10px 8px 16px; background: rgba(243,240,231,.72); backdrop-filter: blur(2px); }
 .review-empty-seal { position: absolute; right: 7px; bottom: 12px; display: grid; width: 34px; height: 34px; place-items: center; padding: 0; border: 1px solid rgba(161,79,63,.34); color: rgba(161,79,63,.58); background: rgba(243,240,231,.22); font: 16px/1 var(--font-display); transform: rotate(-4deg); transition: color 180ms ease,background-color 180ms ease,border-color 180ms ease,box-shadow 180ms ease,transform 300ms cubic-bezier(.16,1,.3,1); cursor: pointer; }
 .review-software-conversation-empty:hover .review-empty-seal,
@@ -1855,9 +1899,9 @@ html[data-focus-immersive="true"] .focus-picker:hover { opacity: .82; }
   z-index: 1;
   inset: 0 0 0 30%;
   width: auto;
-  background-image: linear-gradient(90deg, var(--canvas-paper) 0 13%, rgba(243,240,231,.76) 28%, rgba(243,240,231,.12) 62%, transparent 82%), linear-gradient(rgba(243,240,231,.22), rgba(243,240,231,.22)), url('/art/thousand-li-mountains.jpg');
-  background-position: center, center, 76% 67%;
-  background-size: cover, cover, auto 128%;
+  background-image: linear-gradient(90deg, var(--canvas-paper) 0 13%, rgba(243,240,231,.76) 28%, rgba(243,240,231,.12) 62%, transparent 82%), linear-gradient(rgba(243,240,231,.22), rgba(243,240,231,.22)), url('/art/qingming-riverside.jpg');
+  background-position: center, center, 72% bottom;
+  background-size: cover, cover, min(900px, 100%) auto;
   filter: saturate(.84) contrast(.95);
   opacity: .76;
 }
@@ -1885,6 +1929,221 @@ html[data-focus-immersive="true"] .focus-picker:hover { opacity: .82; }
 }
 .review-close-scroll:disabled > span,
 .review-close-scroll:disabled > small { color: #536159; }
+
+/* Review page: keep the reflection, task facts, radar, and location record distinct. */
+.review-task-summary,
+.review-location-panel { display: grid; gap: 20px; padding: clamp(24px, 4vw, 48px) 0; border-top: 1px solid rgba(37,39,34,.12); }
+.review-section-heading { display: flex; align-items: end; justify-content: space-between; gap: 20px; }
+.review-section-heading h2 { margin: 5px 0 0; color: var(--canvas-pine); font-family: var(--font-display); font-size: clamp(24px, 3vw, 36px); font-weight: 500; }
+.review-section-heading > span { color: var(--canvas-blue-gray); font-size: 11px; }
+.review-task-summary-list { display: grid; gap: 12px; }
+.review-task-summary-list article { display: grid; grid-template-columns: minmax(180px,.7fr) minmax(0,1.3fr); gap: 20px; padding: 16px 0; border-bottom: 1px solid rgba(37,39,34,.1); }
+.review-task-summary-list article > div { display: grid; align-content: start; gap: 6px; }
+.review-task-summary-list strong { color: var(--canvas-pine); font-family: var(--font-display); font-size: 17px; font-weight: 500; }
+.review-task-summary-list small { color: var(--canvas-blue-gray); font-family: var(--font-data); font-size: 10px; }
+.review-task-summary-list p { margin: 0; color: var(--canvas-ink); line-height: 1.8; }
+.review-task-summary-list b { color: var(--canvas-pine); font-weight: 600; }
+.review-location-panel { position: relative; }
+.review-location-panel > .review-section-heading svg { color: var(--canvas-vermilion); }
+.review-location-controls { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; }
+.review-location-controls label { display: grid; min-width: min(100%, 280px); gap: 5px; color: var(--canvas-blue-gray); font-size: 10px; }
+.review-location-controls input { min-height: 40px; padding: 0 8px; border-width: 0 0 1px; border-radius: 0; background: transparent; }
+.review-location-controls .quiet-button { min-height: 40px; }
+.review-weather-result { display: grid; grid-template-columns: 1fr; align-items: start; gap: 14px; margin-top: 4px; padding: 18px 18px 0; border-left: 2px solid var(--canvas-vermilion); background: rgba(249,247,240,.74); backdrop-filter: blur(2px); }
+.review-weather-main { display: flex; align-items: center; justify-content: flex-start; gap: 12px; min-width: 0; }
+.review-weather-main > svg { width: 34px; height: 34px; flex: 0 0 auto; color: var(--canvas-vermilion); stroke-width: 1.5; }
+.review-weather-main > div { display: grid; align-items: baseline; grid-template-columns: auto auto; gap: 8px; min-width: 0; }
+.review-weather-main strong { color: var(--canvas-pine); font-family: var(--font-data); font-size: clamp(30px, 4vw, 42px); font-weight: 500; line-height: 1; }
+.review-weather-main span { overflow: hidden; color: var(--canvas-ink); font-family: var(--font-display); font-size: 15px; text-overflow: ellipsis; white-space: nowrap; }
+.review-weather-meta { display: grid; justify-items: start; gap: 5px; min-width: 0; padding-bottom: 18px; text-align: left; }
+.review-weather-meta time { color: var(--canvas-blue-gray); font-family: var(--font-data); font-size: 10px; }
+.review-weather-meta p { max-width: 100%; margin: 0; color: var(--canvas-pine); font-family: var(--font-display); font-size: 15px; line-height: 1.6; overflow-wrap: anywhere; }
+.review-weather-meta small { color: var(--canvas-blue-gray); font-size: 11px; }
+.review-collapsible-heading { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 0; border: 0; color: inherit; background: transparent; text-align: left; cursor: pointer; }
+.review-collapsible-heading h2 { margin: 5px 0 0; color: var(--canvas-pine); font-family: var(--font-display); font-size: clamp(24px, 3vw, 36px); font-weight: 500; }
+.review-collapsible-heading > svg { color: var(--canvas-vermilion); transition: transform 180ms ease; }
+.review-collapsible-heading > svg.open { transform: rotate(180deg); }
+.review-collapsed-hint { margin: 0; color: var(--canvas-blue-gray); font-size: 11px; }
+.review-software-conversations { border-top: 1px solid rgba(37,39,34,.12); }
+.review-software-conversation-list details { padding: 14px 0 15px 22px; border-left: 1px solid rgba(37,39,34,.15); border-bottom: 1px solid rgba(37,39,34,.1); }
+.review-software-conversation-list details summary { display: flex; align-items: center; gap: 18px; cursor: pointer; list-style: none; }
+.review-software-conversation-list details summary::-webkit-details-marker { display: none; }
+.review-software-conversation-list details summary::before { content: "＋"; color: var(--canvas-vermilion); font-family: var(--font-data); }
+.review-software-conversation-list details[open] summary::before { content: "－"; }
+.review-software-conversation-list details time { color: var(--canvas-vermilion); font-family: var(--font-data); font-size: 10px; }
+.review-software-conversation-list details strong { min-width: 0; overflow: hidden; color: var(--canvas-pine); font-family: var(--font-display); font-size: 13px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.review-software-conversation-turn { display: grid; gap: 9px; margin: 12px 0 0 31px; }
+.review-software-conversation-list details .review-software-conversation-turn p { margin: 0; padding: 9px 11px; border-left: 2px solid rgba(82,100,90,.25); color: var(--canvas-ink); line-height: 1.75; white-space: pre-wrap; overflow-wrap: anywhere; }
+.review-software-conversation-list details .review-software-conversation-turn p.assistant { border-left-color: rgba(161,79,63,.35); background: rgba(161,79,63,.035); }
+.review-software-conversation-list details .review-software-conversation-turn p.pending { color: var(--canvas-blue-gray); }
+.review-software-conversation-turn b { margin-right: 5px; color: var(--canvas-pine); font-weight: 600; }
+@media (max-width: 700px) {
+  .review-task-summary-list article { grid-template-columns: 1fr; gap: 8px; }
+  .review-section-heading { align-items: start; flex-direction: column; gap: 8px; }
+  .review-location-controls { align-items: stretch; flex-direction: column; }
+  .review-location-controls label { min-width: 100%; }
+}
+
+/* Review workspace: one writing surface, a compact reference rail, and the
+   factual task recap at the end of the page. */
+.review-board {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 350px);
+  align-items: start;
+  gap: clamp(30px, 4vw, 64px);
+}
+
+.review-main-column { min-width: 0; }
+
+.review-sheet {
+  position: relative;
+  isolation: isolate;
+  width: 100%;
+  overflow: hidden;
+  padding: clamp(26px, 3vw, 44px) clamp(22px, 4vw, 58px) 42px;
+  border: 1px solid rgba(37,39,34,.1);
+  background: rgba(249,247,240,.58);
+  box-shadow: 0 18px 52px rgba(55,50,42,.055);
+}
+
+.review-sheet::before {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  background-image: url('/art/thousand-li-mountains.jpg');
+  background-position: center bottom;
+  /* Scale with the paper while preserving the source image ratio. */
+  background-size: 100% auto;
+  background-repeat: no-repeat;
+  filter: saturate(.58) contrast(.94);
+  opacity: .78;
+  content: "";
+  pointer-events: none;
+}
+
+/* Use a paper-colour veil instead of CSS masking: WebView2 versions differ
+   in mask support, while this layer keeps a gradual top-to-bottom reveal. */
+.review-sheet::after {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  background: linear-gradient(to bottom,
+    rgba(249,247,240,1) 0%,
+    rgba(249,247,240,1) 45%,
+    rgba(249,247,240,.96) 52%,
+    rgba(249,247,240,.88) 60%,
+    rgba(249,247,240,.68) 70%,
+    rgba(249,247,240,.42) 80%,
+    rgba(249,247,240,.20) 90%,
+    rgba(249,247,240,.10) 100%);
+  content: "";
+  pointer-events: none;
+}
+
+.review-sheet > * { position: relative; z-index: 1; }
+.review-writing-field { min-height: 360px; }
+.review-fragment-list { max-height: 560px; overflow-y: auto; padding-right: 8px; scrollbar-color: rgba(82,100,90,.32) transparent; }
+
+.review-inline-ai {
+  margin-top: 34px;
+  padding-top: 24px;
+  border-top: 1px solid rgba(37,39,34,.14);
+}
+
+.review-inline-ai .review-collapsible-heading h3 {
+  margin: 5px 0 0;
+  color: var(--canvas-pine);
+  font-family: var(--font-display);
+  font-size: clamp(21px, 2.4vw, 30px);
+  font-weight: 500;
+}
+
+.review-inline-ai .review-collapsed-hint { margin-top: 10px; }
+.review-inline-ai .review-software-conversation-list { margin-top: 18px; }
+.review-inline-ai .review-software-conversation-empty { position: relative; min-height: 92px; margin-top: 14px; padding: 16px 54px 16px 0; }
+.review-inline-ai .review-software-conversation-empty small { display: block; margin-top: 5px; }
+
+.review-side-column {
+  display: grid;
+  align-content: start;
+  gap: 26px;
+  position: sticky;
+  top: 28px;
+}
+
+.review-side-column .review-radar-archive,
+.review-side-column .review-location-panel {
+  margin: 0;
+  padding: 22px;
+  border: 1px solid rgba(37,39,34,.11);
+  background: rgba(248,246,239,.72);
+}
+
+.review-side-column .review-radar-archive-heading,
+.review-side-column .review-section-heading { align-items: start; }
+.review-side-column .review-radar-archive-heading h2,
+.review-side-column .review-section-heading h2 { font-size: 23px; line-height: 1.35; }
+.review-side-column .review-radar-snapshot { grid-template-columns: 1fr; gap: 8px; }
+.review-side-column .review-radar-chart.compact { width: min(100%, 250px); min-width: 0; justify-self: center; }
+.review-side-column .review-radar-snapshot-copy p { display: none; }
+
+.review-location-panel {
+  overflow: hidden;
+  isolation: isolate;
+  min-height: 560px;
+  padding-bottom: 190px !important;
+}
+
+.review-location-panel::before {
+  position: absolute;
+  z-index: 0;
+  inset: auto 0 0;
+  height: 178px;
+  background-image: url('/art/qingming-riverside.jpg');
+  background-position: 72% bottom;
+  background-size: auto 178px;
+  background-repeat: no-repeat;
+  filter: saturate(.68) sepia(.06) contrast(1.02);
+  opacity: .8;
+  -webkit-mask-image: linear-gradient(to right, transparent 0%, rgba(0,0,0,.08) 14%, rgba(0,0,0,.42) 34%, rgba(0,0,0,.84) 58%, #000 78% 100%);
+  mask-image: linear-gradient(to right, transparent 0%, rgba(0,0,0,.08) 14%, rgba(0,0,0,.42) 34%, rgba(0,0,0,.84) 58%, #000 78% 100%);
+  content: "";
+  pointer-events: none;
+}
+
+.review-location-panel > * { position: relative; z-index: 1; }
+.review-location-controls { display: grid; align-items: stretch; }
+.review-location-controls label { min-width: 0; }
+.review-location-buttons { display: grid; grid-template-columns: 1fr; gap: 8px; }
+.review-location-buttons .quiet-button { width: 100%; justify-content: center; background: rgba(249,247,240,.82); backdrop-filter: blur(2px); }
+.review-weather-result { background: rgba(249,247,240,.82); backdrop-filter: blur(2px); }
+
+.growth-score-detail { position: absolute; z-index: 4; right: 2%; bottom: 12px; width: min(520px, 48%); color: var(--canvas-blue-gray); font-size: 10px; }
+.growth-score-detail summary { cursor: pointer; color: var(--canvas-pine); font-family: var(--font-display); }
+.growth-score-detail p { margin: 7px 0 0; line-height: 1.7; }
+
+.review-task-summary {
+  margin-top: clamp(54px, 7vw, 92px);
+  padding-bottom: 0;
+}
+
+@media (max-width: 1040px) {
+  .review-board { grid-template-columns: minmax(0, 1fr); }
+  .review-side-column { position: static; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 700px) {
+  .review-sheet { padding-inline: 18px; }
+  .review-writing-field { min-height: 330px; padding-inline: 28px 0; }
+  .review-side-column { grid-template-columns: 1fr; }
+  .review-side-column .review-radar-archive,
+  .review-side-column .review-location-panel { padding: 18px; }
+  .review-location-panel { min-height: 520px; padding-bottom: 160px !important; }
+  .review-location-panel::before { height: 145px; background-size: auto 145px; background-position: 70% bottom; }
+  .review-weather-result { gap: 10px; }
+  .review-weather-meta { justify-items: start; text-align: left; }
+  .growth-score-detail { position: static; width: auto; margin: 14px 18px 0; }
+}
 
 .review-composer-actions { min-width: 132px; }
 .review-save-button { width: 100%; min-height: 46px; background: #40574d; }

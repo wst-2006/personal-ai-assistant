@@ -117,6 +117,7 @@ try {
     WHERE table_schema = 'public'
       AND ((table_name = 'health_profiles' AND column_name IN ('profile', 'version'))
         OR (table_name = 'health_week_plans' AND column_name IN ('week_start', 'state', 'source', 'profile_version', 'city', 'solar_term', 'based_on_plan_id', 'based_on_plan_version', 'source_sleep_analysis_id', 'revision_reason', 'version'))
+        OR (table_name = 'health_daily_actuals' AND column_name IN ('local_date', 'protein_grams', 'fiber_grams', 'water_milliliters', 'created_at', 'updated_at'))
         OR (table_name = 'health_daily_references' AND column_name IN ('health_week_plan_id', 'local_date', 'day_index', 'content'))
         OR (table_name = 'health_week_auto_generations' AND column_name IN ('week_start', 'status', 'plan_id', 'failure_code', 'started_at', 'completed_at', 'updated_at'))
         OR (table_name = 'health_sleep_analyses' AND column_name IN ('local_date', 'source', 'original_file_name', 'mime_type', 'sha256', 'analysis')))
@@ -134,6 +135,10 @@ try {
     SELECT conname AS name FROM pg_constraint
     WHERE conrelid = 'public.health_week_auto_generations'::regclass
       AND conname IN ('health_week_auto_generations_status_check', 'health_week_auto_generations_result_check')
+    UNION ALL
+    SELECT conname AS name FROM pg_constraint
+    WHERE conrelid = 'public.health_daily_actuals'::regclass
+      AND conname IN ('health_daily_actuals_protein_check', 'health_daily_actuals_fiber_check', 'health_daily_actuals_water_check', 'health_daily_actuals_has_value_check')
     UNION ALL
     SELECT indexname AS name FROM pg_indexes
     WHERE schemaname = 'public' AND tablename = 'health_week_auto_generations'
@@ -328,7 +333,7 @@ try {
   const conversationContract = conversationContractResult.rows.map((row) => row.name);
   const feishuIntakeColumns = feishuIntakeColumnsResult.rows.map((row) => row.column_name);
   const feishuIntakeContract = feishuIntakeContractResult.rows.map((row) => row.name);
-  const expectedTables = ["feishu_intake_candidates", "health_daily_references", "health_profiles", "health_sleep_analyses", "health_week_auto_generations", "health_week_conversation_messages", "health_week_conversations", "health_week_plans", "inbox_entries", "long_range_plan_milestones", "long_range_plan_task_tree_candidates", "long_range_plans", "tasks", "unscheduled_task_day_end_runs", "user_profiles"];
+  const expectedTables = ["feishu_intake_candidates", "health_daily_actuals", "health_daily_references", "health_profiles", "health_sleep_analyses", "health_week_auto_generations", "health_week_conversation_messages", "health_week_conversations", "health_week_plans", "inbox_entries", "long_range_plan_milestones", "long_range_plan_task_tree_candidates", "long_range_plans", "tasks", "unscheduled_task_day_end_runs", "user_profiles"];
   const expectedColumns = ["record_kind", "source_inbox_entry_id", "source_long_range_plan_id"];
   const retiredTaskColumns = ["planned_effort_minutes", "difficulty", "task_type", "requires_continuous_focus"];
   const expectedConstraints = [
@@ -380,6 +385,12 @@ try {
     "task_outcomes_focus_session_id_idx"
   ];
   const expectedHealthColumns = [
+    "health_daily_actuals.created_at",
+    "health_daily_actuals.fiber_grams",
+    "health_daily_actuals.local_date",
+    "health_daily_actuals.protein_grams",
+    "health_daily_actuals.updated_at",
+    "health_daily_actuals.water_milliliters",
     "health_profiles.profile",
     "health_profiles.version",
     "health_week_plans.week_start",
@@ -508,7 +519,7 @@ try {
     || expectedFocusColumns.some((name) => !focusColumns.includes(name))
     || expectedFocusContract.some((name) => !focusContract.includes(name))
     || expectedHealthColumns.some((name) => !healthColumns.includes(name))
-    || ["health_week_plans_base_plan_idx", "health_week_plans_revision_base_check", "health_week_auto_generations_status_check", "health_week_auto_generations_result_check", "health_week_auto_generations_status_idx"].some((name) => !healthContract.includes(name))
+    || ["health_daily_actuals_fiber_check", "health_daily_actuals_has_value_check", "health_daily_actuals_protein_check", "health_daily_actuals_water_check", "health_week_plans_base_plan_idx", "health_week_plans_revision_base_check", "health_week_auto_generations_status_check", "health_week_auto_generations_result_check", "health_week_auto_generations_status_idx"].some((name) => !healthContract.includes(name))
     || expectedHealthConversationColumns.some((name) => !healthConversationColumns.includes(name))
     || expectedHealthConversationContract.some((name) => !healthConversationContract.includes(name))
     || expectedLongRangeColumns.some((name) => !longRangeColumns.includes(name))

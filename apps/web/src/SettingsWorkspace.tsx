@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   Bell,
   Check,
@@ -45,10 +45,10 @@ export function SettingsWorkspace({ onProfileSaved }: SettingsWorkspaceProps) {
   const [desktopSettings, setDesktopSettings] = useState<FocusMiniSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const desktopRuntime = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
   const memoMode = !draft.desktopFocusEnabled && !draft.feishuTaskCardsEnabled;
+  const dirty = useMemo(() => profile ? JSON.stringify(draft) !== JSON.stringify(draftFromProfile(profile)) : false, [draft, profile]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -74,13 +74,11 @@ export function SettingsWorkspace({ onProfileSaved }: SettingsWorkspaceProps) {
     event.preventDefault();
     if (!profile) return;
     setSaving(true);
-    setSaved(false);
     setError(null);
     try {
       const updated = await saveUserProfile(profile, draft);
       setProfile(updated);
       setDraft(draftFromProfile(updated));
-      setSaved(true);
       onProfileSaved?.(updated);
     } catch (requestError) {
       setError(requestError instanceof ProfileApiError && requestError.body.error === "user_profile_version_conflict"
@@ -143,6 +141,7 @@ export function SettingsWorkspace({ onProfileSaved }: SettingsWorkspaceProps) {
             <span className="theme-choice-preview"><FocusThemeClock theme={theme.id} value="23:54" compact /></span>
             <strong>{theme.name}</strong>
             <small>{theme.description}</small>
+            {profile?.focusTheme === theme.id && <span className="theme-choice-active-label">正在使用</span>}
           </button>)}
         </div>
       </section>
@@ -154,7 +153,7 @@ export function SettingsWorkspace({ onProfileSaved }: SettingsWorkspaceProps) {
             <SettingToggle label="启用桌面专注" help="关闭后，不再弹出准备、计时或评价窗口。" checked={draft.desktopFocusEnabled} onChange={(checked) => setDraft((current) => ({ ...current, desktopFocusEnabled: checked }))} />
             <SettingToggle label="提前一分钟准备窗" help="在固定开始前一分钟出现，并等待明确的开始确认。" checked={draft.focusPreparationWindowEnabled} disabled={!draft.desktopFocusEnabled} onChange={(checked) => setDraft((current) => ({ ...current, focusPreparationWindowEnabled: checked }))} />
             <SettingToggle label="专注计时窗" help="真正开始后创建新的独立窗口；关闭窗口只会隐藏，计时仍继续。" checked={draft.focusTimerWindowEnabled} disabled={!draft.desktopFocusEnabled} onChange={(checked) => setDraft((current) => ({ ...current, focusTimerWindowEnabled: checked }))} />
-            <SettingToggle label="任务结束评价" help="关闭后直接记录客观完成，主观感受保持空白。" checked={draft.focusEvaluationEnabled} disabled={!draft.desktopFocusEnabled} onChange={(checked) => setDraft((current) => ({ ...current, focusEvaluationEnabled: checked }))} />
+            <SettingToggle label="任务结束评价" help="关闭后不自动弹出评价窗；专注时长照常记录，任务保留待评价，不会自动判定完成。" checked={draft.focusEvaluationEnabled} disabled={!draft.desktopFocusEnabled} onChange={(checked) => setDraft((current) => ({ ...current, focusEvaluationEnabled: checked }))} />
           </div>
           {desktopRuntime && desktopSettings ? <div className="desktop-position-settings">
             <span>默认弹出位置</span>
@@ -239,7 +238,7 @@ export function SettingsWorkspace({ onProfileSaved }: SettingsWorkspaceProps) {
       </section>
 
       <footer className="settings-save-bar">
-        <span role="status">{saved ? "设置已保存" : profile ? `当前版本 ${profile.version}` : ""}</span>
+        <span role="status">{dirty ? "有未保存更改" : ""}</span>
         <button className="primary-button" type="submit" disabled={saving || !profile}>{saving ? <LoaderCircle className="spin" /> : <Check />}{saving ? "正在保存" : "保存设置"}</button>
       </footer>
     </form>

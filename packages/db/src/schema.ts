@@ -770,6 +770,24 @@ export const healthDailyReferences = pgTable(
   ]
 );
 
+export const healthDailyActuals = pgTable(
+  "health_daily_actuals",
+  {
+    localDate: date("local_date", { mode: "string" }).primaryKey(),
+    proteinGrams: integer("protein_grams"),
+    fiberGrams: integer("fiber_grams"),
+    waterMilliliters: integer("water_milliliters"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow()
+  },
+  (table) => [
+    check("health_daily_actuals_protein_check", sql`${table.proteinGrams} is null or ${table.proteinGrams} between 0 and 1000`),
+    check("health_daily_actuals_fiber_check", sql`${table.fiberGrams} is null or ${table.fiberGrams} between 0 and 200`),
+    check("health_daily_actuals_water_check", sql`${table.waterMilliliters} is null or ${table.waterMilliliters} between 0 and 10000`),
+    check("health_daily_actuals_has_value_check", sql`${table.proteinGrams} is not null or ${table.fiberGrams} is not null or ${table.waterMilliliters} is not null`)
+  ]
+);
+
 export const healthWeekAutoGenerations = pgTable(
   "health_week_auto_generations",
   {

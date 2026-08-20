@@ -21,6 +21,7 @@
 .theme-choice-preview { position: relative; display: grid; height: 112px; place-items: center; overflow: hidden; }
 .theme-choice strong { margin-top: 8px; color: var(--ink-900); font: 500 15px/1.3 var(--font-display); }
 .theme-choice small { color: var(--ink-500); font-size: 9px; line-height: 1.55; }
+.theme-choice-active-label { min-height: 14px; margin-top: auto; color: #a14f3f; font-size: 10px; font-weight: 700; }
 .theme-choice-check { position: absolute; z-index: 2; top: 8px; right: 8px; display: grid; width: 18px; height: 18px; place-items: center; border: 1px solid rgba(82,100,90,.28); border-radius: 50%; background: rgba(255,255,255,.64); }
 .theme-choice-check svg { width: 11px; color: var(--mint-700); stroke-width: 2.5; }
 .theme-preview-ink .theme-choice-preview { color: #212821; background: #f6f0e5; }

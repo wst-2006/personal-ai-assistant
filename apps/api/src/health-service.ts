@@ -1,12 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import type { AppDatabase } from "@personal-ai/db/client";
-import { healthDailyReferences, healthProfiles, healthSleepAnalyses, healthWeekAutoGenerations, healthWeekPlans, tasks } from "@personal-ai/db/schema";
+import { healthDailyActuals, healthDailyReferences, healthProfiles, healthSleepAnalyses, healthWeekAutoGenerations, healthWeekPlans, tasks } from "@personal-ai/db/schema";
 import {
   healthPlanContentSchema,
   sleepImageAnalysisRequestSchema,
   sleepImageAnalysisSchema,
   localDatesForHealthWeek,
+  type HealthDailyActualInput,
   type HealthPlanContent,
   type HealthProfile,
   type SleepImageAnalysis,
@@ -115,6 +116,32 @@ export class HealthService {
     if (!active) return null;
     const day = active.days.find((reference) => reference.localDate === localDate);
     return day ? { plan: active.plan, day } : null;
+  }
+
+  async getDailyActual(localDate: string) {
+    const [actual] = await this.db.select().from(healthDailyActuals)
+      .where(eq(healthDailyActuals.localDate, localDate))
+      .limit(1);
+    return actual ?? null;
+  }
+
+  async saveDailyActual(localDate: string, input: HealthDailyActualInput) {
+    if (input.proteinGrams === null && input.fiberGrams === null && input.waterMilliliters === null) {
+      await this.db.delete(healthDailyActuals).where(eq(healthDailyActuals.localDate, localDate));
+      return null;
+    }
+    const now = new Date();
+    const [actual] = await this.db.insert(healthDailyActuals).values({
+      localDate,
+      ...input,
+      createdAt: now,
+      updatedAt: now
+    }).onConflictDoUpdate({
+      target: healthDailyActuals.localDate,
+      set: { ...input, updatedAt: now }
+    }).returning();
+    if (!actual) throw new Error("PostgreSQL did not return the saved health daily actual.");
+    return actual;
   }
 
   async createManualCandidate(input: { weekStart: string; specialContext?: string | null; content: HealthPlanContent }): Promise<HealthPlanWithDays> {

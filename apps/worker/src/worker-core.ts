@@ -48,7 +48,7 @@ export class ReminderWorker {
 
   async markFailed(id: string, error: string, now = new Date()) {
     const retryAt = reminderRetryAt(now);
-    await this.db.execute(sql`UPDATE reminder_jobs SET status = CASE WHEN attempts >= ${this.maxAttempts} THEN 'failed' ELSE 'pending' END, available_at = ${retryAt}::timestamptz, last_error = ${error.slice(0, 1000)}, updated_at = ${now}::timestamptz WHERE id = ${id} AND status = 'processing'`);
+    await this.db.execute(sql`UPDATE reminder_jobs SET status = CASE WHEN attempts >= ${this.maxAttempts} THEN 'failed' ELSE 'pending' END, available_at = ${retryAt.toISOString()}::timestamptz, last_error = ${error.slice(0, 1000)}, updated_at = ${now.toISOString()}::timestamptz WHERE id = ${id} AND status = 'processing'`);
   }
 
   async markCancelled(id: string, reason: string, now = new Date()) {

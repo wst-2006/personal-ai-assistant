@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, ne, sql } from "drizzle-orm";
 import type { AppDatabase } from "@personal-ai/db/client";
 import { recordFocusNoResponseOutcome } from "@personal-ai/db/focus-no-response";
 import { focusSessionOperations, focusSessionSegmentRuns, focusSessions, focusStructureSegments, focusStructures, focusTimerJobs, taskFeedback, taskLifecycleEvents, taskOutcomes, tasks } from "@personal-ai/db/schema";
@@ -78,23 +78,96 @@ export class FocusService {
 
   async current(): Promise<StoredFocusSession | null> {
     return this.db.transaction(async (transaction) => {
+      const now = new Date();
+      await this.materializeOverdueRunningSessions(transaction as AppDatabase, now);
       const [session] = await transaction.select().from(focusSessions)
         .where(inArray(focusSessions.state, currentStates))
         .orderBy(
-          desc(sql`CASE WHEN ${focusSessions.state} = 'ended' THEN 1 ELSE 0 END`),
+          desc(sql`CASE WHEN ${focusSessions.state} = 'ended' THEN 0 ELSE 1 END`),
           desc(focusSessions.updatedAt)
-        ).limit(1);
+      ).limit(1);
       if (!session) return null;
-      const now = new Date();
       const scheduled = await this.materializeScheduled(transaction as AppDatabase, session, now);
       const prepared = await this.materializePreparation(transaction as AppDatabase, scheduled, now);
       return this.materializeFixedEnd(transaction as AppDatabase, prepared, now);
     });
   }
 
+  async currentExecution(): Promise<StoredFocusSession | null> {
+    return this.db.transaction(async (transaction) => {
+      const now = new Date();
+      await this.materializeOverdueRunningSessions(transaction as AppDatabase, now);
+      const [session] = await transaction.select().from(focusSessions)
+        .where(inArray(focusSessions.state, recoverableStates))
+        .orderBy(
+          desc(sql`CASE
+            WHEN ${focusSessions.state} IN ('running', 'paused') THEN 3
+            WHEN ${focusSessions.state} IN ('preparing', 'armed', 'awaiting_late_start') THEN 2
+            WHEN ${focusSessions.state} = 'reminded' THEN 1
+            ELSE 0
+          END`),
+          asc(focusSessions.plannedStartAt),
+          desc(focusSessions.updatedAt)
+        )
+        .limit(1);
+      if (!session) return null;
+      const scheduled = await this.materializeScheduled(transaction as AppDatabase, session, now);
+      const prepared = await this.materializePreparation(transaction as AppDatabase, scheduled, now);
+      return this.materializeFixedEnd(transaction as AppDatabase, prepared, now);
+    });
+  }
+
+  async pendingEvaluation(): Promise<StoredFocusSession | null> {
+    const presentationCutoff = new Date(Date.now() - 90_000);
+    const [session] = await this.db.select().from(focusSessions)
+      .where(and(
+        eq(focusSessions.state, "ended"),
+        gt(focusSessions.endedAt, presentationCutoff),
+      ))
+      .orderBy(desc(focusSessions.endedAt), desc(focusSessions.updatedAt))
+      .limit(1);
+    return session ?? null;
+  }
+
+  async overlappingPreparation(): Promise<StoredFocusSession | null> {
+    return this.db.transaction(async (transaction) => {
+      const now = new Date();
+      await this.materializeOverdueRunningSessions(transaction as AppDatabase, now);
+      const [running] = await transaction.select({ id: focusSessions.id }).from(focusSessions)
+        .where(inArray(focusSessions.state, ["running", "paused"]))
+        .limit(1);
+      if (!running) return null;
+      const [session] = await transaction.select().from(focusSessions)
+        .where(inArray(focusSessions.state, ["preparing", "armed", "awaiting_late_start"]))
+        .orderBy(asc(focusSessions.plannedStartAt), desc(focusSessions.updatedAt))
+        .limit(1);
+      if (!session) return null;
+      const prepared = await this.materializePreparation(transaction as AppDatabase, session, now);
+      return this.materializeFixedEnd(transaction as AppDatabase, prepared, now);
+    });
+  }
+
   async currentSnapshot(): Promise<FocusSessionSnapshot | null> {
     const session = await this.current();
-    if (!session) return null;
+    return session ? this.snapshotForSession(session) : null;
+  }
+
+  async currentExecutionSnapshot(): Promise<FocusSessionSnapshot | null> {
+    const session = await this.currentExecution();
+    return session ? this.snapshotForSession(session) : null;
+  }
+
+  async pendingEvaluationSnapshot(): Promise<FocusSessionSnapshot | null> {
+    const session = await this.pendingEvaluation();
+    return session ? this.snapshotForSession(session) : null;
+  }
+
+  async overlappingPreparationSnapshot(): Promise<FocusSessionSnapshot | null> {
+    const session = await this.overlappingPreparation();
+    return session ? this.snapshotForSession(session) : null;
+  }
+
+  private async snapshotForSession(session: StoredFocusSession): Promise<FocusSessionSnapshot | null> {
     const [task] = await this.db.select().from(tasks)
       .where(and(eq(tasks.id, session.taskId), isNull(tasks.deletedAt))).limit(1);
     if (!task) return null;
@@ -390,6 +463,92 @@ export class FocusService {
     });
   }
 
+  async resolvePreparationDecision(
+    id: string,
+    expectedVersion: number,
+    decision: "other_arrangement" | "cancel_task",
+    reason?: string,
+    commandId?: string,
+  ): Promise<StoredFocusSession> {
+    return this.db.transaction(async (transaction) => {
+      const replay = await this.replayCommand(transaction as AppDatabase, {
+        commandId,
+        operation: "other_arrangement",
+        expectedVersion,
+        sessionId: id,
+      });
+      if (replay) return replay;
+
+      const now = new Date();
+      const current = await this.requireCurrent(transaction as AppDatabase, id, expectedVersion);
+      if (!["scheduled", "reminded", "preparing", "armed", "awaiting_late_start"].includes(current.state)) {
+        throw new FocusTransitionError(current.state, "resolve preparation for");
+      }
+      const [task] = await transaction.select().from(tasks)
+        .where(and(eq(tasks.id, current.taskId), isNull(tasks.deletedAt)))
+        .limit(1);
+      if (!task) throw new FocusNotFoundError();
+      if (task.lifecycleStatus !== "open" || task.recordKind !== "formal" || task.scheduleKind !== "exact") {
+        throw new FocusTransitionError(task.lifecycleStatus, "change preparation task");
+      }
+
+      await this.cancelSessionTimerJobs(transaction as AppDatabase, current.id, now);
+      await cancelTaskFollowUp(transaction as AppDatabase, current.taskId, now);
+      const stoppedReason = reason ?? (decision === "cancel_task" ? "用户从准备窗口取消任务" : "用户从准备窗口选择另有安排");
+      const [updated] = await transaction.update(focusSessions).set({
+        state: "stopped_for_change",
+        rawActiveSeconds: elapsedSeconds(current, now),
+        activeSinceAt: null,
+        endedAt: now,
+        stoppedReason,
+        version: current.version + 1,
+        updatedAt: now,
+      }).where(and(eq(focusSessions.id, id), eq(focusSessions.version, expectedVersion))).returning();
+      if (!updated) throw new FocusVersionConflictError(await this.requireCurrent(transaction as AppDatabase, id));
+
+      const [changedTask] = decision === "cancel_task"
+        ? await transaction.update(tasks).set({
+            lifecycleStatus: "cancelled",
+            currentOutcome: null,
+            deletedAt: now,
+            version: task.version + 1,
+            scheduleRevision: task.scheduleRevision + 1,
+            updatedAt: now,
+          }).where(and(eq(tasks.id, task.id), eq(tasks.version, task.version))).returning()
+        : await transaction.update(tasks).set({
+            scheduleKind: "none",
+            daypart: null,
+            startAt: null,
+            endAt: null,
+            version: task.version + 1,
+            scheduleRevision: task.scheduleRevision + 1,
+            updatedAt: now,
+          }).where(and(eq(tasks.id, task.id), eq(tasks.version, task.version))).returning();
+      if (!changedTask) throw new Error("task_version_conflict");
+      await syncTaskStartReminder(transaction as AppDatabase, changedTask, now);
+      if (decision === "cancel_task") {
+        await transaction.insert(taskLifecycleEvents).values({
+          id: randomUUID(),
+          taskId: task.id,
+          fromStatus: "open",
+          toStatus: "cancelled",
+          source: "app",
+          reason: stoppedReason,
+        });
+        await transaction.insert(taskLifecycleEvents).values({
+          id: randomUUID(),
+          taskId: task.id,
+          fromStatus: "cancelled",
+          toStatus: "deleted",
+          source: "app",
+          reason: "取消任务后默认移入回收站",
+        });
+      }
+      await this.recordCommand(transaction as AppDatabase, commandId, "other_arrangement", expectedVersion, updated);
+      return updated;
+    });
+  }
+
   async skipFinalBreak(id: string, expectedVersion: number, commandId?: string): Promise<StoredFocusSession> {
     return this.db.transaction(async (transaction) => {
       const replay = await this.replayCommand(transaction as AppDatabase, { commandId, operation: "skip_final_break", expectedVersion, sessionId: id });
@@ -420,11 +579,8 @@ export class FocusService {
       }).where(and(eq(focusSessions.id, id), eq(focusSessions.version, expectedVersion))).returning();
       if (!updated) throw new FocusVersionConflictError(await this.requireCurrent(transaction as AppDatabase, id));
       await this.awaitTaskOutcome(transaction as AppDatabase, current.taskId, now, "用户跳过最后休息");
-      const result = await this.shouldCollectEvaluation(transaction as AppDatabase)
-        ? updated
-        : await this.finalizeEndedWithoutEvaluation(transaction as AppDatabase, updated, now, "评价页面已关闭");
-      await this.recordCommand(transaction as AppDatabase, commandId, "skip_final_break", expectedVersion, result);
-      return result;
+      await this.recordCommand(transaction as AppDatabase, commandId, "skip_final_break", expectedVersion, updated);
+      return updated;
     });
   }
 
@@ -616,6 +772,14 @@ export class FocusService {
     task: typeof tasks.$inferSelect,
     now: Date
   ): Promise<StoredFocusSession> {
+    await db.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended('personal-ai-focus-running', 0))`);
+    await this.materializeOverdueRunningSessions(db, now);
+    const [blockingSession] = await db.select({ id: focusSessions.id }).from(focusSessions).where(and(
+      ne(focusSessions.id, current.id),
+      inArray(focusSessions.state, ["running", "paused"]),
+    )).limit(1);
+    if (blockingSession) throw new FocusBusyError();
+
     const execution = current.focusStructureId ? await this.structureById(db, current.focusStructureId) : null;
     const position = execution ? locateFocusSegment({
       structureStartAt: execution.structure.totalStartAt,
@@ -909,62 +1073,17 @@ export class FocusService {
     }).where(and(eq(focusSessions.id, current.id), eq(focusSessions.version, current.version))).returning();
     if (!ended) return current;
     await this.awaitTaskOutcome(db, current.taskId, now, "固定结束时间到达");
-    return await this.shouldCollectEvaluation(db)
-      ? ended
-      : this.finalizeEndedWithoutEvaluation(db, ended, now, "评价页面已关闭");
+    return ended;
   }
 
-  private async shouldCollectEvaluation(db: AppDatabase): Promise<boolean> {
-    const settings = await focusIntegrationSettings(db);
-    return settings.desktopFocusEnabled && settings.focusEvaluationEnabled;
-  }
-
-  private async finalizeEndedWithoutEvaluation(
-    db: AppDatabase,
-    ended: StoredFocusSession,
-    now: Date,
-    reason: string,
-  ): Promise<StoredFocusSession> {
-    if (ended.state !== "ended") return ended;
-    const [task] = await db.select().from(tasks).where(and(eq(tasks.id, ended.taskId), isNull(tasks.deletedAt))).limit(1);
-    if (!task || task.lifecycleStatus !== "awaiting_outcome") return ended;
-    const [evaluated] = await db.update(focusSessions).set({
-      state: "evaluated",
-      version: ended.version + 1,
-      updatedAt: now,
-    }).where(and(
-      eq(focusSessions.id, ended.id),
-      eq(focusSessions.version, ended.version),
-      eq(focusSessions.state, "ended"),
-    )).returning();
-    if (!evaluated) return this.requireCurrent(db, ended.id);
-    await db.insert(taskOutcomes).values({
-      id: randomUUID(),
-      taskId: task.id,
-      focusSessionId: ended.id,
-      outcome: "complete",
-      progressPercent: 100,
-      source: "system",
-      note: null,
-    });
-    const [closed] = await db.update(tasks).set({
-      lifecycleStatus: "closed",
-      currentOutcome: "complete",
-      version: task.version + 1,
-      scheduleRevision: task.scheduleRevision + 1,
-      updatedAt: now,
-    }).where(and(eq(tasks.id, task.id), eq(tasks.version, task.version))).returning();
-    if (!closed) throw new Error("task_version_conflict");
-    await syncTaskStartReminder(db, closed, now);
-    await db.insert(taskLifecycleEvents).values({
-      id: randomUUID(),
-      taskId: task.id,
-      fromStatus: "awaiting_outcome",
-      toStatus: "closed",
-      source: "system",
-      reason,
-    });
-    return evaluated;
+  private async materializeOverdueRunningSessions(db: AppDatabase, now: Date): Promise<void> {
+    const overdue = await db.select().from(focusSessions).where(and(
+      inArray(focusSessions.state, ["running", "paused"]),
+      lte(focusSessions.plannedEndAt, now),
+    )).orderBy(asc(focusSessions.plannedEndAt));
+    for (const session of overdue) {
+      await this.materializeFixedEnd(db, session, now);
+    }
   }
 
   private async activateTask(db: AppDatabase, task: typeof tasks.$inferSelect, now: Date): Promise<typeof tasks.$inferSelect> {

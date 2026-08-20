@@ -183,6 +183,10 @@ export class MemoryTaskStore implements TaskStore, TaskStoreTransaction {
     return outcome;
   }
 
+  async getOutcome(id: string, taskId: string): Promise<StoredTaskOutcome | null> {
+    return this.outcomes.find((item) => item.id === id && item.taskId === taskId) ?? null;
+  }
+
   async insertFeedback(record: TaskFeedbackRecord): Promise<StoredTaskFeedback> {
     const feedback: StoredTaskFeedback = {
       id: record.id,
@@ -194,6 +198,12 @@ export class MemoryTaskStore implements TaskStore, TaskStoreTransaction {
     };
     this.feedback.push(feedback);
     return feedback;
+  }
+
+  async listFeedback(taskId: string): Promise<StoredTaskFeedback[]> {
+    return this.feedback
+      .filter((item) => item.taskId === taskId)
+      .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime());
   }
 
   async invalidateFocusStructures(_taskId: string, _currentScheduleRevision: number, _reason: string): Promise<void> {

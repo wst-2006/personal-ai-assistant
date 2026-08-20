@@ -21,7 +21,8 @@ async function pollDueJobs() {
   for (let processed = 0; processed < 50 && !shuttingDown; processed += 1) {
     const dayEndResult = await unscheduledTaskWorker.processNext();
     const recycleResult = await recycleRetentionWorker.processNext();
-    const focusResult = await focusWorker.processNext();
+    const recoveredFocus = await focusWorker.reconcileOverdueSession();
+    const focusResult = recoveredFocus ? "completed" : await focusWorker.processNext();
     const reminderResult = provider ? await worker.processNext(provider) : "idle";
     if (dayEndResult === "idle" && recycleResult === "idle" && focusResult === "idle" && reminderResult === "idle") return;
   }

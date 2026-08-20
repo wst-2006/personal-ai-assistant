@@ -5,7 +5,7 @@ import { GrowthService, type GrowthWindowDays } from "./growth-service.js";
 
 const query = z.object({
   endDate: reviewDateSchema,
-  days: z.coerce.number().int().refine((value): value is GrowthWindowDays => [7, 30, 90, 365].includes(value)).default(7)
+  days: z.coerce.number().int().refine((value): value is GrowthWindowDays => [1, 7, 30, 90, 365].includes(value)).default(7)
 });
 
 export async function growthRoutes(app: FastifyInstance, options: { growthService: GrowthService }) {

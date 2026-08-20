@@ -1,6 +1,7 @@
 import type { AppDatabase } from "@personal-ai/db/client";
 import { feishuIntakeCandidates, inboxEntries, reminderJobs, tasks } from "@personal-ai/db/schema";
 import {
+  extractPlanInstruction,
   localDateAtTimeZone,
   naturalLanguageTaskCandidateSchema,
   type NaturalLanguageTaskCandidate,
@@ -105,6 +106,13 @@ export class FeishuIntakeService {
       const healthText = healthPrefix[1]?.trim() ?? "";
       if (!healthText) return { kind: "text", text: "请在“健康：”后面写下需要补充的内容。" };
       return this.receiveHealthMessage(message, healthText);
+    }
+
+    const planInstruction = extractPlanInstruction(text);
+    if (planInstruction !== null) {
+      const instruction = planInstruction;
+      if (!instruction) return { kind: "text", text: "请在“计划：”后面写清楚要调整哪些已有任务，以及顺延多久。" };
+      return { kind: "text", text: "我把这句话识别为已有计划的调整，不会把它新建成任务。请回到桌面软件的计划调整入口，选择受影响的任务并确认新的时间；当前没有自动改动任何排期。" };
     }
 
     if (this.focusService && /(?:我(?:现在)?开始了|现在开始|开始(?:这个|这项|该)?任务)/u.test(text)) {

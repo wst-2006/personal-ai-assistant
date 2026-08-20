@@ -49,6 +49,28 @@ async function storedCandidate(sourceMessageId: string) {
 }
 
 describe("Feishu text intake", () => {
+  it("routes plan-prefixed instructions away from task intake", async () => {
+    const suffix = randomUUID();
+    const parser: TaskParser = { parse: vi.fn().mockRejectedValue(new Error("must not parse plan instructions")) };
+    const service = new FeishuIntakeService(
+      { targetOpenId: owner, timeZone: "Asia/Shanghai" },
+      connection.db,
+      taskService,
+      parser
+    );
+    const reply = await service.receive({
+      messageId: `om_plan_${suffix}`,
+      chatId: `oc_plan_${suffix}`,
+      operatorOpenId: owner,
+      messageType: "text",
+      text: "计划：把我所有的任务往后延一个小时"
+    });
+
+    expect(reply).toMatchObject({ kind: "text", text: expect.stringContaining("已有计划") });
+    expect(parser.parse).not.toHaveBeenCalled();
+    expect(await connection.db.select().from(feishuIntakeCandidates).where(eq(feishuIntakeCandidates.sourceMessageId, `om_plan_${suffix}`))).toHaveLength(0);
+  });
+
   it("imports an allowlisted Work Buddy post as one deduplicated standalone draft", async () => {
     const suffix = randomUUID();
     const workBuddySender = `ou_work_buddy_${suffix}`;

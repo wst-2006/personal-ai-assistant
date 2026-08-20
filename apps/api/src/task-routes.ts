@@ -2,6 +2,7 @@ import {
   acceptTaskConflictsSchema,
   taskBackfillInputSchema,
   taskInputSchema,
+  taskOutcomeCorrectionSchema,
   taskOutcomeInputSchema,
   taskPatchSchema,
   taskReopenSchema,
@@ -19,11 +20,17 @@ import {
   TaskScheduleRevisionConflictError,
   TaskService,
   TaskTimeConflictError,
-  TaskVersionConflictError
+  TaskVersionConflictError,
+  BulkShiftValidationError
 } from "./task-service.js";
 
 const listQuerySchema = z.object({ date: z.string().date().optional() });
 const taskParamsSchema = z.object({ id: z.string().uuid() });
+const bulkShiftPreviewSchema = z.object({ localDate: z.string().date().nullable().default(null), offsetMinutes: z.number().int().min(-720).max(720).refine((value) => value !== 0 && value % 30 === 0) }).strict();
+const bulkShiftApplySchema = bulkShiftPreviewSchema.extend({ adjustments: z.array(z.object({ taskId: z.string().uuid(), expectedVersion: z.number().int().positive(), expectedScheduleRevision: z.number().int().positive() }).strict()).min(1).max(200) }).strict().superRefine((input, context) => {
+  const ids = input.adjustments.map((item) => item.taskId);
+  if (new Set(ids).size !== ids.length) context.addIssue({ code: z.ZodIssueCode.custom, path: ["adjustments"], message: "Bulk shift task ids must be unique" });
+});
 
 type TaskRoutesOptions = { taskService: TaskService };
 
@@ -38,6 +45,20 @@ export const taskRoutes: FastifyPluginAsync<TaskRoutesOptions> = async (app, opt
     const query = listQuerySchema.safeParse(request.query);
     if (!query.success) return invalid(reply, "invalid_query", query.error);
     return { tasks: await options.taskService.listDeleted(query.data.date) };
+  });
+
+  app.post("/tasks/bulk-shift/preview", async (request, reply) => {
+    const input = bulkShiftPreviewSchema.safeParse(request.body);
+    if (!input.success) return invalid(reply, "invalid_bulk_shift", input.error);
+    try { return await options.taskService.previewBulkShift(input.data.localDate, input.data.offsetMinutes); }
+    catch (error) { return taskError(reply, error); }
+  });
+
+  app.post("/tasks/bulk-shift", async (request, reply) => {
+    const input = bulkShiftApplySchema.safeParse(request.body);
+    if (!input.success) return invalid(reply, "invalid_bulk_shift", input.error);
+    try { return await options.taskService.bulkShift(input.data.localDate, input.data.offsetMinutes, input.data.adjustments); }
+    catch (error) { return taskError(reply, error); }
   });
 
   app.post("/tasks/trash/empty", async (_request, reply) => {
@@ -135,6 +156,18 @@ export const taskRoutes: FastifyPluginAsync<TaskRoutesOptions> = async (app, opt
     }
   });
 
+  app.post("/tasks/:id/cancel-and-trash", async (request, reply) => {
+    const params = taskParamsSchema.safeParse(request.params);
+    const input = taskVersionActionSchema.safeParse(request.body);
+    if (!params.success) return invalid(reply, "invalid_task_id", params.error);
+    if (!input.success) return invalid(reply, "invalid_cancel_request", input.error);
+    try {
+      return { task: await options.taskService.cancelAndTrash(params.data.id, input.data.expectedVersion, input.data.reason) };
+    } catch (error) {
+      return taskError(reply, error);
+    }
+  });
+
   app.post("/tasks/:id/reopen", async (request, reply) => {
     const params = taskParamsSchema.safeParse(request.params);
     const input = taskReopenSchema.safeParse(request.body);
@@ -161,6 +194,18 @@ export const taskRoutes: FastifyPluginAsync<TaskRoutesOptions> = async (app, opt
     try {
       const result = await options.taskService.recordOutcome(params.data.id, input.data);
       return reply.status(201).send(result);
+    } catch (error) {
+      return taskError(reply, error);
+    }
+  });
+
+  app.post("/tasks/:id/outcomes/correct", async (request, reply) => {
+    const params = taskParamsSchema.safeParse(request.params);
+    const input = taskOutcomeCorrectionSchema.safeParse(request.body);
+    if (!params.success) return invalid(reply, "invalid_task_id", params.error);
+    if (!input.success) return invalid(reply, "invalid_task_outcome_correction", input.error);
+    try {
+      return reply.status(201).send(await options.taskService.correctOutcome(params.data.id, input.data));
     } catch (error) {
       return taskError(reply, error);
     }
@@ -223,6 +268,9 @@ function taskError(reply: FastifyReply, error: unknown) {
       conflicts: error.conflicts,
       conflictSetFingerprint: error.conflictSetFingerprint
     });
+  }
+  if (error instanceof BulkShiftValidationError) {
+    return reply.status(409).send({ error: "bulk_shift_invalid", skipped: error.skipped });
   }
   if (error instanceof ConflictSetChangedError) {
     return reply.status(409).send({

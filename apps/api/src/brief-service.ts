@@ -77,6 +77,25 @@ export class BriefService {
     return (await this.db.insert(dailyBriefs).values({ id: randomUUID(), localDate, reviewSessionId: null, state: "confirmed", content, sources }).returning())[0]!;
   }
 
+  async recordLocationWeather(reviewSessionId: string, input: { locationName?: string; latitude?: number; longitude?: number }) {
+    const [review] = await this.db.select().from(reviewSessions).where(eq(reviewSessions.id, reviewSessionId)).limit(1);
+    if (!review) throw new BriefNotFoundError();
+    const weather = input.latitude !== undefined && input.longitude !== undefined
+      ? await this.providers.weatherAtCoordinates(input.latitude, input.longitude)
+      : await this.providers.weather(input.locationName);
+    const content: BriefContent = { title: "今日地点及天气情况", reflection: "", taskSummary: "", sections: [weather.section], location: weather.location, weather: weather.weather };
+    return this.db.transaction(async (transaction) => {
+      const rows = await transaction.select().from(dailyBriefs).where(eq(dailyBriefs.reviewSessionId, review.id)).orderBy(desc(dailyBriefs.updatedAt));
+      const locationRecord = rows.find((row) => (row.content as Partial<BriefContent>).title === "今日地点及天气情况");
+      if (locationRecord) {
+        const [updated] = await transaction.update(dailyBriefs).set({ content, sources: weather.source ? [weather.source] : [], updatedAt: new Date() }).where(eq(dailyBriefs.id, locationRecord.id)).returning();
+        return updated!;
+      }
+      const [created] = await transaction.insert(dailyBriefs).values({ id: randomUUID(), localDate: review.localDate, reviewSessionId: review.id, state: "draft", content, sources: weather.source ? [weather.source] : [] }).returning();
+      return created!;
+    });
+  }
+
   async listStandalone(localDate: string) {
     return this.db.select().from(dailyBriefs).where(and(eq(dailyBriefs.localDate, localDate), isNull(dailyBriefs.reviewSessionId))).orderBy(desc(dailyBriefs.updatedAt));
   }

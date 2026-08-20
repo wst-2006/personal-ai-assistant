@@ -193,8 +193,9 @@ async function createUnstructuredRunningTask() {
 
 async function createCurrentExactTask(title: string) {
   const now = new Date();
-  const startAt = new Date(now.getTime() - 5 * 60_000);
-  const endAt = new Date(now.getTime() + 55 * 60_000);
+  const alignedNow = new Date(Math.floor(now.getTime() / (30 * 60_000)) * (30 * 60_000));
+  const startAt = new Date(alignedNow.getTime() - 30 * 60_000);
+  const endAt = new Date(alignedNow.getTime() + 60 * 60_000);
   const localDate = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit"
   }).format(now);

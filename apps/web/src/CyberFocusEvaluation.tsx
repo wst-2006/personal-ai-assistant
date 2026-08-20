@@ -116,7 +116,7 @@ export function CyberFocusEvaluation(props: CyberFocusEvaluationProps) {
         type="button"
         role="option"
         aria-selected={props.satisfaction === option.value}
-        className={props.satisfaction === option.value ? "selected" : ""}
+        className={`satisfaction-${option.value} ${props.satisfaction === option.value ? "selected" : ""}`}
         key={option.value}
         onClick={() => props.onSatisfactionChange(option.value)}
       ><span>{props.satisfaction === option.value ? ">" : " "}</span>[{index + 1}] {option.label}</button>)}

@@ -142,6 +142,11 @@ export const saveHealthProfileSchema = z.object({
   profile: healthProfileSchema
 }).strict();
 export const healthPlanConfirmationSchema = z.object({ expectedVersion: z.number().int().positive() }).strict();
+export const saveHealthDailyActualSchema = z.object({
+  proteinGrams: z.number().int().min(0).max(1000).nullable(),
+  fiberGrams: z.number().int().min(0).max(200).nullable(),
+  waterMilliliters: z.number().int().min(0).max(10_000).nullable()
+}).strict();
 export const healthSleepRevisionCandidateSchema = z.object({
   weekStart: healthWeekStartSchema,
   sleepAnalysisId: z.string().uuid(),
@@ -180,6 +185,7 @@ export type HealthProfile = z.infer<typeof healthProfileSchema>;
 export type HealthDailyReference = z.infer<typeof healthDailyReferenceSchema>;
 export type HealthPlanContent = z.infer<typeof healthPlanContentSchema>;
 export type ManualHealthPlanCandidate = z.infer<typeof createManualHealthPlanCandidateSchema>;
+export type HealthDailyActualInput = z.infer<typeof saveHealthDailyActualSchema>;
 export type SleepImageAnalysisRequest = z.infer<typeof sleepImageAnalysisRequestSchema>;
 export type SleepImageAnalysis = z.infer<typeof sleepImageAnalysisSchema>;
 export type HealthSleepRevisionCandidate = z.infer<typeof healthSleepRevisionCandidateSchema>;

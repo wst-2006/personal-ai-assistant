@@ -1,6 +1,6 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
-import { localDateAtTimeZone } from "@personal-ai/domain/task";
+import { extractPlanInstruction, localDateAtTimeZone } from "@personal-ai/domain/task";
 import type { TaskParser } from "./task-parser.js";
 import {
   filterAdviceToKnownTasks,
@@ -33,6 +33,13 @@ export const aiRoutes: FastifyPluginAsync<AiRoutesOptions> = async (app, options
       return reply.status(400).send({
         error: "invalid_parse_request",
         issues: parsed.error.issues
+      });
+    }
+
+    if (extractPlanInstruction(parsed.data.text) !== null) {
+      return reply.status(409).send({
+        error: "plan_change_requires_context",
+        message: "以“计划：”开头的内容属于已有计划调整，请进入计划调整预览；不会作为新任务解析。"
       });
     }
 

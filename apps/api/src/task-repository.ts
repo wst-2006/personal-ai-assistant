@@ -88,6 +88,7 @@ export interface TaskStoreTransaction {
   insertConflictAcceptances(records: ConflictAcceptanceRecord[]): Promise<void>;
   insertLifecycleEvent(record: LifecycleEventRecord): Promise<void>;
   insertOutcome(record: TaskOutcomeRecord): Promise<StoredTaskOutcome>;
+  getOutcome(id: string, taskId: string): Promise<StoredTaskOutcome | null>;
   insertFeedback(record: TaskFeedbackRecord): Promise<StoredTaskFeedback>;
   invalidateFocusStructures(taskId: string, currentScheduleRevision: number, reason: string): Promise<void>;
   syncReminderForTask(task: StoredTask): Promise<void>;
@@ -100,6 +101,7 @@ export interface TaskStore {
   listTasks(localDate?: string): Promise<StoredTask[]>;
   listDeletedTasks(localDate?: string): Promise<StoredTask[]>;
   listOutcomes(taskId: string): Promise<StoredTaskOutcome[]>;
+  listFeedback(taskId: string): Promise<StoredTaskFeedback[]>;
   listExactOverlaps(startAt: Date, endAt: Date, lifecycleStatuses: TaskLifecycle[], excludeTaskId?: string): Promise<StoredTask[]>;
   isConflictAccepted(record: ConflictAcceptanceRecord): Promise<boolean>;
   listInboxEntries(): Promise<StoredInboxEntry[]>;
@@ -206,6 +208,12 @@ class PostgresTaskTransaction implements TaskStoreTransaction {
     return created;
   }
 
+  async getOutcome(id: string, taskId: string): Promise<StoredTaskOutcome | null> {
+    const [outcome] = await this.db.select().from(taskOutcomes)
+      .where(and(eq(taskOutcomes.id, id), eq(taskOutcomes.taskId, taskId))).limit(1);
+    return outcome ?? null;
+  }
+
   async insertFeedback(record: TaskFeedbackRecord): Promise<StoredTaskFeedback> {
     const [created] = await this.db.insert(taskFeedback).values(record).returning();
     if (!created) throw new Error("PostgreSQL did not return the created task feedback.");
@@ -296,6 +304,10 @@ export class PostgresTaskStore implements TaskStore {
 
   listOutcomes(taskId: string): Promise<StoredTaskOutcome[]> {
     return this.db.select().from(taskOutcomes).where(eq(taskOutcomes.taskId, taskId)).orderBy(desc(taskOutcomes.recordedAt));
+  }
+
+  listFeedback(taskId: string): Promise<StoredTaskFeedback[]> {
+    return this.db.select().from(taskFeedback).where(eq(taskFeedback.taskId, taskId)).orderBy(desc(taskFeedback.createdAt));
   }
 
   listExactOverlaps(

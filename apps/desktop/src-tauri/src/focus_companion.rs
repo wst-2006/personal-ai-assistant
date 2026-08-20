@@ -20,6 +20,8 @@ use tauri_plugin_notification::NotificationExt;
 use crate::{confirm_full_exit, show_main_window, AppLifecycle};
 
 const FOCUS_MINI_WINDOW_LABEL_PREFIX: &str = "focus-mini";
+const FOCUS_EVALUATION_WINDOW_LABEL_PREFIX: &str = "focus-evaluation";
+const FOCUS_PREPARATION_WINDOW_LABEL_PREFIX: &str = "focus-preparation";
 const SETTINGS_FILE: &str = "focus-mini.conf";
 const FOCUS_MINI_WIDTH: f64 = 360.0;
 const FOCUS_MINI_HEIGHT: f64 = 236.0;
@@ -75,10 +77,16 @@ pub struct FocusCompanionState {
     settings: Mutex<FocusMiniSettings>,
     profile: Mutex<FocusWindowPreferences>,
     snapshot: Mutex<Option<FocusSnapshot>>,
+    evaluation_snapshot: Mutex<Option<FocusSnapshot>>,
+    preparation_snapshot: Mutex<Option<FocusSnapshot>>,
     tray_items: Mutex<Option<TrayItems>>,
     window_label: Mutex<Option<String>>,
+    evaluation_window_label: Mutex<Option<String>>,
+    preparation_window_label: Mutex<Option<String>>,
     window_generation: AtomicU64,
     initialized: AtomicBool,
+    evaluation_initialized: AtomicBool,
+    preparation_initialized: AtomicBool,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -120,6 +128,7 @@ struct FocusSnapshot {
     phase: String,
     phase_ends_at_epoch_ms: Option<i64>,
     current_segment: Option<FocusSegment>,
+    segments: Vec<FocusSegment>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -203,6 +212,92 @@ fn current_mini_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
         .window_label
         .lock()
         .expect("focus companion window label lock poisoned")
+        .clone()?;
+    app.get_webview_window(&label)
+}
+
+fn ensure_evaluation_window(app: &AppHandle) -> tauri::Result<()> {
+    if current_evaluation_window(app).is_some() {
+        return Ok(());
+    }
+    let state = app.state::<FocusCompanionState>();
+    let generation = state.window_generation.fetch_add(1, Ordering::SeqCst) + 1;
+    let label = format!("{FOCUS_EVALUATION_WINDOW_LABEL_PREFIX}-{generation}");
+    let window = WebviewWindowBuilder::new(
+        app,
+        &label,
+        WebviewUrl::App("index.html?focus-mini=1&focus-evaluation=1".into()),
+    )
+    .title("任务评价")
+    .inner_size(FOCUS_EVALUATION_WIDTH, FOCUS_EVALUATION_HEIGHT)
+    .resizable(false)
+    .maximizable(false)
+    .minimizable(true)
+    .decorations(false)
+    .transparent(false)
+    .shadow(true)
+    .skip_taskbar(false)
+    .always_on_top(true)
+    .visible(false)
+    .prevent_overflow()
+    .build()?;
+    let _ = window.center();
+    *state
+        .evaluation_window_label
+        .lock()
+        .expect("focus evaluation window label lock poisoned") = Some(label);
+    Ok(())
+}
+
+fn current_evaluation_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
+    let label = app
+        .state::<FocusCompanionState>()
+        .evaluation_window_label
+        .lock()
+        .expect("focus evaluation window label lock poisoned")
+        .clone()?;
+    app.get_webview_window(&label)
+}
+
+fn ensure_preparation_window(app: &AppHandle) -> tauri::Result<()> {
+    if current_preparation_window(app).is_some() {
+        return Ok(());
+    }
+    let state = app.state::<FocusCompanionState>();
+    let generation = state.window_generation.fetch_add(1, Ordering::SeqCst) + 1;
+    let label = format!("{FOCUS_PREPARATION_WINDOW_LABEL_PREFIX}-{generation}");
+    let window = WebviewWindowBuilder::new(
+        app,
+        &label,
+        WebviewUrl::App("index.html?focus-mini=1&focus-preparation=1".into()),
+    )
+    .title("任务准备")
+    .inner_size(FOCUS_MINI_WIDTH, FOCUS_MINI_HEIGHT)
+    .resizable(false)
+    .maximizable(false)
+    .minimizable(true)
+    .decorations(false)
+    .transparent(false)
+    .shadow(true)
+    .skip_taskbar(false)
+    .always_on_top(true)
+    .visible(false)
+    .prevent_overflow()
+    .build()?;
+    position_preparation_window(app, &window);
+    *state
+        .preparation_window_label
+        .lock()
+        .expect("focus preparation window label lock poisoned") = Some(label);
+    Ok(())
+}
+
+fn current_preparation_window(app: &AppHandle) -> Option<tauri::WebviewWindow> {
+    let label = app
+        .state::<FocusCompanionState>()
+        .preparation_window_label
+        .lock()
+        .expect("focus preparation window label lock poisoned")
         .clone()?;
     app.get_webview_window(&label)
 }
@@ -293,10 +388,31 @@ fn start_monitor(app: AppHandle) {
         {
             apply_profile(&app, profile.profile);
         }
-        match local_api_request("GET", "/api/v1/focus-sessions/current", None).and_then(|body| {
+        match local_api_request("GET", "/api/v1/focus-sessions/current-execution", None).and_then(
+            |body| {
+                serde_json::from_str::<SnapshotEnvelope>(&body).map_err(|error| error.to_string())
+            },
+        ) {
+            Ok(envelope) => apply_snapshot(&app, envelope.snapshot),
+            Err(_) => {}
+        }
+        match local_api_request("GET", "/api/v1/focus-sessions/pending-evaluation", None).and_then(
+            |body| {
+                serde_json::from_str::<SnapshotEnvelope>(&body).map_err(|error| error.to_string())
+            },
+        ) {
+            Ok(envelope) => apply_evaluation_snapshot(&app, envelope.snapshot),
+            Err(_) => {}
+        }
+        match local_api_request(
+            "GET",
+            "/api/v1/focus-sessions/overlapping-preparation",
+            None,
+        )
+        .and_then(|body| {
             serde_json::from_str::<SnapshotEnvelope>(&body).map_err(|error| error.to_string())
         }) {
-            Ok(envelope) => apply_snapshot(&app, envelope.snapshot),
+            Ok(envelope) => apply_preparation_snapshot(&app, envelope.snapshot),
             Err(_) => {}
         }
         thread::sleep(Duration::from_secs(1));
@@ -328,6 +444,21 @@ fn apply_profile(app: &AppHandle, profile: FocusWindowPreferences) {
             let _ = window.hide();
         }
     }
+    if (!profile.desktop_focus_enabled || !profile.focus_evaluation_enabled)
+        && current_evaluation_window(app).is_some()
+    {
+        if let Some(window) = current_evaluation_window(app) {
+            let _ = window.hide();
+        }
+    }
+    if (!profile.desktop_focus_enabled || !profile.focus_preparation_window_enabled)
+        && current_preparation_window(app).is_some()
+    {
+        if let Some(window) = current_preparation_window(app) {
+            let _ = window.hide();
+        }
+    }
+    sync_companion_topmost_state(app);
 }
 
 fn apply_snapshot(app: &AppHandle, snapshot: Option<FocusSnapshot>) {
@@ -356,6 +487,24 @@ fn apply_snapshot(app: &AppHandle, snapshot: Option<FocusSnapshot>) {
                 let _ = window.hide();
             }
         }
+        let intermediate_break_finished =
+            should_hide_after_intermediate_break(previous.as_ref(), current);
+        if intermediate_break_finished {
+            if let Some(window) = current_mini_window(app) {
+                let _ = window.hide();
+            }
+            if !first_update {
+                notify_transition(app, previous.as_ref(), current, &profile);
+            }
+            return;
+        }
+        let start_confirmation_finished =
+            should_hide_after_start_confirmation(previous.as_ref(), current);
+        if start_confirmation_finished {
+            if let Some(window) = current_mini_window(app) {
+                let _ = window.hide();
+            }
+        }
         let entered_running_window = current_surface_enabled
             && current.session.state == "running"
             && (current_mini_window(app).is_none()
@@ -363,6 +512,13 @@ fn apply_snapshot(app: &AppHandle, snapshot: Option<FocusSnapshot>) {
         let entered_evaluation = current_surface_enabled
             && current.session.state == "ended"
             && previous.as_ref().map(|old| old.session.state.as_str()) != Some("ended");
+        let entered_final_break = current_surface_enabled
+            && is_final_break(current)
+            && previous
+                .as_ref()
+                .map(|old| is_final_break(old))
+                .unwrap_or(false)
+                == false;
         let changed_surface = first_update
             || previous.as_ref().map(|old| old.session.state == "ended")
                 != Some(current.session.state == "ended");
@@ -376,9 +532,11 @@ fn apply_snapshot(app: &AppHandle, snapshot: Option<FocusSnapshot>) {
         } else if current_surface_enabled && changed_surface {
             resize_companion_window(app, current.session.state == "ended");
         }
-        if entered_evaluation {
+        if entered_evaluation || entered_final_break {
             show_mini_window(app);
-        } else if should_auto_show(previous.as_ref(), current, &profile) {
+        } else if !start_confirmation_finished
+            && should_auto_show(previous.as_ref(), current, &profile)
+        {
             let settings = state
                 .settings
                 .lock()
@@ -400,11 +558,247 @@ fn apply_snapshot(app: &AppHandle, snapshot: Option<FocusSnapshot>) {
     }
 }
 
+fn apply_evaluation_snapshot(app: &AppHandle, snapshot: Option<FocusSnapshot>) {
+    let state = app.state::<FocusCompanionState>();
+    let profile = state
+        .profile
+        .lock()
+        .expect("focus companion profile lock poisoned")
+        .clone();
+    let previous = {
+        let mut guard = state
+            .evaluation_snapshot
+            .lock()
+            .expect("focus evaluation snapshot lock poisoned");
+        let previous = guard.clone();
+        *guard = snapshot.clone();
+        previous
+    };
+    let first_update = !state.evaluation_initialized.swap(true, Ordering::SeqCst);
+    let enabled = profile.desktop_focus_enabled && profile.focus_evaluation_enabled;
+
+    if !enabled || snapshot.is_none() {
+        if let Some(window) = current_evaluation_window(app) {
+            let _ = window.hide();
+        }
+        if let Some(window) = current_mini_window(app) {
+            let settings = state
+                .settings
+                .lock()
+                .expect("focus companion settings lock poisoned")
+                .clone();
+            let _ = window.set_always_on_top(settings.always_on_top);
+            restore_visible_position(&window, &settings);
+        }
+        return;
+    }
+
+    let current = snapshot.as_ref().expect("checked evaluation snapshot");
+    let changed =
+        previous.as_ref().map(|old| old.session.id.as_str()) != Some(current.session.id.as_str());
+    if ensure_evaluation_window(app).is_ok() {
+        if let Some(window) = current_evaluation_window(app) {
+            let _ = window.set_always_on_top(true);
+            if first_update || changed {
+                let _ = window.center();
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }
+    }
+    if first_update || changed {
+        position_mini_for_evaluation(app);
+    }
+    sync_companion_topmost_state(app);
+    if !first_update && changed {
+        notify_transition(app, previous.as_ref(), current, &profile);
+    }
+}
+
+fn position_mini_for_evaluation(app: &AppHandle) {
+    let Some(window) = current_mini_window(app) else {
+        return;
+    };
+    let Ok(monitors) = window.available_monitors() else {
+        return;
+    };
+    let Some(monitor) = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| monitors.first().cloned())
+    else {
+        return;
+    };
+    let Ok(mini_size) = window.outer_size() else {
+        return;
+    };
+    let monitor_position = monitor.position();
+    let monitor_size = monitor.size();
+    let max_x = monitor_position.x + monitor_size.width as i32 - mini_size.width as i32;
+    let max_y = monitor_position.y + monitor_size.height as i32 - mini_size.height as i32;
+    let x = window
+        .outer_position()
+        .map(|position| position.x)
+        .unwrap_or(max_x)
+        .clamp(monitor_position.x, max_x.max(monitor_position.x));
+    let y = max_y.max(monitor_position.y).saturating_sub(8);
+    let _ = window.set_position(PhysicalPosition::new(x, y));
+}
+
+fn apply_preparation_snapshot(app: &AppHandle, snapshot: Option<FocusSnapshot>) {
+    let state = app.state::<FocusCompanionState>();
+    let profile = state
+        .profile
+        .lock()
+        .expect("focus companion profile lock poisoned")
+        .clone();
+    let previous = {
+        let mut guard = state
+            .preparation_snapshot
+            .lock()
+            .expect("focus preparation snapshot lock poisoned");
+        let previous = guard.clone();
+        *guard = snapshot.clone();
+        previous
+    };
+    let first_update = !state.preparation_initialized.swap(true, Ordering::SeqCst);
+    let enabled = profile.desktop_focus_enabled && profile.focus_preparation_window_enabled;
+    if !enabled || snapshot.is_none() {
+        if let Some(window) = current_preparation_window(app) {
+            let _ = window.hide();
+        }
+        sync_companion_topmost_state(app);
+        return;
+    }
+
+    let current = snapshot.as_ref().expect("checked preparation snapshot");
+    let changed =
+        previous.as_ref().map(|old| old.session.id.as_str()) != Some(current.session.id.as_str());
+    if ensure_preparation_window(app).is_ok() {
+        if let Some(window) = current_preparation_window(app) {
+            let _ = window.set_always_on_top(true);
+            if first_update || changed {
+                position_preparation_window(app, &window);
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }
+    }
+    sync_companion_topmost_state(app);
+}
+
+fn sync_companion_topmost_state(app: &AppHandle) {
+    let evaluation_visible = current_evaluation_window(app)
+        .and_then(|window| window.is_visible().ok())
+        .unwrap_or(false);
+    let preparation_visible = current_preparation_window(app)
+        .and_then(|window| window.is_visible().ok())
+        .unwrap_or(false);
+    if let Some(window) = current_mini_window(app) {
+        let settings = app
+            .state::<FocusCompanionState>()
+            .settings
+            .lock()
+            .expect("focus companion settings lock poisoned")
+            .clone();
+        let _ = window
+            .set_always_on_top(evaluation_visible || preparation_visible || settings.always_on_top);
+    }
+}
+
+fn position_preparation_window(app: &AppHandle, window: &tauri::WebviewWindow) {
+    let settings = app
+        .state::<FocusCompanionState>()
+        .settings
+        .lock()
+        .expect("focus companion settings lock poisoned")
+        .clone();
+    restore_visible_position(window, &settings);
+    let Some(base) = current_mini_window(app) else {
+        return;
+    };
+    let Ok(base_position) = base.outer_position() else {
+        return;
+    };
+    let Ok(size) = window.outer_size() else {
+        return;
+    };
+    let monitor = base
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| app.primary_monitor().ok().flatten());
+    let Some(monitor) = monitor else {
+        return;
+    };
+    let monitor_position = monitor.position();
+    let monitor_size = monitor.size();
+    let max_x = monitor_position.x + monitor_size.width as i32 - size.width as i32;
+    let max_y = monitor_position.y + monitor_size.height as i32 - size.height as i32;
+    let target_x = base_position
+        .x
+        .clamp(monitor_position.x, max_x.max(monitor_position.x));
+    let target_y = base_position
+        .y
+        .saturating_sub(size.height as i32 + 16)
+        .clamp(monitor_position.y, max_y.max(monitor_position.y));
+    let _ = window.set_position(PhysicalPosition::new(target_x, target_y));
+}
+
 fn should_recreate_for_running(previous: Option<&FocusSnapshot>, current: &FocusSnapshot) -> bool {
     current.session.state == "running"
         && previous
             .map(|old| old.session.id != current.session.id || old.session.state != "running")
             .unwrap_or(true)
+}
+
+fn is_final_break(snapshot: &FocusSnapshot) -> bool {
+    snapshot.phase == "break"
+        && snapshot
+            .current_segment
+            .as_ref()
+            .map(|segment| segment.position)
+            == snapshot
+                .segments
+                .iter()
+                .map(|segment| segment.position)
+                .max()
+}
+
+fn should_hide_after_intermediate_break(
+    previous: Option<&FocusSnapshot>,
+    current: &FocusSnapshot,
+) -> bool {
+    previous
+        .map(|old| {
+            old.session.id == current.session.id
+                && old.phase == "break"
+                && current.phase == "focus"
+                && !is_final_break(old)
+        })
+        .unwrap_or(false)
+}
+
+fn should_hide_after_start_confirmation(
+    previous: Option<&FocusSnapshot>,
+    current: &FocusSnapshot,
+) -> bool {
+    previous
+        .map(|old| {
+            old.session.id == current.session.id
+                && matches!(
+                    old.session.state.as_str(),
+                    "preparing" | "reminded" | "scheduled"
+                )
+                && matches!(
+                    current.session.state.as_str(),
+                    "armed" | "running" | "awaiting_late_start"
+                )
+        })
+        .unwrap_or(false)
 }
 
 fn recreate_companion_window(app: &AppHandle) -> tauri::Result<()> {
@@ -449,6 +843,7 @@ mod tests {
             phase: "focus".to_string(),
             phase_ends_at_epoch_ms: None,
             current_segment: None,
+            segments: Vec::new(),
         }
     }
 
@@ -475,6 +870,92 @@ mod tests {
         let before = snapshot("focus-1", "running");
         let after = snapshot("focus-2", "running");
         assert!(should_recreate_for_running(Some(&before), &after));
+    }
+
+    #[test]
+    fn intermediate_break_hides_when_the_next_focus_segment_begins() {
+        let mut resting = snapshot("focus-1", "running");
+        resting.phase = "break".to_string();
+        resting.current_segment = Some(FocusSegment {
+            position: 1,
+            duration_minutes: 5,
+        });
+        resting.segments = vec![
+            FocusSegment {
+                position: 0,
+                duration_minutes: 25,
+            },
+            FocusSegment {
+                position: 1,
+                duration_minutes: 5,
+            },
+            FocusSegment {
+                position: 2,
+                duration_minutes: 25,
+            },
+        ];
+        let mut focusing = resting.clone();
+        focusing.phase = "focus".to_string();
+        focusing.current_segment = Some(FocusSegment {
+            position: 2,
+            duration_minutes: 25,
+        });
+
+        assert!(should_hide_after_intermediate_break(
+            Some(&resting),
+            &focusing
+        ));
+    }
+
+    #[test]
+    fn final_break_stays_visible_until_evaluation() {
+        let mut resting = snapshot("focus-1", "running");
+        resting.phase = "break".to_string();
+        resting.current_segment = Some(FocusSegment {
+            position: 2,
+            duration_minutes: 5,
+        });
+        resting.segments = vec![
+            FocusSegment {
+                position: 0,
+                duration_minutes: 25,
+            },
+            FocusSegment {
+                position: 1,
+                duration_minutes: 25,
+            },
+            FocusSegment {
+                position: 2,
+                duration_minutes: 5,
+            },
+        ];
+        let mut ended = resting.clone();
+        ended.session.state = "ended".to_string();
+        ended.phase = "ended".to_string();
+
+        assert!(is_final_break(&resting));
+        assert!(!should_hide_after_intermediate_break(
+            Some(&resting),
+            &ended
+        ));
+    }
+
+    #[test]
+    fn start_confirmation_hides_preparation_until_running_window_reopens() {
+        let preparing = snapshot("focus-1", "preparing");
+        let armed = snapshot("focus-1", "armed");
+        assert!(should_hide_after_start_confirmation(
+            Some(&preparing),
+            &armed
+        ));
+
+        let mut running = armed.clone();
+        running.session.state = "running".to_string();
+        running.phase = "focus".to_string();
+        assert!(should_hide_after_start_confirmation(
+            Some(&preparing),
+            &running
+        ));
     }
 
     #[test]
@@ -847,7 +1328,10 @@ fn anchored_position(
 }
 
 pub fn handle_window_event(app: &AppHandle, label: &str, event: &WindowEvent) -> bool {
-    if !label.starts_with(&format!("{FOCUS_MINI_WINDOW_LABEL_PREFIX}-")) {
+    let is_mini = label.starts_with(&format!("{FOCUS_MINI_WINDOW_LABEL_PREFIX}-"));
+    let is_evaluation = label.starts_with(&format!("{FOCUS_EVALUATION_WINDOW_LABEL_PREFIX}-"));
+    let is_preparation = label.starts_with(&format!("{FOCUS_PREPARATION_WINDOW_LABEL_PREFIX}-"));
+    if !is_mini && !is_evaluation && !is_preparation {
         return false;
     }
     match event {
@@ -856,8 +1340,11 @@ pub fn handle_window_event(app: &AppHandle, label: &str, event: &WindowEvent) ->
             if let Some(window) = app.get_webview_window(label) {
                 let _ = window.hide();
             }
+            if is_evaluation || is_preparation {
+                sync_companion_topmost_state(app);
+            }
         }
-        WindowEvent::Moved(position) => {
+        WindowEvent::Moved(position) if is_mini => {
             let state = app.state::<FocusCompanionState>();
             let mut settings = state
                 .settings
@@ -895,6 +1382,50 @@ pub fn focus_mini_minimize(app: AppHandle) {
     if let Some(window) = current_mini_window(&app) {
         let _ = window.minimize();
     }
+}
+
+#[tauri::command]
+pub fn focus_evaluation_hide(app: AppHandle) {
+    if let Some(window) = current_evaluation_window(&app) {
+        let _ = window.hide();
+    }
+    sync_companion_topmost_state(&app);
+}
+
+#[tauri::command]
+pub fn focus_evaluation_minimize(app: AppHandle) {
+    if let Some(window) = current_evaluation_window(&app) {
+        let _ = window.minimize();
+    }
+}
+
+#[tauri::command]
+pub fn focus_evaluation_start_drag(app: AppHandle) -> Result<(), String> {
+    let window = current_evaluation_window(&app)
+        .ok_or_else(|| "focus evaluation window is missing".to_string())?;
+    window.start_dragging().map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub fn focus_preparation_hide(app: AppHandle) {
+    if let Some(window) = current_preparation_window(&app) {
+        let _ = window.hide();
+    }
+    sync_companion_topmost_state(&app);
+}
+
+#[tauri::command]
+pub fn focus_preparation_minimize(app: AppHandle) {
+    if let Some(window) = current_preparation_window(&app) {
+        let _ = window.minimize();
+    }
+}
+
+#[tauri::command]
+pub fn focus_preparation_start_drag(app: AppHandle) -> Result<(), String> {
+    let window = current_preparation_window(&app)
+        .ok_or_else(|| "focus preparation window is missing".to_string())?;
+    window.start_dragging().map_err(|error| error.to_string())
 }
 
 #[tauri::command]

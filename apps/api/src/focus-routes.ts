@@ -22,6 +22,10 @@ import {
 } from "./focus-service.js";
 
 const paramsSchema = z.object({ id: z.string().uuid() });
+const preparationDecisionSchema = focusSessionVersionSchema.extend({
+  decision: z.enum(["other_arrangement", "cancel_task"]),
+  reason: z.string().trim().min(1).max(1000).optional(),
+}).strict();
 
 export async function focusRoutes(app: FastifyInstance, options: { focusService: FocusService }) {
   const { focusService } = options;
@@ -31,6 +35,37 @@ export async function focusRoutes(app: FastifyInstance, options: { focusService:
       session: snapshot ? serialize(snapshot.session) : null,
       snapshot: snapshot ? serializeSnapshot(snapshot) : null
     };
+  });
+
+  app.get("/focus-sessions/current-execution", async () => {
+    const snapshot = await focusService.currentExecutionSnapshot();
+    return {
+      session: snapshot ? serialize(snapshot.session) : null,
+      snapshot: snapshot ? serializeSnapshot(snapshot) : null
+    };
+  });
+
+  app.get("/focus-sessions/pending-evaluation", async () => {
+    const snapshot = await focusService.pendingEvaluationSnapshot();
+    return {
+      session: snapshot ? serialize(snapshot.session) : null,
+      snapshot: snapshot ? serializeSnapshot(snapshot) : null
+    };
+  });
+
+  app.get("/focus-sessions/overlapping-preparation", async () => {
+    const snapshot = await focusService.overlappingPreparationSnapshot();
+    return {
+      session: snapshot ? serialize(snapshot.session) : null,
+      snapshot: snapshot ? serializeSnapshot(snapshot) : null
+    };
+  });
+
+  app.get("/focus-sessions/tasks/:id/current", async (request, reply) => {
+    const params = paramsSchema.safeParse(request.params);
+    if (!params.success) return reply.status(400).send({ error: "invalid_task_id" });
+    const session = await focusService.currentForTask(params.data.id);
+    return { session: session ? serialize(session) : null };
   });
 
   app.post("/focus-sessions", async (request, reply) => {
@@ -94,6 +129,23 @@ export async function focusRoutes(app: FastifyInstance, options: { focusService:
     if (!params.success || !input.success) return reply.status(400).send({ error: "invalid_focus_session" });
     try { return { session: serialize(await focusService.otherArrangement(params.data.id, input.data.expectedVersion, input.data.reason, input.data.commandId)) }; }
     catch (error) { return focusError(reply, error); }
+  });
+
+  app.post("/focus-sessions/:id/resolve-preparation", async (request, reply) => {
+    const params = paramsSchema.safeParse(request.params);
+    const input = preparationDecisionSchema.safeParse(request.body);
+    if (!params.success || !input.success) return reply.status(400).send({ error: "invalid_focus_preparation_decision" });
+    try {
+      return {
+        session: serialize(await focusService.resolvePreparationDecision(
+          params.data.id,
+          input.data.expectedVersion,
+          input.data.decision,
+          input.data.reason,
+          input.data.commandId,
+        )),
+      };
+    } catch (error) { return focusError(reply, error); }
   });
 
   app.post("/focus-sessions/:id/evaluate", async (request, reply) => {

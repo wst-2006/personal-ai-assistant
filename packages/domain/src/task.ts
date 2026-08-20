@@ -11,6 +11,29 @@ export const conflictDecisionSchema = z.enum(["reject", "keep"]);
 export const PRODUCT_SCHEDULE_START_MINUTE = 7 * 60;
 export const PRODUCT_SCHEDULE_END_MINUTE = 23 * 60;
 
+export function extractPlanInstruction(value: string): string | null {
+  const match = value.trim().match(/^计划(?:\s*[:：]\s*|\s+|$)([\s\S]*)$/u);
+  return match ? (match[1] ?? "").trim() : null;
+}
+
+export function inferPlanInstructionDate(value: string, referenceDate: string): string | null {
+  const explicit = value.match(/(?:^|\D)(\d{4}-\d{2}-\d{2})(?:\D|$)/u)?.[1];
+  if (explicit && z.string().date().safeParse(explicit).success) return explicit;
+  if (!z.string().date().safeParse(referenceDate).success) return null;
+  if (/(?:从(?:今天|今日)|(?:今天|今日)(?:起|以后|之后))/u.test(value)) return null;
+  if (/(?:从明天|明天(?:起|以后|之后))/u.test(value)) return null;
+  if (/后天/u.test(value)) return addCalendarDays(referenceDate, 2);
+  if (/(?:明天|明日)/u.test(value)) return addCalendarDays(referenceDate, 1);
+  if (/(?:今天|今日)/u.test(value)) return referenceDate;
+  return null;
+}
+
+function addCalendarDays(localDate: string, amount: number): string {
+  const [year, month, day] = localDate.split("-").map(Number);
+  const shifted = new Date(Date.UTC(year!, month! - 1, day! + amount));
+  return shifted.toISOString().slice(0, 10);
+}
+
 export const ianaTimeZoneSchema = z.string().trim().min(1).max(64).refine(isValidIanaTimeZone, {
   message: "timeZone must be a valid IANA time zone"
 });
@@ -107,6 +130,27 @@ export const taskOutcomeInputSchema = z.object({
       message: "Manual task outcomes require an independent satisfaction value"
     });
   }
+});
+
+export const taskOutcomeCorrectionSchema = z.object({
+  expectedVersion: z.number().int().positive(),
+  expectedOutcomeId: z.string().uuid(),
+  outcome: taskOutcomeSchema,
+  progressPercent: z.number().int().min(0).max(100),
+  source: taskEventSourceSchema.default("app"),
+  satisfaction: taskSatisfactionSchema,
+  note: z.string().trim().max(4000).nullable().optional()
+}).strict().superRefine((input, context) => {
+  const valid = input.outcome === "not_completed"
+    ? input.progressPercent === 0
+    : input.outcome === "complete"
+      ? input.progressPercent === 100
+      : input.progressPercent >= 1 && input.progressPercent <= 99;
+  if (!valid) context.addIssue({
+    code: z.ZodIssueCode.custom,
+    path: ["progressPercent"],
+    message: "progressPercent does not match outcome"
+  });
 });
 
 export const acceptTaskConflictsSchema = z.object({

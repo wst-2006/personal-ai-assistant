@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ClipboardEvent, type CSSProperties, type DragEvent, type FormEvent } from "react";
-import { Check, ChevronDown, ChevronLeft, ChevronRight, ClipboardPenLine, HeartPulse, Leaf, LoaderCircle, MapPin, MessageCircleQuestion, Quote, RefreshCcw, Send, Sparkles, Upload, X } from "lucide-react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, ClipboardPenLine, Droplets, HeartPulse, Leaf, LoaderCircle, MapPin, MessageCircleQuestion, Quote, RefreshCcw, Save, Send, Sparkles, Upload, X } from "lucide-react";
 
 type Profile = {
   city: string | null;
@@ -99,6 +99,15 @@ type HealthConversationState = {
   conversation: { id: string; weekStart: string; createdAt: string; updatedAt: string };
   messages: HealthConversationMessage[];
 };
+type DailyActual = {
+  localDate: string;
+  proteinGrams: number | null;
+  fiberGrams: number | null;
+  waterMilliliters: number | null;
+  createdAt: string;
+  updatedAt: string;
+};
+type DailyActualDraft = { proteinGrams: string; fiberGrams: string; waterLiters: string };
 type HealthAiStage = "idle" | "saving_message" | "replying" | "reply_failed" | "ready" | "preparing_candidate" | "generating_candidate" | "waiting_candidate" | "candidate_ready" | "candidate_failed";
 type ApiError = Error & { status?: number; body?: { error?: string; message?: string } };
 
@@ -150,6 +159,38 @@ function referenceScale(label: string, range: { minimum: number; maximum: number
   const end=range?Math.max(start,Math.min(100,(range.maximum-limits.minimum)/span*100)):0;
   const midpoint=(start+end)/2;
   return <div className="health-target-row" data-tone={tone} data-has-range={range?"true":"false"} style={{"--range-start":`${start}%`,"--range-width":`${end-start}%`,"--range-mid":`${midpoint}%`} as CSSProperties}><span>{label}</span><strong>{rangeText(range, suffix)}</strong><i aria-hidden="true"><b /></i><small>{range?"AI 参考范围":"未提供"}</small></div>;
+}
+
+function actualProgress(label: string, actual: number | null, range: { minimum: number; maximum: number } | undefined, tone: string, suffix: string, fallbackMaximum: number) {
+  const scaleMaximum = Math.max(range?.maximum ?? fallbackMaximum, 1);
+  const fill = actual === null ? 0 : Math.min(100, actual / scaleMaximum * 100);
+  const targetMinimum = range ? Math.min(100, range.minimum / scaleMaximum * 100) : 0;
+  const status = actual === null
+    ? "尚未记录"
+    : !range
+      ? "已记录实际值"
+      : actual < range.minimum
+        ? `距参考下限 ${formatActualValue(range.minimum - actual)}${suffix}`
+        : actual <= range.maximum
+          ? "已进入参考范围"
+          : `高于参考上限 ${formatActualValue(actual - range.maximum)}${suffix}`;
+  return <article className="health-actual-progress" data-tone={tone} style={{ "--actual-fill": `${fill}%`, "--target-min": `${targetMinimum}%` } as CSSProperties}>
+    <header><span>{label}</span><strong>{actual === null ? "未记录" : `${formatActualValue(actual)}${suffix}`}</strong></header>
+    <div aria-hidden="true"><i />{range ? <b /> : null}</div>
+    <footer><span>{range ? `参考 ${rangeText(range, suffix)}` : "当前参考未提供范围"}</span><em>{status}</em></footer>
+  </article>;
+}
+
+function formatActualValue(value: number) {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1).replace(/\.0$/, "");
+}
+
+function actualDraftFrom(record: DailyActual | null): DailyActualDraft {
+  return {
+    proteinGrams: record?.proteinGrams === null || record?.proteinGrams === undefined ? "" : String(record.proteinGrams),
+    fiberGrams: record?.fiberGrams === null || record?.fiberGrams === undefined ? "" : String(record.fiberGrams),
+    waterLiters: record?.waterMilliliters === null || record?.waterMilliliters === undefined ? "" : formatActualValue(record.waterMilliliters / 1000)
+  };
 }
 
 function listOrMissing(items: string[] | undefined, className?: string) {
@@ -330,11 +371,20 @@ export function HealthWorkspace({ onAskHealth, onCreateTask }:{
   const [manualDraft, setManualDraft] = useState<ManualPlanDraft | null>(null);
   const [sleepImageAnalysisAvailable, setSleepImageAnalysisAvailable] = useState<boolean | null>(null);
   const [feishuHealthSyncAvailable, setFeishuHealthSyncAvailable] = useState<boolean | null>(null);
+  const [dailyActual, setDailyActual] = useState<DailyActual | null>(null);
+  const [dailyActualDraft, setDailyActualDraft] = useState<DailyActualDraft>(() => actualDraftFrom(null));
+  const [dailyActualLoading, setDailyActualLoading] = useState(false);
+  const [dailyActualSaving, setDailyActualSaving] = useState(false);
+  const [dailyActualMessage, setDailyActualMessage] = useState<string | null>(null);
   const sleepFileInputRef = useRef<HTMLInputElement | null>(null);
   const candidateSectionRef = useRef<HTMLElement | null>(null);
   const generationAttemptRef = useRef(0);
   const visiblePlan = candidate ?? active;
   const selectedReference = visiblePlan?.days[selectedDay] ?? null;
+  const actualDate = selectedReference?.localDate ?? addDays(weekStart, selectedDay);
+  const actualReference = active?.days.find((day) => day.localDate === actualDate) ?? null;
+  const actualDateRef = useRef(actualDate);
+  actualDateRef.current = actualDate;
   const sleepDate = selectedReference?.localDate ?? shanghaiDate();
   const candidateIsUneditedSleepRevision = candidate?.source === "ai" && candidate.sourceSleepAnalysisId !== null;
   const lastCollaborationMessage = collaboration?.messages.at(-1) ?? null;
@@ -385,6 +435,28 @@ export function HealthWorkspace({ onAskHealth, onCreateTask }:{
       .catch(() => { if (!cancelled) setSleepAnalyses([]); });
     return () => { cancelled = true; };
   }, [sleepDate]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setDailyActualLoading(true);
+    setDailyActual(null);
+    setDailyActualDraft(actualDraftFrom(null));
+    setDailyActualMessage(null);
+    void request<{ actual: DailyActual | null }>(`/api/v1/health/days/${actualDate}/actual`)
+      .then((result) => {
+        if (cancelled) return;
+        setDailyActual(result.actual);
+        setDailyActualDraft(actualDraftFrom(result.actual));
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setDailyActual(null);
+        setDailyActualDraft(actualDraftFrom(null));
+        setDailyActualMessage("实际记录暂时无法读取；健康参考本身不受影响。");
+      })
+      .finally(() => { if (!cancelled) setDailyActualLoading(false); });
+    return () => { cancelled = true; };
+  }, [actualDate]);
 
   async function reload() {
     setLoading(true);
@@ -774,6 +846,38 @@ export function HealthWorkspace({ onAskHealth, onCreateTask }:{
     } finally { setBusy(false); }
   }
 
+  async function saveDailyActual(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const targetDate = actualDate;
+    const proteinGrams = dailyActualDraft.proteinGrams.trim() === "" ? null : Number(dailyActualDraft.proteinGrams);
+    const fiberGrams = dailyActualDraft.fiberGrams.trim() === "" ? null : Number(dailyActualDraft.fiberGrams);
+    const waterLiters = dailyActualDraft.waterLiters.trim() === "" ? null : Number(dailyActualDraft.waterLiters);
+    if ((proteinGrams !== null && (!Number.isInteger(proteinGrams) || proteinGrams < 0 || proteinGrams > 1000))
+      || (fiberGrams !== null && (!Number.isInteger(fiberGrams) || fiberGrams < 0 || fiberGrams > 200))
+      || (waterLiters !== null && (!Number.isFinite(waterLiters) || waterLiters < 0 || waterLiters > 10))) {
+      setDailyActualMessage("请检查数值：蛋白质和纤维使用整数克，饮水使用 0–10 L。");
+      return;
+    }
+    setDailyActualSaving(true);
+    setDailyActualMessage(null);
+    try {
+      const result = await request<{ actual: DailyActual | null }>(`/api/v1/health/days/${targetDate}/actual`, "PUT", {
+        proteinGrams,
+        fiberGrams,
+        waterMilliliters: waterLiters === null ? null : Math.round(waterLiters * 1000)
+      });
+      if (actualDateRef.current !== targetDate) return;
+      setDailyActual(result.actual);
+      setDailyActualDraft(actualDraftFrom(result.actual));
+      setDailyActualMessage(result.actual ? "当日实际记录已保存。" : "当日实际记录已清空。");
+    } catch {
+      if (actualDateRef.current !== targetDate) return;
+      setDailyActualMessage("实际记录没有保存，请稍后重试。");
+    } finally {
+      setDailyActualSaving(false);
+    }
+  }
+
   function askAbout(kind: "food" | "movement") {
     if (!selectedReference || !visiblePlan) return;
     const date = selectedReference.localDate;
@@ -952,6 +1056,21 @@ export function HealthWorkspace({ onAskHealth, onCreateTask }:{
           }) && <div><strong>本周</strong><span>候选没有改变当前可显示的每日参考；确认前原计划仍保持不变。</span></div>}</div>
         </section>}
         <div className="health-days" role="tablist" aria-label="本周健康参考日期">{visiblePlan.days.map((day) => <button key={day.id} role="tab" aria-selected={selectedDay === day.dayIndex} className={selectedDay === day.dayIndex ? "active" : ""} type="button" onClick={() => setSelectedDay(day.dayIndex)}><span>{weekday[day.dayIndex]}</span><strong>{day.localDate.slice(8)}</strong></button>)}</div>
+        <section className="health-actuals" aria-label={`${actualDate} 实际营养与饮水记录`}>
+          <header><div><p className="section-kicker">当日实际记录</p><h3>{actualDate} · 只记每日总量</h3><small>实际记录独立于 AI 健康参考；修改或替换周计划不会覆盖这些数据。</small></div><Droplets aria-hidden="true" /></header>
+          <div className="health-actual-progress-grid">
+            {actualProgress("蛋白质", dailyActual?.proteinGrams ?? null, actualReference?.content.proteinRangeGrams, "protein", "g", 200)}
+            {actualProgress("膳食纤维", dailyActual?.fiberGrams ?? null, actualReference?.content.nutritionTargets?.fiberGrams, "fiber", "g", 60)}
+            {actualProgress("饮水", dailyActual?.waterMilliliters === null || dailyActual?.waterMilliliters === undefined ? null : dailyActual.waterMilliliters / 1000, actualReference?.content.nutritionTargets?.hydrationLiters, "water", "L", 5)}
+          </div>
+          <form className="health-actual-form" onSubmit={saveDailyActual}>
+            <label><span>蛋白质实际（g）</span><input aria-label="蛋白质实际克数" type="number" min="0" max="1000" step="1" value={dailyActualDraft.proteinGrams} disabled={dailyActualLoading || dailyActualSaving} onChange={(event) => { setDailyActualDraft((draft) => ({ ...draft, proteinGrams: event.target.value })); setDailyActualMessage(null); }} placeholder="例如 95" /></label>
+            <label><span>膳食纤维实际（g）</span><input aria-label="膳食纤维实际克数" type="number" min="0" max="200" step="1" value={dailyActualDraft.fiberGrams} disabled={dailyActualLoading || dailyActualSaving} onChange={(event) => { setDailyActualDraft((draft) => ({ ...draft, fiberGrams: event.target.value })); setDailyActualMessage(null); }} placeholder="例如 26" /></label>
+            <label><span>饮水实际（L）</span><input aria-label="饮水实际升数" type="number" min="0" max="10" step="0.1" value={dailyActualDraft.waterLiters} disabled={dailyActualLoading || dailyActualSaving} onChange={(event) => { setDailyActualDraft((draft) => ({ ...draft, waterLiters: event.target.value })); setDailyActualMessage(null); }} placeholder="例如 2.3" /></label>
+            <button className="primary-button" type="submit" disabled={dailyActualLoading || dailyActualSaving}>{dailyActualSaving ? <LoaderCircle className="spin" /> : <Save />}{dailyActualSaving ? "正在保存" : "保存当日记录"}</button>
+          </form>
+          <p className="health-actual-message" role="status">{dailyActualLoading ? "正在读取当日实际记录…" : dailyActualMessage ?? "留空并保存可清除该项；不会生成饮食评价或处罚。"}</p>
+        </section>
         {selectedReference && <>
           {(selectedReference.content.seasonalGuidance||selectedReference.content.seasonalPoem)&&<article className="health-seasonal-card"><Leaf/><div>{selectedReference.content.seasonalGuidance&&<><p className="section-kicker">结合时令与已取得的环境信息</p><strong>{selectedReference.content.seasonalGuidance}</strong></>}{selectedReference.content.seasonalPoem&&<blockquote><Quote/><p>“{selectedReference.content.seasonalPoem.excerpt}”</p><cite>{selectedReference.content.seasonalPoem.author}《{selectedReference.content.seasonalPoem.title}》</cite><small>{selectedReference.content.seasonalPoem.relevance}</small></blockquote>}</div></article>}
           <article className="health-day-detail health-prescription">

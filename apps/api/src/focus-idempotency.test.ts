@@ -233,7 +233,7 @@ describe("focus command idempotency", () => {
     expect(outcomes).toHaveLength(0);
   });
 
-  it("completes objectively without writing subjective feedback when evaluation is disabled", async () => {
+  it("keeps the task pending without inventing an outcome when evaluation is disabled", async () => {
     const taskId = randomUUID();
     const structureId = randomUUID();
     const sessionId = randomUUID();
@@ -319,19 +319,14 @@ describe("focus command idempotency", () => {
         }
       ]);
 
-      const evaluated = await service.skipFinalBreak(sessionId, 1, randomUUID());
+      const ended = await service.skipFinalBreak(sessionId, 1, randomUUID());
       const [task] = await connection.db.select().from(tasks).where(eq(tasks.id, taskId));
       const outcomes = await connection.db.select().from(taskOutcomes).where(eq(taskOutcomes.taskId, taskId));
       const feedback = await connection.db.select().from(taskFeedback).where(eq(taskFeedback.taskId, taskId));
 
-      expect(evaluated).toMatchObject({ state: "evaluated", effectiveFocusSeconds: 3300 });
-      expect(task).toMatchObject({ lifecycleStatus: "closed", currentOutcome: "complete" });
-      expect(outcomes).toEqual([expect.objectContaining({
-        focusSessionId: sessionId,
-        outcome: "complete",
-        progressPercent: 100,
-        source: "system",
-      })]);
+      expect(ended).toMatchObject({ state: "ended", effectiveFocusSeconds: 3300 });
+      expect(task).toMatchObject({ lifecycleStatus: "awaiting_outcome", currentOutcome: null });
+      expect(outcomes).toHaveLength(0);
       expect(feedback).toHaveLength(0);
     } finally {
       await connection.db.update(userProfiles).set({
@@ -342,7 +337,7 @@ describe("focus command idempotency", () => {
     }
   });
 
-  it("keeps the latest-ended evaluation in front of a background running task", async () => {
+  it("keeps an executing session in front while older sessions wait for evaluation", async () => {
     const olderTaskId = randomUUID();
     const runningTaskId = randomUUID();
     const latestTaskId = randomUUID();
@@ -418,7 +413,85 @@ describe("focus command idempotency", () => {
     ]);
 
     const current = await service.current();
-    expect(current?.taskId).toBe(latestTaskId);
-    expect(current?.state).toBe("ended");
+    expect(current?.taskId).toBe(runningTaskId);
+    expect(current?.state).toBe("running");
+    const execution = await service.currentExecution();
+    expect(execution?.taskId).toBe(runningTaskId);
+    expect(execution?.state).toBe("running");
+  });
+
+  it("resolves preparation and returns the task to the unscheduled list in one transaction", async () => {
+    const taskId = randomUUID();
+    const sessionId = randomUUID();
+    taskIds.push(taskId);
+    await connection.db.insert(tasks).values({
+      id: taskId,
+      title: "Move from preparation",
+      lifecycleStatus: "open",
+      scheduleKind: "exact",
+      localDate: "2099-08-11",
+      startAt: new Date("2099-08-11T01:00:00.000Z"),
+      endAt: new Date("2099-08-11T02:00:00.000Z"),
+      timeZone: "Asia/Shanghai",
+      version: 1,
+      scheduleRevision: 1,
+    });
+    await connection.db.insert(focusSessions).values({
+      id: sessionId,
+      taskId,
+      state: "preparing",
+      plannedStartAt: new Date("2099-08-11T01:00:00.000Z"),
+      plannedEndAt: new Date("2099-08-11T02:00:00.000Z"),
+      preparingEndsAt: new Date("2099-08-11T01:00:00.000Z"),
+      version: 1,
+    });
+
+    const stopped = await service.resolvePreparationDecision(sessionId, 1, "other_arrangement", undefined, randomUUID());
+    const [task] = await connection.db.select().from(tasks).where(eq(tasks.id, taskId));
+
+    expect(stopped).toMatchObject({ state: "stopped_for_change" });
+    expect(task).toMatchObject({
+      lifecycleStatus: "open",
+      scheduleKind: "none",
+      startAt: null,
+      endAt: null,
+      version: 2,
+      scheduleRevision: 2,
+    });
+  });
+
+  it("resolves preparation and cancels the task in the same transaction", async () => {
+    const taskId = randomUUID();
+    const sessionId = randomUUID();
+    taskIds.push(taskId);
+    await connection.db.insert(tasks).values({
+      id: taskId,
+      title: "Cancel from preparation",
+      lifecycleStatus: "open",
+      scheduleKind: "exact",
+      localDate: "2099-08-12",
+      startAt: new Date("2099-08-12T01:00:00.000Z"),
+      endAt: new Date("2099-08-12T02:00:00.000Z"),
+      timeZone: "Asia/Shanghai",
+      version: 1,
+      scheduleRevision: 1,
+    });
+    await connection.db.insert(focusSessions).values({
+      id: sessionId,
+      taskId,
+      state: "preparing",
+      plannedStartAt: new Date("2099-08-12T01:00:00.000Z"),
+      plannedEndAt: new Date("2099-08-12T02:00:00.000Z"),
+      preparingEndsAt: new Date("2099-08-12T01:00:00.000Z"),
+      version: 1,
+    });
+
+    const stopped = await service.resolvePreparationDecision(sessionId, 1, "cancel_task", undefined, randomUUID());
+    const [task] = await connection.db.select().from(tasks).where(eq(tasks.id, taskId));
+    const events = await connection.db.select().from(taskLifecycleEvents).where(eq(taskLifecycleEvents.taskId, taskId));
+
+    expect(stopped).toMatchObject({ state: "stopped_for_change" });
+    expect(task).toMatchObject({ lifecycleStatus: "cancelled", version: 2, scheduleRevision: 2 });
+    expect(events).toContainEqual(expect.objectContaining({ fromStatus: "open", toStatus: "cancelled", source: "app" }));
   });
 });
