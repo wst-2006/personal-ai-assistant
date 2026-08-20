@@ -63,10 +63,9 @@ Tauri `runtime/` and `target/` remain ignored.
 Before publication, scan both the current tree and the complete Git history. If
 a real credential is found in history, revoke/rotate it first and then rewrite
 the affected history; deleting it only from the latest commit is insufficient.
-Commit metadata also exposes author names and email addresses. Decide whether
-the repository will be published under the current identity or a GitHub
-`noreply` identity before the first push; changing this later requires a history
-rewrite.
+Commit metadata also exposes author names and email addresses. Use a
+non-personal release identity before publishing; changing this later requires
+a history rewrite.
 
 ## Repository material still needed
 
@@ -77,9 +76,8 @@ rewrite.
 
 Completed in the working tree:
 
-- The root `LICENSE` now contains the standard Apache License 2.0 text, and the
-  public attribution choice is GitHub username plus the account's exact GitHub
-  `noreply` email.
+- The root `LICENSE` now contains the standard Apache License 2.0 text. No
+  personal account identifier or email is required in the source tree.
 - The public product name and application identifier remain
   `Personal AI Assistant` / `com.personalai.assistant`.
 - README now presents the product in Chinese, explains the complete user-facing
@@ -125,9 +123,7 @@ codes, access tokens, database URLs or desktop file paths.
 
 - The working tree contains a large, coherent product update that is not yet
   organized into reviewable commits.
-- Existing commits use a local author identity; before organizing the public
-  commits, the owner still needs to provide the exact GitHub `noreply` address
-  shown in account settings so it is not guessed incorrectly.
+- Commit history must use a non-personal release identity before publication.
 - Final promotional screenshots have not yet been captured from a disposable
   demo profile.
 - The current guarded PostgreSQL schema verifies successfully and the complete

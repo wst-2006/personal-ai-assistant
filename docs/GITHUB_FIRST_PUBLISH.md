@@ -42,9 +42,7 @@ GitHub 的 Git 操作不使用账号密码验证。第一次发布推荐二选�
 
 ### 2. 公开署名
 
-Git 提交会公开作者名称和邮箱。已经确定使用 **GitHub 用户名 + GitHub noreply 邮箱**；在组织首次公开提交前，仍需从 GitHub 账号设置中复制准确的 noreply 邮箱，不能根据用户名猜测。
-
-GitHub noreply 邮箱可在 GitHub `Settings → Emails` 中查看。最好在第一次公开推送前决定，避免以后重写历史。
+Git 提交会公开作者名称和邮箱。发布前由仓库所有者自行选择非个人化的提交署名，并确认不会暴露个人邮箱、设备路径或其他账号信息。
 
 ### 3. 宣传截图
 
@@ -58,12 +56,12 @@ GitHub noreply 邮箱可在 GitHub `Settings → Emails` 中查看。最好在�
 4. 将整理后的提交推到 Private staging 仓库。
 5. 在 GitHub 页面再次检查文件、提交作者和 Actions 结果。
 6. 使用虚构演示数据安装并验收 Release 安装包。
-7. 确认仓库中的 Apache-2.0 许可证和 GitHub noreply 提交署名正确。
+7. 确认仓库中的 Apache-2.0 许可证和提交署名不包含个人信息。
 8. 最后才把仓库改为 Public。
 
 ## 创建首个 Release
 
-建议第一个标签：`v0.1.20`。
+建议使用与应用版本一致的标签，例如 `v0.1.20`。
 
 Release 附件只包含：
 
@@ -77,10 +75,9 @@ Release 附件只包含：
 项目准备完成后，仓库所有者只需要亲自处理：
 
 1. 创建 Private 空仓库并提供 HTTPS 地址；
-2. 从 GitHub `Settings → Emails` 复制准确的 noreply 邮箱；
-3. 检查提交署名显示为预期的 GitHub 用户名；
-4. 在 GitHub 登录授权或 GitHub Desktop 中点击推送；
-5. 检查无误后将仓库改为 Public；
-6. 在 Release 页面上传安装包和校验文件。
+2. 在 GitHub 登录授权或 GitHub Desktop 中点击推送；
+3. 检查提交署名、文件列表和历史中没有个人信息；
+4. 检查无误后再决定仓库可见性；
+5. 在 Release 页面上传安装包和校验文件。
 
 其他本地整理、脱敏检查、README、配置文档、提交清单和构建验证都可以在不接触账号密码的情况下完成。
