@@ -4,11 +4,22 @@ import { connectVerifiedDatabase } from "@personal-ai/db/client";
 import { loadDatabaseConfig } from "@personal-ai/db/config";
 import { cyberDiaries, dailyBriefs, focusSessionSegmentRuns, focusSessions, focusStructures, reviewMessages, reviewSessions, taskFeedback, taskOutcomes, tasks } from "@personal-ai/db/schema";
 import { eq } from "drizzle-orm";
-import { GrowthService } from "./growth-service.js";
+import { bambooCountForPlannedTasks, GrowthService } from "./growth-service.js";
 
 const connection = await connectVerifiedDatabase(loadDatabaseConfig());
 
 afterAll(async () => { await connection.client.end(); });
+
+describe("bamboo count", () => {
+  it("follows the planned-task bands", () => {
+    expect(bambooCountForPlannedTasks(0)).toBe(0);
+    expect(bambooCountForPlannedTasks(1)).toBe(1);
+    expect(bambooCountForPlannedTasks(2)).toBe(1);
+    expect(bambooCountForPlannedTasks(3)).toBe(2);
+    expect(bambooCountForPlannedTasks(4)).toBe(2);
+    expect(bambooCountForPlannedTasks(5)).toBe(4);
+  });
+});
 
 function uniqueFutureDate(): string {
   const offset = Number.parseInt(randomUUID().replaceAll("-", "").slice(0, 6), 16) % 6_000;
@@ -111,7 +122,7 @@ describe("GrowthService", () => {
       expect(summary.radar.find((metric) => metric.key === "energyState")).toMatchObject({ value: 80, sampleDays: 1, source: "user" });
       expect(summary.garden.quality).toBe(70);
       expect(summary.garden.growthPercent).toBe(25);
-      expect(summary.completedTasks).toBe(0);
+      expect(summary.completedTasks).toBe(1);
       expect(summary.garden).toMatchObject({
         points: 52,
         scoredDays: 1,

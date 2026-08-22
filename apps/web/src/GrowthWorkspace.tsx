@@ -44,6 +44,14 @@ const BAMBOO_NODE_MIN = 6;
 const BAMBOO_NODE_MAX = 8;
 const BAMBOO_GUST_HOLD_MS = 900;
 const BAMBOO_SETTLE_MS = 1_300;
+const FOCUS_QUOTES = [
+  { text: "不积跬步，无以至千里；不积小流，无以成江海。", author: "荀子" },
+  { text: "业精于勤，荒于嬉；行成于思，毁于随。", author: "韩愈" },
+  { text: "志不立，天下无可成之事。", author: "王阳明" },
+  { text: "非学无以广才，非志无以成学。", author: "诸葛亮" },
+  { text: "古之立大事者，不惟有超世之才，亦必有坚忍不拔之志。", author: "苏轼" },
+  { text: "读书有三到，谓心到、眼到、口到。", author: "朱熹" }
+] as const;
 
 function seededRandom(seed: number) {
   let value = seed >>> 0;
@@ -283,8 +291,8 @@ function drawBamboo(context: CanvasRenderingContext2D, stalks: BambooStalk[], sh
 }
 
 export function growthBambooStage(growthPercent: number): BambooStage {
-  if (growthPercent < 50) return "shoots";
-  if (growthPercent < 80) return "mixed";
+  if (growthPercent < 33) return "shoots";
+  if (growthPercent <= 66) return "mixed";
   return "grove";
 }
 
@@ -611,6 +619,7 @@ function FeelingTraces({ satisfaction }: { satisfaction: Summary["satisfaction"]
 }
 
 function GrowthLandscape({ summary }: { summary: Summary }) {
+  const [focusQuoteIndex, setFocusQuoteIndex] = useState(() => Math.floor(Math.random() * FOCUS_QUOTES.length));
   const feelingTotal = summary.satisfaction.satisfied + summary.satisfaction.neutral + summary.satisfaction.dissatisfied;
   const feelingBalance = feelingTotal === 0
     ? 0
@@ -619,14 +628,19 @@ function GrowthLandscape({ summary }: { summary: Summary }) {
   const selectedCompletedTasks = selectedDay?.completedTasks ?? 0;
   const selectedPlannedTasks = selectedDay?.plannedTasks ?? 0;
   const growthPercent = summary.garden.growthPercent;
-  const growthNarrative = growthPercent <= 0
-    ? "尚待落笔"
-    : growthPercent < 50
-      ? "竹笋初生"
-      : growthPercent < 80
-        ? "笋竹相间"
-        : "成竹成景";
   const bambooStage = growthBambooStage(growthPercent);
+  const focusQuote = FOCUS_QUOTES[focusQuoteIndex]!;
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setFocusQuoteIndex((current) => {
+        const offset = 1 + Math.floor(Math.random() * (FOCUS_QUOTES.length - 1));
+        return (current + offset) % FOCUS_QUOTES.length;
+      });
+    }, 12_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   return <section
     className="growth-landscape"
     data-tone={feelingBalance > .18 ? "bright" : feelingBalance < -.18 ? "strained" : feelingTotal ? "steady" : "quiet"}
@@ -638,10 +652,12 @@ function GrowthLandscape({ summary }: { summary: Summary }) {
       <path className="growth-river" d="M52 421C245 393 389 424 573 402C752 381 922 418 1148 388" />
     </svg>
     <div className="growth-scene-copy">
-      <p className="section-kicker">{summary.garden.treeKind}</p>
-      <strong>{growthNarrative}</strong>
-      <span>本期留下的景</span>
-      <p>每一笔都来自任务、专注、感受与主动复盘的真实记录。</p>
+      <strong>橙</strong>
+      <p className="growth-focus-quote">
+        <span>“{focusQuote.text}”</span>
+        <cite>——{focusQuote.author}</cite>
+      </p>
+      <p className="growth-scene-description">每一笔都来自任务、专注、感受与主动复盘的真实记录。</p>
     </div>
     <GrowthBamboo stage={bambooStage} bambooCount={summary.garden.bambooCount} />
     <dl className="growth-scene-metrics" id="growth-scene-details">

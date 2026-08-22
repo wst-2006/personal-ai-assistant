@@ -269,6 +269,39 @@ test("没有可选任务时专注页只显示淡墨点而不是黑横线或翻�
   await expect.poll(() => page.locator(".ink-clepsydra").evaluate((element) => getComputedStyle(element).getPropertyValue("--ink-progress").trim())).toBe("0%");
 });
 
+test("没有执行中会话时可打开 30 分钟待专注任务而不会触发整页错误", async ({ page }) => {
+  const localDate = "2099-12-20";
+  const taskId = "00000000-0000-4000-8000-000000000030";
+  const task = {
+    id: taskId,
+    title: "30 分钟待专注任务",
+    recordKind: "formal",
+    lifecycleStatus: "open",
+    scheduleKind: "exact",
+    startAt: `${localDate}T09:00:00+08:00`,
+    endAt: `${localDate}T09:30:00+08:00`,
+    timeZone: "Asia/Shanghai",
+    scheduleRevision: 1,
+    version: 1
+  };
+  await page.clock.setFixedTime(new Date(`${localDate}T08:00:00+08:00`));
+  await page.route(`${apiBase}/api/v1/tasks?date=${localDate}`, (route) => route.fulfill({ json: {
+    tasks: [task], blockingConflicts: [], historicalOverlaps: []
+  } }));
+  await page.route(`${apiBase}/api/v1/focus-sessions/current`, (route) => route.fulfill({ json: { session: null, snapshot: null } }));
+  await page.route(`${apiBase}/api/v1/tasks/${taskId}/focus-structures`, (route) => route.fulfill({ json: { focusStructures: [] } }));
+
+  await page.goto("/");
+  await page.locator(".app-rail").getByRole("button", { name: "专注", exact: true }).click();
+
+  await expect(page.locator(".workspace-render-error")).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: task.title, exact: true })).toBeVisible();
+  await expect(page.getByLabel("专注结构编辑器")).toBeVisible();
+  await expect(page.locator(".structure-timeline > .focus")).toContainText("30m");
+  await expect(page.locator(".structure-timeline > .break")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "确认并使用", exact: true })).toBeEnabled();
+});
+
 test("未排期任务不会进入专注候选且服务端拒绝创建会话", async ({ page, request }) => {
   const date = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit"

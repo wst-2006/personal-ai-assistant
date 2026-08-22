@@ -115,7 +115,7 @@ export class FeishuIntakeService {
       return { kind: "text", text: "我把这句话识别为已有计划的调整，不会把它新建成任务。请回到桌面软件的计划调整入口，选择受影响的任务并确认新的时间；当前没有自动改动任何排期。" };
     }
 
-    if (this.focusService && /(?:我(?:现在)?开始了|现在开始|开始(?:这个|这项|该)?任务)/u.test(text)) {
+    if (this.focusService && isFocusStartMessage(text)) {
       const session = await this.focusService.startAwaitingCurrent();
       if (!session) return { kind: "text", text: "当前没有仍处于有效时段、可确认开始的任务。" };
       const messageId = await this.startedReminderMessageId(session.taskId);
@@ -578,6 +578,15 @@ function stateMessage(state: string): string {
   if (state === "needs_desktop") return "这条内容需要在桌面软件中补全或处理冲突，飞书没有自动创建任务。";
   if (state === "failed") return "这条候选未能保存，请在桌面软件中手动录入。";
   return "这条候选正在处理，请稍后查看软件。";
+}
+
+function isFocusStartMessage(value: string): boolean {
+  const text = value.replace(/[\s\u3000]+/gu, "").replace(/[。！？!?，,；;]+$/u, "");
+  return [
+    /^(?:我)?(?:已经|现在|刚刚|刚才|马上|立刻)?开始(?:了)?(?:这个|这项|该)?(?:任务|专注)$/u,
+    /^(?:这个|这项|该)?任务(?:我)?(?:已经|现在|刚刚|刚才)?开始(?:了)?$/u,
+    /^(?:现在|马上|立刻)开始(?:这个|这项|该)?(?:任务|专注)?$/u,
+  ].some((pattern) => pattern.test(text));
 }
 
 function startedTaskCard(message: string) {

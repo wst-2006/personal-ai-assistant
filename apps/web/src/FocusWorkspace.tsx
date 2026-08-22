@@ -5,6 +5,8 @@ import {
   ChevronLeft,
   Clock3,
   Eye,
+  Maximize2,
+  Minimize2,
   PencilLine,
   Play,
   X,
@@ -81,6 +83,128 @@ type UserSoundProfile = {
   focusEndSoundEnabled?: boolean;
 };
 
+const DEFAULT_TIME_ZONE = "Asia/Shanghai";
+const FOCUS_STATES: FocusState[] = [
+  "scheduled", "reminded", "preparing", "armed", "awaiting_late_start",
+  "running", "paused", "ended", "evaluated", "stopped_no_response", "stopped_for_change",
+];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function safeTimeZone(value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) return DEFAULT_TIME_ZONE;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format();
+    return value;
+  } catch {
+    return DEFAULT_TIME_ZONE;
+  }
+}
+
+function nullableString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function nullableDateString(value: unknown): string | null {
+  const text = nullableString(value);
+  return text && Number.isFinite(new Date(text).getTime()) ? text : null;
+}
+
+function positiveInt(value: unknown, fallback: number): number {
+  const number = typeof value === "number" ? value : Number(value);
+  return Number.isInteger(number) && number > 0 ? number : fallback;
+}
+
+function normalizeTask(value: unknown): Task | null {
+  if (!isRecord(value) || typeof value.id !== "string" || !value.id) return null;
+  const recordKind = value.recordKind === "backfill" ? "backfill" : "formal";
+  const lifecycleStatus = ["open", "active", "awaiting_outcome", "closed", "cancelled"].includes(String(value.lifecycleStatus))
+    ? value.lifecycleStatus as Task["lifecycleStatus"]
+    : "open";
+  const scheduleKind = ["none", "daypart", "exact"].includes(String(value.scheduleKind))
+    ? value.scheduleKind as Task["scheduleKind"]
+    : "none";
+  return {
+    id: value.id,
+    title: typeof value.title === "string" && value.title.trim() ? value.title : "未命名任务",
+    recordKind,
+    lifecycleStatus,
+    scheduleKind,
+    startAt: nullableDateString(value.startAt),
+    endAt: nullableDateString(value.endAt),
+    timeZone: safeTimeZone(value.timeZone),
+    scheduleRevision: positiveInt(value.scheduleRevision, 1),
+    version: positiveInt(value.version, 1),
+  };
+}
+
+function normalizeSession(value: unknown): Session | null {
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.taskId !== "string") return null;
+  const state = FOCUS_STATES.includes(value.state as FocusState) ? value.state as FocusState : null;
+  if (!state) return null;
+  const rawSegmentPosition = value.currentSegmentPosition === null || value.currentSegmentPosition === undefined
+    ? null
+    : Number(value.currentSegmentPosition);
+  const currentSegmentPosition = typeof rawSegmentPosition === "number" && Number.isInteger(rawSegmentPosition) && rawSegmentPosition >= 0
+    ? rawSegmentPosition
+    : null;
+  return {
+    id: value.id,
+    taskId: value.taskId,
+    state,
+    plannedStartAt: nullableDateString(value.plannedStartAt),
+    plannedEndAt: nullableDateString(value.plannedEndAt),
+    preparingEndsAt: nullableDateString(value.preparingEndsAt),
+    activeSinceAt: nullableDateString(value.activeSinceAt),
+    pausedAt: nullableDateString(value.pausedAt),
+    endedAt: nullableDateString(value.endedAt),
+    pausedTotalSeconds: Math.max(0, Number(value.pausedTotalSeconds) || 0),
+    rawActiveSeconds: Math.max(0, Number(value.rawActiveSeconds) || 0),
+    effectiveFocusSeconds: Math.max(0, Number(value.effectiveFocusSeconds) || 0),
+    focusStructureId: nullableString(value.focusStructureId),
+    currentSegmentPosition,
+    currentSegmentStartedAt: nullableDateString(value.currentSegmentStartedAt),
+    currentSegmentElapsedSeconds: Math.max(0, Number(value.currentSegmentElapsedSeconds) || 0),
+    version: positiveInt(value.version, 1),
+    stoppedReason: nullableString(value.stoppedReason),
+  };
+}
+
+function normalizeStructure(value: unknown): FocusStructureRecord | null {
+  if (!isRecord(value) || typeof value.id !== "string" || typeof value.totalStartAt !== "string" || typeof value.totalEndAt !== "string") return null;
+  const totalStartMs = new Date(value.totalStartAt).getTime();
+  const totalEndMs = new Date(value.totalEndAt).getTime();
+  if (!Number.isFinite(totalStartMs) || !Number.isFinite(totalEndMs) || totalEndMs <= totalStartMs) return null;
+  const state = ["candidate", "active", "superseded", "invalidated", "cancelled"].includes(String(value.state))
+    ? value.state as FocusStructureRecord["state"]
+    : null;
+  if (!state || !Array.isArray(value.segments)) return null;
+  const segments: FocusStructureRecord["segments"] = value.segments.flatMap((segment, index) => {
+    if (!isRecord(segment)) return [];
+    const segmentType: FocusSegment["segmentType"] | null = segment.segmentType === "break" ? "break" : segment.segmentType === "focus" ? "focus" : null;
+    const durationMinutes = Number(segment.durationMinutes);
+    if (!segmentType || !Number.isFinite(durationMinutes) || durationMinutes <= 0) return [];
+    const rawPosition = Number(segment.position);
+    const position = Number.isInteger(rawPosition) && rawPosition >= 0 ? rawPosition : index;
+    return [{ segmentType, durationMinutes, position }];
+  }).map((segment, index) => ({ ...segment, position: Number.isInteger(segment.position) && segment.position >= 0 ? segment.position : index }));
+  if (!segments.length) return null;
+  const totalMinutes = (totalEndMs - totalStartMs) / 60_000;
+  if (!Number.isInteger(totalMinutes) || segments.reduce((sum, segment) => sum + segment.durationMinutes, 0) !== totalMinutes) return null;
+  return {
+    id: value.id,
+    state,
+    source: value.source === "ai" || value.source === "template" ? value.source : "manual",
+    taskScheduleRevision: positiveInt(value.taskScheduleRevision, 1),
+    totalStartAt: value.totalStartAt,
+    totalEndAt: value.totalEndAt,
+    version: positiveInt(value.version, 1),
+    segments,
+  };
+}
+
 function isFocusStartEligibleTask(task: Task | null | undefined): task is Task {
   return Boolean(
     task
@@ -100,9 +224,13 @@ const nowDate = () =>
     month: "2-digit",
     day: "2-digit",
   }).format(new Date());
-const clock = (value: string, timeZone: string) => new Intl.DateTimeFormat("zh-CN", {
-  timeZone, hour: "2-digit", minute: "2-digit", hour12: false
-}).format(new Date(value));
+const clock = (value: string, timeZone: string) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "--:--";
+  return new Intl.DateTimeFormat("zh-CN", {
+    timeZone: safeTimeZone(timeZone), hour: "2-digit", minute: "2-digit", hour12: false
+  }).format(date);
+};
 
 async function request<T>(
   path: string,
@@ -172,39 +300,46 @@ export function FocusWorkspace({
   const [focusTheme, setFocusTheme] = useState<FocusTheme>("ink");
   const [arrangementOpen, setArrangementOpen] = useState(false);
   const [editArrangementOpen, setEditArrangementOpen] = useState(false);
+  const [executionMinimized, setExecutionMinimized] = useState(false);
   const [soundPreferences, setSoundPreferences] = useState<FocusSoundPreferences>(defaultFocusSoundPreferences);
   const previousCueState = useRef<{ sessionId: string; state: FocusState; segmentPosition: number | null; segmentType: FocusSegment["segmentType"] | null } | null>(null);
   const previousFlipMinute = useRef<number | null>(null);
+  const sessionIdentityRef = useRef<string | null>(null);
   const load = useCallback(async () => {
     const [list, current, profileResult] = await Promise.all([
-      request<{ tasks: Task[] }>(`/api/v1/tasks?date=${nowDate()}`),
-      request<{ session: Session | null }>("/api/v1/focus-sessions/current"),
+      request<{ tasks?: unknown }>(`/api/v1/tasks?date=${nowDate()}`),
+      request<{ session?: unknown }>("/api/v1/focus-sessions/current"),
       request<{ profile: UserSoundProfile }>("/api/v1/user-profile").catch(() => ({ profile: {} as UserSoundProfile }))
     ]);
+    const profile = isRecord(profileResult.profile) ? profileResult.profile : {} as UserSoundProfile;
     setSoundPreferences({
-      flip: profileResult.profile.focusFlipSoundEnabled ?? true,
-      focusStart: profileResult.profile.focusStartSoundEnabled ?? true,
-      breakStart: profileResult.profile.breakStartSoundEnabled ?? true,
-      breakEnd: profileResult.profile.breakEndSoundEnabled ?? true,
-      focusEnd: profileResult.profile.focusEndSoundEnabled ?? true
+      flip: profile.focusFlipSoundEnabled ?? true,
+      focusStart: profile.focusStartSoundEnabled ?? true,
+      breakStart: profile.breakStartSoundEnabled ?? true,
+      breakEnd: profile.breakEndSoundEnabled ?? true,
+      focusEnd: profile.focusEndSoundEnabled ?? true
     });
-    setFocusTheme(profileResult.profile.focusTheme ?? "ink");
+    setFocusTheme(profile.focusTheme ?? "ink");
+    const currentSession = normalizeSession(current.session);
+    const listTasks = Array.isArray(list.tasks)
+      ? list.tasks.map(normalizeTask).filter((task): task is Task => Boolean(task))
+      : [];
     const additionalTaskIds = [...new Set([
-      current.session?.taskId,
+      currentSession?.taskId,
       preferredTaskId
     ].filter((id): id is string => Boolean(id)))];
     const additionalTasks = await Promise.all(additionalTaskIds.map((id) =>
-      request<{ task: Task }>(`/api/v1/tasks/${id}`)
-        .then((result) => result.task)
+      request<{ task?: unknown }>(`/api/v1/tasks/${id}`)
+        .then((result) => normalizeTask(result.task))
         .catch(() => null)
     ));
-    const currentSessionTask = current.session
-      ? additionalTasks.find((task) => task?.id === current.session?.taskId) ?? null
+    const currentSessionTask = currentSession
+      ? additionalTasks.find((task) => task?.id === currentSession.taskId) ?? listTasks.find((task) => task.id === currentSession.taskId) ?? null
       : null;
     const preferredTask = preferredTaskId
       ? additionalTasks.find((task) => task?.id === preferredTaskId) ?? null
       : null;
-    const visible = list.tasks.filter((task) => task.lifecycleStatus === "awaiting_outcome" || isFocusStartEligibleTask(task));
+    const visible = listTasks.filter((task) => task.lifecycleStatus === "awaiting_outcome" || isFocusStartEligibleTask(task));
     if (currentSessionTask?.recordKind === "formal" && !visible.some((task) => task.id === currentSessionTask.id)) {
       visible.push(currentSessionTask);
     }
@@ -217,23 +352,22 @@ export function FocusWorkspace({
       return leftTime - rightTime || left.title.localeCompare(right.title, "zh-CN");
     });
     setTasks(visible);
-    const nextExecutionSession = current.session && ["scheduled", "reminded", "preparing", "armed", "awaiting_late_start", "running", "paused"].includes(current.session.state)
-      ? current.session
+    const nextExecutionSession = currentSession && ["scheduled", "reminded", "preparing", "armed", "awaiting_late_start", "running", "paused"].includes(currentSession.state)
+      ? currentSession
       : null;
-    const endedAtMs = current.session?.endedAt ? new Date(current.session.endedAt).getTime() : Number.NaN;
+    const endedAtMs = currentSession?.endedAt ? new Date(currentSession.endedAt).getTime() : Number.NaN;
     const evaluationDeadline = endedAtMs + 90_000;
-    const evaluationDismissed = current.session?.state === "ended"
-      && window.localStorage.getItem(`personal-ai.focus-evaluation-dismissed.${current.session.id}`) === "1";
+    const evaluationDismissed = currentSession?.state === "ended"
+      && window.localStorage.getItem(`personal-ai.focus-evaluation-dismissed.${currentSession.id}`) === "1";
     if (
-      (profileResult.profile.focusEvaluationEnabled ?? true)
-      &&
-      current.session?.state === "ended"
+      (profile.focusEvaluationEnabled ?? true)
+      && currentSession?.state === "ended"
       && currentSessionTask
       && Number.isFinite(evaluationDeadline)
       && evaluationDeadline > Date.now()
       && !evaluationDismissed
     ) {
-      setEvaluationSession(current.session);
+      setEvaluationSession(currentSession);
       setEvaluationTask(currentSessionTask);
       setEvaluationDeadlineMs(evaluationDeadline);
       setOutcome("complete");
@@ -250,16 +384,34 @@ export function FocusWorkspace({
     const preferredEligibleId = isFocusStartEligibleTask(preferredTask) && visibleIds.has(preferredTask.id)
       ? preferredTask.id
       : null;
-    setSelectedId((currentId) => sessionTaskId
-      ?? preferredEligibleId
-      ?? (currentId && startableIds.has(currentId) ? currentId : null)
-      ?? visible.find(isFocusStartEligibleTask)?.id
-      ?? null);
+    const sessionChanged = sessionIdentityRef.current !== (nextExecutionSession?.id ?? null);
+    sessionIdentityRef.current = nextExecutionSession?.id ?? null;
+    setSelectedId((currentId) => {
+      if (!sessionChanged && currentId && visibleIds.has(currentId)) return currentId;
+      return sessionTaskId
+        ?? preferredEligibleId
+        ?? (currentId && startableIds.has(currentId) ? currentId : null)
+        ?? visible.find(isFocusStartEligibleTask)?.id
+        ?? null;
+    });
   }, [preferredTaskId]);
   useEffect(() => {
     void load().catch(() =>
       setError("无法恢复专注会话，请确认 API 正在运行。"),
     );
+  }, [load]);
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState === "visible") void load().catch(() => undefined);
+    };
+    window.addEventListener("focus", refresh);
+    window.addEventListener("pageshow", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.removeEventListener("focus", refresh);
+      window.removeEventListener("pageshow", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
   }, [load]);
   const selected = useMemo(
     () => tasks.find((task) => task.id === selectedId) ?? null,
@@ -286,7 +438,10 @@ export function FocusWorkspace({
     void request<{ focusStructures: FocusStructureRecord[] }>(`/api/v1/tasks/${selected.id}/focus-structures`)
       .then((result) => {
         if (cancelled) return;
-        const current = result.focusStructures.filter((item) =>
+        const structures = Array.isArray(result.focusStructures)
+          ? result.focusStructures.map(normalizeStructure).filter((item): item is FocusStructureRecord => Boolean(item))
+          : [];
+        const current = structures.filter((item) =>
           item.taskScheduleRevision === selected.scheduleRevision &&
           new Date(item.totalStartAt).getTime() === new Date(selected.startAt!).getTime() &&
           new Date(item.totalEndAt).getTime() === new Date(selected.endAt!).getTime()
@@ -312,7 +467,11 @@ export function FocusWorkspace({
     let cancelled = false;
     void request<{ focusStructures: FocusStructureRecord[] }>(`/api/v1/tasks/${session.taskId}/focus-structures`)
       .then((result) => {
-        if (!cancelled) setSessionStructure(result.focusStructures.find((item) => item.id === session.focusStructureId) ?? null);
+        if (cancelled) return;
+        const structures = Array.isArray(result.focusStructures)
+          ? result.focusStructures.map(normalizeStructure).filter((item): item is FocusStructureRecord => Boolean(item))
+          : [];
+        setSessionStructure(structures.find((item) => item.id === session.focusStructureId) ?? null);
       })
       .catch(() => { if (!cancelled) setSessionStructure(null); });
     return () => { cancelled = true; };
@@ -371,7 +530,9 @@ export function FocusWorkspace({
         ...(continuous ? {} : { segments })
       }
     );
-    return candidate.focusStructure;
+    const normalized = normalizeStructure(candidate.focusStructure);
+    if (!normalized) throw new Error("focus_structure_invalid_response");
+    return normalized;
   }
 
   async function saveStructure(segments: FocusSegment[], source: "manual" | "template"): Promise<void> {
@@ -401,7 +562,9 @@ export function FocusWorkspace({
           taskScheduleRevision: selected.scheduleRevision,
           instructions
         });
-      setCandidateStructure(candidate.focusStructure);
+      const normalized = normalizeStructure(candidate.focusStructure);
+      if (!normalized) throw new Error("focus_structure_invalid_response");
+      setCandidateStructure(normalized);
     } catch (error: any) {
       setError(error.body?.error === "focus_structure_task_conflict"
         ? "任务排期已经变化，请刷新后再让 AI 安排。"
@@ -422,7 +585,9 @@ export function FocusWorkspace({
           expectedTaskVersion: selected.version,
           expectedTaskScheduleRevision: selected.scheduleRevision
         });
-      setActiveStructure(confirmed.focusStructure);
+      const normalized = normalizeStructure(confirmed.focusStructure);
+      if (!normalized) throw new Error("focus_structure_invalid_response");
+      setActiveStructure(normalized);
       setCandidateStructure(null);
     } catch (error: any) {
       setError(error.body?.error?.includes("conflict")
@@ -445,7 +610,9 @@ export function FocusWorkspace({
           expectedTaskVersion: selected.version,
           expectedTaskScheduleRevision: selected.scheduleRevision
         });
-      setActiveStructure(confirmed.focusStructure);
+      const normalized = normalizeStructure(confirmed.focusStructure);
+      if (!normalized) throw new Error("focus_structure_invalid_response");
+      setActiveStructure(normalized);
       setCandidateStructure(null);
     } catch (error: any) {
       setError(error.body?.error?.includes("conflict")
@@ -610,7 +777,11 @@ export function FocusWorkspace({
   }
   const stage = session?.state ?? "idle";
   const displayTask = session ? sessionTask : selected;
-  const displayStructure = sessionStructure ?? activeStructure;
+  const selectedIsSessionTask = Boolean(session && selected?.id === session.taskId);
+  const displayStructure = session
+    ? (sessionStructure ?? (selectedIsSessionTask ? activeStructure : null))
+    : activeStructure;
+  const safeSegments = displayStructure?.segments ?? [];
   const prepLeft = session?.preparingEndsAt
     ? Math.ceil(
         Math.max(0, new Date(session.preparingEndsAt).getTime() - nowMs) /
@@ -630,7 +801,7 @@ export function FocusWorkspace({
     ? Math.ceil(Math.max(0, new Date(session.plannedEndAt).getTime() - nowMs) / 1000)
     : fixedWindowTotal;
   const currentSegment = displayStructure && session && session.currentSegmentPosition !== null
-    ? displayStructure.segments[session.currentSegmentPosition] ?? null
+    ? safeSegments[session.currentSegmentPosition] ?? null
     : null;
   const currentSegmentElapsed = stage === "running" && session?.currentSegmentStartedAt
     ? Math.max(0, Math.floor((nowMs - new Date(session.currentSegmentStartedAt).getTime()) / 1000))
@@ -664,7 +835,7 @@ export function FocusWorkspace({
           : 0;
   const isFinalBreak = stage === "running"
     && currentSegment?.segmentType === "break"
-    && session?.currentSegmentPosition === (displayStructure?.segments.length ?? 0) - 1;
+    && session?.currentSegmentPosition === safeSegments.length - 1;
   const focusScene = stage === "ended"
     ? "ended"
     : stage === "running" && currentSegment?.segmentType === "break"
@@ -696,12 +867,12 @@ export function FocusWorkspace({
   const segmentTimings = useMemo(() => {
     if (!displayStructure) return [];
     let cursor = new Date(displayStructure.totalStartAt).getTime();
-    return displayStructure.segments.map((segment) => {
+    return safeSegments.map((segment) => {
       const startsAt = cursor;
       cursor += segment.durationMinutes * 60_000;
       return { ...segment, startsAt, endsAt: cursor };
     });
-  }, [displayStructure]);
+  }, [displayStructure, safeSegments]);
   const currentSegmentTiming = session?.currentSegmentPosition === null || session?.currentSegmentPosition === undefined
     ? null
     : segmentTimings[session.currentSegmentPosition] ?? null;
@@ -766,6 +937,10 @@ export function FocusWorkspace({
     && ["preparing", "armed", "awaiting_late_start", "running", "ended"].includes(session.state)
   );
 
+  useEffect(() => {
+    if (!executionStage) setExecutionMinimized(false);
+  }, [executionStage]);
+
   return (
     <section className={`focus-workspace page ${executionStage ? "focus-workspace-executing" : ""}`} aria-labelledby="focus-title">
       <div className={`focus-stage focus-stage-${stage} focus-scene-${focusScene}`}>
@@ -796,7 +971,18 @@ export function FocusWorkspace({
           </span>
         </div>
         <div className={`focus-center ${executionStage ? "focus-center-executing" : ""}`}>
-          {executionStage ? (
+          {executionStage ? executionMinimized ? (
+            <div className="focus-execution-minimized" aria-label="已收起的当前专注计时">
+              <div className="focus-execution-minimized-copy">
+                <span>{currentSegment?.segmentType === "break" ? "休息中" : stage === "preparing" ? "准备开始" : "正在专注"}</span>
+                <strong>{displayTask?.title ?? "当前任务"}</strong>
+                <b>{clockValue}</b>
+              </div>
+              <button type="button" className="focus-execution-quiet" onClick={() => setExecutionMinimized(false)}>
+                <Maximize2 />展开计时
+              </button>
+            </div>
+          ) : (
             <div className="focus-execution" aria-label="当前专注执行状态">
               <div className="focus-execution-context">
                 <span>{stage === "reminded" ? "等待确认" : stage === "scheduled" ? "等待准备" : stage === "preparing" ? "准备" : stage === "armed" ? "已经确认" : stage === "awaiting_late_start" ? "尚未开始" : currentSegment?.segmentType === "break" ? "休息" : "正在专注"}</span>
@@ -836,6 +1022,7 @@ export function FocusWorkspace({
               </p>
 
               <div className="focus-execution-actions">
+                <button className="focus-execution-quiet" disabled={busy} onClick={() => setExecutionMinimized(true)}><Minimize2 />收起计时</button>
                 {stage === "reminded" ? (
                   <>
                     <button className="focus-execution-primary" disabled={busy} onClick={() => void transition("respond-start")}><Play />开始</button>
@@ -891,12 +1078,24 @@ export function FocusWorkspace({
               </div>
             </>
           )}
+          {executionStage && executionMinimized && !selectedIsSessionTask && selected?.scheduleKind === "exact" && selected.startAt && selected.endAt && (
+            <section className="focus-secondary-editor" aria-label="调整其他任务的专注结构">
+              <div className="focus-secondary-editor-heading">
+                <span className="section-kicker">调整另一项任务</span>
+                <strong>{selected.title}</strong>
+                <small>{clock(selected.startAt, selected.timeZone)}–{clock(selected.endAt, selected.timeZone)}</small>
+              </div>
+              {loadedStructureKey !== structureKey
+                ? <p className="focus-structure-loading">正在恢复已保存的专注结构…</p>
+                : <FocusStructureEditor task={{ id: selected.id, startAt: selected.startAt, endAt: selected.endAt, timeZone: selected.timeZone }} active={activeStructure} candidate={candidateStructure} busy={busy} onSave={saveStructure} onPlanAi={planAiStructure} onConfirm={confirmStructure} onConfirmDraft={confirmStructureDraft} onDiscard={discardCandidate} />}
+            </section>
+          )}
         </div>
         {(stage === "stopped_for_change" || stage === "stopped_no_response") && (
           <p className="focus-stopped">{session?.stoppedReason ?? "这次提醒已停止。"}，任务仍保留在你的安排中。</p>
         )}
       </div>
-      {!executionStage && <aside className="focus-picker focus-picker-split" aria-label="今日专注任务">
+      <aside className="focus-picker focus-picker-split" aria-label="今日专注任务">
         <section className="focus-picker-section" aria-labelledby="waiting-focus-heading">
           <div className="focus-picker-heading"><p className="section-kicker" id="waiting-focus-heading">等待专注的任务</p><span>{waitingTasks.length} 项</span></div>
           <div className="focus-task-slips">
@@ -923,7 +1122,7 @@ export function FocusWorkspace({
           </div>
           {pendingEvaluationTasks.length > 3 && <button className="focus-picker-toggle" type="button" onClick={() => setPendingExpanded((value) => !value)}>{pendingExpanded ? "收起待评价任务" : `查看其他 ${pendingEvaluationTasks.length - 3} 项`}<ChevronDown className={pendingExpanded ? "expanded" : ""} /></button>}
         </section>
-      </aside>}
+      </aside>
       {evaluationSession && evaluationTask ? <div className="task-dialog-backdrop focus-evaluation-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) { window.localStorage.setItem(`personal-ai.focus-evaluation-dismissed.${evaluationSession.id}`, "1"); setEvaluationSession(null); setEvaluationTask(null); setEvaluationDeadlineMs(null); } }}>
         <section className={`themed-outcome-dialog focus-page-evaluation-dialog focus-theme-${focusTheme}`} role="dialog" aria-modal="true" aria-labelledby="focus-page-evaluation-title">
           <header className="themed-outcome-titlebar"><span>评价任务：{evaluationTask.title}</span><button type="button" aria-label="关闭评价" onClick={() => { window.localStorage.setItem(`personal-ai.focus-evaluation-dismissed.${evaluationSession.id}`, "1"); setEvaluationSession(null); setEvaluationTask(null); setEvaluationDeadlineMs(null); }}><X /></button></header>

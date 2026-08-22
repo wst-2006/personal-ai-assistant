@@ -182,6 +182,8 @@ export function TodayWorkspace({ onFocus, onOpenHealth, healthTaskDraft, onHealt
   const scrollRef=useRef<HTMLDivElement>(null); const dragRef=useRef<DragState|null>(null); const rangeRef=useRef<RangeState|null>(null);
   const placementDragRef=useRef<PlacementDragState|null>(null); const placementGhostRef=useRef<HTMLDivElement>(null); const placementScrollFrameRef=useRef(0); const placementHoldTimerRef=useRef(0); const suppressTaskClickRef=useRef<string|null>(null);
   const loadRequestRef=useRef(0);
+  const frontPeriodUserSelectedRef=useRef(false);
+  const frontPeriodDateRef=useRef(date);
   const combinedScrollPositionsRef=useRef(new Map<string,number>());
   const feedbackTimersRef=useRef<number[]>([]);
   const pendingConflictPulseIdsRef=useRef(new Set<string>());
@@ -232,6 +234,11 @@ export function TodayWorkspace({ onFocus, onOpenHealth, healthTaskDraft, onHealt
     return()=>{window.removeEventListener("pointerdown",closeFromPointer);window.removeEventListener("keydown",closeFromKeyboard);};
   },[actionTaskId]);
   useEffect(()=>{
+    if(frontPeriodDateRef.current!==date){
+      frontPeriodDateRef.current=date;
+      frontPeriodUserSelectedRef.current=false;
+    }
+    if(frontPeriodUserSelectedRef.current)return;
     if(date===today()){
       setFrontPeriod(defaultTimelinePeriod());
       return;
@@ -518,7 +525,7 @@ export function TodayWorkspace({ onFocus, onOpenHealth, healthTaskDraft, onHealt
     setEditing(null);setSource(null);setForm(emptyForm(date,hhmm(interval.start),hhmm(interval.end),entryMode));
   }
 
-  function selectPeriod(period:TimelinePeriodKey){setFrontPeriod(period);}
+  function selectPeriod(period:TimelinePeriodKey){frontPeriodUserSelectedRef.current=true;setFrontPeriod(period);}
   function switchTimelineMode(nextMode:TimelineMode){
     if(nextMode===timelineMode)return;
     if(timelineMode==="combined"&&scrollRef.current){
@@ -526,6 +533,7 @@ export function TodayWorkspace({ onFocus, onOpenHealth, healthTaskDraft, onHealt
       combinedScrollPositionsRef.current.set(date,element.scrollTop);
       const focusMinute=TIMELINE_START_MINUTE+((element.scrollTop+element.clientHeight/2)/HOUR_PX)*60;
       const period=TIMELINE_PERIODS.find(item=>focusMinute>=item.start&&focusMinute<item.end)??TIMELINE_PERIODS.at(-1)!;
+       frontPeriodUserSelectedRef.current=true;
        setFrontPeriod(period.key);
     }
     setTimelineMode(nextMode);

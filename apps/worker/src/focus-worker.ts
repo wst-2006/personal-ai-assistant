@@ -256,7 +256,7 @@ export class FocusTimerWorker {
         if (blockingResult.rows.length > 0) throw new Error("another focus session is already running");
         const startedResult = await db.execute(sql`
           UPDATE focus_sessions
-          SET state = 'running', started_at = ${task.startAt ?? now}, active_since_at = ${task.startAt ?? now},
+          SET state = 'running', started_at = ${now}, active_since_at = ${now},
             version = version + 1, updated_at = ${now}
           WHERE id = ${session.id} AND version = ${job.expectedSessionVersion} AND state = 'armed'
           RETURNING id

@@ -58,7 +58,7 @@ describe("focus structure allocation", () => {
   const start = "2026-07-27T09:00:00+08:00";
 
   it.each([
-    [30, "09:30", 25, 5],
+    [30, "09:30", 30, 0],
     [60, "10:00", 55, 5],
     [90, "10:30", 80, 10],
     [120, "11:00", 105, 15]
@@ -70,18 +70,20 @@ describe("focus structure allocation", () => {
     expect(result.totalMinutes).toBe(total);
     expect(result.effectiveFocusMinutes).toBe(focus);
     expect(result.breakMinutes).toBe(rest);
-    expect(result.segments).toEqual([
-      { segmentType: "focus", durationMinutes: focus },
-      { segmentType: "break", durationMinutes: rest }
-    ]);
+    expect(result.segments).toEqual(rest === 0
+      ? [{ segmentType: "focus", durationMinutes: focus }]
+      : [
+          { segmentType: "focus", durationMinutes: focus },
+          { segmentType: "break", durationMinutes: rest }
+        ]);
   });
 
-  it("rejects removing the final rest from a 30-minute task", () => {
-    expect(() => allocateContinuousFocusStructure({
+  it("keeps a 30-minute task uninterrupted", () => {
+    expect(allocateContinuousFocusStructure({
       totalStartAt: start,
       totalEndAt: "2026-07-27T09:30:00+08:00",
       breakMinutes: 0
-    })).toThrow("requires");
+    }).segments).toEqual([{ segmentType: "focus", durationMinutes: 30 }]);
   });
 
   it("counts only focus segments and clips a late start at the fixed end", () => {
@@ -114,6 +116,20 @@ describe("focus structure allocation", () => {
       totalEndAt: "2026-07-27T10:00:00+08:00",
       breakMinutes
     })).toThrow();
+  });
+
+  it("accepts the uninterrupted 30-minute continuous payload but still rejects zero rest for longer tasks", () => {
+    const base = {
+      taskId: "00000000-0000-4000-8000-000000000001",
+      taskVersion: 1,
+      taskScheduleRevision: 1,
+      source: "manual" as const,
+      mode: "continuous" as const,
+      totalStartAt: start,
+      breakMinutes: 0
+    };
+    expect(focusStructureInputSchema.safeParse({ ...base, totalEndAt: "2026-07-27T09:30:00+08:00" }).success).toBe(true);
+    expect(focusStructureInputSchema.safeParse({ ...base, totalEndAt: "2026-07-27T10:00:00+08:00" }).success).toBe(false);
   });
 
   it("does not allow a segmented structure to overrun its fixed end", () => {

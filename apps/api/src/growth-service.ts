@@ -69,10 +69,10 @@ function taskCountGrowthCap(plannedTasks: number) {
   return 100;
 }
 
-function bambooCount(completedTasks: number) {
-  if (completedTasks <= 0) return 0;
-  if (completedTasks <= 2) return 1;
-  if (completedTasks <= 4) return 2;
+export function bambooCountForPlannedTasks(plannedTasks: number) {
+  if (plannedTasks <= 0) return 0;
+  if (plannedTasks <= 2) return 1;
+  if (plannedTasks <= 4) return 2;
   return 4;
 }
 
@@ -195,7 +195,7 @@ export class GrowthService {
     const currentSatisfactionPercent = currentDay?.satisfactionPercent ?? 0;
     const baseGrowthScore = Math.round(executionPercent * 0.7 + currentSatisfactionPercent * 0.3);
     const growthPercent = Math.min(growthCap, Math.round(baseGrowthScore * growthCap / 100));
-    const currentBambooCount = bambooCount(currentDay?.completedTasks ?? 0);
+    const currentBambooCount = bambooCountForPlannedTasks(currentDay?.plannedTasks ?? 0);
     const satisfied = latestFeedback.filter((item) => item.satisfaction === "satisfied").length;
     const neutral = latestFeedback.filter((item) => item.satisfaction === "neutral").length;
     const dissatisfied = latestFeedback.filter((item) => item.satisfaction === "dissatisfied").length;

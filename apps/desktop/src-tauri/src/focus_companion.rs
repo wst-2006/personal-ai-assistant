@@ -41,6 +41,12 @@ pub enum FocusMiniPositionMode {
 pub struct FocusMiniSettings {
     pub x: Option<i32>,
     pub y: Option<i32>,
+    #[serde(skip)]
+    pub preparation_x: Option<i32>,
+    #[serde(skip)]
+    pub preparation_y: Option<i32>,
+    #[serde(skip)]
+    pub preparation_position_mode: FocusMiniPositionMode,
     pub position_mode: FocusMiniPositionMode,
     pub always_on_top: bool,
     pub locked: bool,
@@ -55,6 +61,9 @@ impl Default for FocusMiniSettings {
         Self {
             x: None,
             y: None,
+            preparation_x: None,
+            preparation_y: None,
+            preparation_position_mode: FocusMiniPositionMode::BottomRight,
             position_mode: FocusMiniPositionMode::BottomRight,
             always_on_top: false,
             locked: false,
@@ -620,31 +629,15 @@ fn position_mini_for_evaluation(app: &AppHandle) {
     let Some(window) = current_mini_window(app) else {
         return;
     };
-    let Ok(monitors) = window.available_monitors() else {
-        return;
-    };
-    let Some(monitor) = window
-        .current_monitor()
-        .ok()
-        .flatten()
-        .or_else(|| monitors.first().cloned())
-    else {
-        return;
-    };
-    let Ok(mini_size) = window.outer_size() else {
-        return;
-    };
-    let monitor_position = monitor.position();
-    let monitor_size = monitor.size();
-    let max_x = monitor_position.x + monitor_size.width as i32 - mini_size.width as i32;
-    let max_y = monitor_position.y + monitor_size.height as i32 - mini_size.height as i32;
-    let x = window
-        .outer_position()
-        .map(|position| position.x)
-        .unwrap_or(max_x)
-        .clamp(monitor_position.x, max_x.max(monitor_position.x));
-    let y = max_y.max(monitor_position.y).saturating_sub(8);
-    let _ = window.set_position(PhysicalPosition::new(x, y));
+    let settings = app
+        .state::<FocusCompanionState>()
+        .settings
+        .lock()
+        .expect("focus companion settings lock poisoned")
+        .clone();
+    // Evaluation is a separate surface. Keep the execution companion at the
+    // user's chosen position instead of silently forcing it to the bottom edge.
+    restore_visible_position(&window, &settings);
 }
 
 fn apply_preparation_snapshot(app: &AppHandle, snapshot: Option<FocusSnapshot>) {
@@ -716,7 +709,17 @@ fn position_preparation_window(app: &AppHandle, window: &tauri::WebviewWindow) {
         .lock()
         .expect("focus companion settings lock poisoned")
         .clone();
-    restore_visible_position(window, &settings);
+    restore_window_position(
+        window,
+        &settings.preparation_position_mode,
+        settings.preparation_x.zip(settings.preparation_y),
+    );
+    if settings.preparation_position_mode == FocusMiniPositionMode::Custom
+        && settings.preparation_x.is_some()
+        && settings.preparation_y.is_some()
+    {
+        return;
+    }
     let Some(base) = current_mini_window(app) else {
         return;
     };
@@ -1255,6 +1258,14 @@ fn show_mini_window(app: &AppHandle) {
 }
 
 fn restore_visible_position(window: &tauri::WebviewWindow, settings: &FocusMiniSettings) {
+    restore_window_position(window, &settings.position_mode, settings.x.zip(settings.y));
+}
+
+fn restore_window_position(
+    window: &tauri::WebviewWindow,
+    mode: &FocusMiniPositionMode,
+    saved: Option<(i32, i32)>,
+) {
     let Ok(monitors) = window.available_monitors() else {
         return;
     };
@@ -1264,7 +1275,6 @@ fn restore_visible_position(window: &tauri::WebviewWindow, settings: &FocusMiniS
     let window_size = window
         .outer_size()
         .unwrap_or_else(|_| tauri::PhysicalSize::new(360, 236));
-    let saved = settings.x.zip(settings.y);
     let selected = saved
         .and_then(|(saved_x, saved_y)| {
             monitors.iter().find(|monitor| {
@@ -1291,14 +1301,7 @@ fn restore_visible_position(window: &tauri::WebviewWindow, settings: &FocusMiniS
     let size = monitor.size();
     let max_x = position.x + size.width as i32 - window_size.width as i32;
     let max_y = position.y + size.height as i32 - window_size.height as i32;
-    let (x, y) = anchored_position(
-        &settings.position_mode,
-        saved,
-        position.x,
-        position.y,
-        max_x,
-        max_y,
-    );
+    let (x, y) = anchored_position(mode, saved, position.x, position.y, max_x, max_y);
     let _ = window.set_position(PhysicalPosition::new(x, y));
 }
 
@@ -1344,13 +1347,18 @@ pub fn handle_window_event(app: &AppHandle, label: &str, event: &WindowEvent) ->
                 sync_companion_topmost_state(app);
             }
         }
-        WindowEvent::Moved(position) if is_mini => {
+        WindowEvent::Moved(position) if is_mini || is_preparation => {
             let state = app.state::<FocusCompanionState>();
             let mut settings = state
                 .settings
                 .lock()
                 .expect("focus companion settings lock poisoned");
-            if settings.position_mode == FocusMiniPositionMode::Custom {
+            if is_preparation && settings.preparation_position_mode == FocusMiniPositionMode::Custom
+            {
+                settings.preparation_x = Some(position.x);
+                settings.preparation_y = Some(position.y);
+                save_settings(app, &settings);
+            } else if is_mini && settings.position_mode == FocusMiniPositionMode::Custom {
                 settings.x = Some(position.x);
                 settings.y = Some(position.y);
                 save_settings(app, &settings);
@@ -1425,6 +1433,21 @@ pub fn focus_preparation_minimize(app: AppHandle) {
 pub fn focus_preparation_start_drag(app: AppHandle) -> Result<(), String> {
     let window = current_preparation_window(&app)
         .ok_or_else(|| "focus preparation window is missing".to_string())?;
+    let state = app.state::<FocusCompanionState>();
+    let mut settings = state
+        .settings
+        .lock()
+        .map_err(|_| "focus companion settings lock poisoned".to_string())?;
+    if settings.locked {
+        return Ok(());
+    }
+    if let Ok(position) = window.outer_position() {
+        settings.preparation_x = Some(position.x);
+        settings.preparation_y = Some(position.y);
+    }
+    settings.preparation_position_mode = FocusMiniPositionMode::Custom;
+    save_settings(&app, &settings);
+    drop(settings);
     window.start_dragging().map_err(|error| error.to_string())
 }
 
@@ -1435,17 +1458,25 @@ pub fn focus_mini_open_main(app: AppHandle) {
 
 #[tauri::command]
 pub fn focus_mini_start_drag(app: AppHandle) -> Result<(), String> {
-    let locked = app
-        .state::<FocusCompanionState>()
-        .settings
-        .lock()
-        .map_err(|_| "focus companion settings lock poisoned".to_string())?
-        .locked;
-    if locked {
-        return Ok(());
-    }
     let window =
         current_mini_window(&app).ok_or_else(|| "focus mini window is missing".to_string())?;
+    let state = app.state::<FocusCompanionState>();
+    let mut settings = state
+        .settings
+        .lock()
+        .map_err(|_| "focus companion settings lock poisoned".to_string())?;
+    if settings.locked {
+        return Ok(());
+    }
+    // The first drag opts out of the initial anchor. Subsequent native Moved
+    // events persist the physical coordinates and restore them on relaunch.
+    if let Ok(position) = window.outer_position() {
+        settings.x = Some(position.x);
+        settings.y = Some(position.y);
+    }
+    settings.position_mode = FocusMiniPositionMode::Custom;
+    save_settings(&app, &settings);
+    drop(settings);
     window.start_dragging().map_err(|error| error.to_string())
 }
 
@@ -1537,10 +1568,19 @@ fn load_settings(app: &AppHandle) -> FocusMiniSettings {
         match key {
             "x" => settings.x = value.parse().ok(),
             "y" => settings.y = value.parse().ok(),
+            "preparation_x" => settings.preparation_x = value.parse().ok(),
+            "preparation_y" => settings.preparation_y = value.parse().ok(),
             "position_mode" => {
                 settings.position_mode = match value {
                     "center" => FocusMiniPositionMode::Center,
                     "custom" => FocusMiniPositionMode::Custom,
+                    _ => FocusMiniPositionMode::BottomRight,
+                }
+            }
+            "preparation_position_mode" => {
+                settings.preparation_position_mode = match value {
+                    "custom" => FocusMiniPositionMode::Custom,
+                    "center" => FocusMiniPositionMode::Center,
                     _ => FocusMiniPositionMode::BottomRight,
                 }
             }
@@ -1564,10 +1604,17 @@ fn save_settings(app: &AppHandle, settings: &FocusMiniSettings) {
         let _ = fs::create_dir_all(directory);
     }
     let body = format!(
-        "x={}\ny={}\nposition_mode={}\nalways_on_top={}\nlocked={}\nauto_show={}\nnotify_start={}\nnotify_phase_change={}\nnotify_complete={}\n",
+        "x={}\ny={}\npreparation_x={}\npreparation_y={}\nposition_mode={}\npreparation_position_mode={}\nalways_on_top={}\nlocked={}\nauto_show={}\nnotify_start={}\nnotify_phase_change={}\nnotify_complete={}\n",
         settings.x.map(|value| value.to_string()).unwrap_or_default(),
         settings.y.map(|value| value.to_string()).unwrap_or_default(),
+        settings.preparation_x.map(|value| value.to_string()).unwrap_or_default(),
+        settings.preparation_y.map(|value| value.to_string()).unwrap_or_default(),
         match settings.position_mode {
+            FocusMiniPositionMode::BottomRight => "bottom_right",
+            FocusMiniPositionMode::Center => "center",
+            FocusMiniPositionMode::Custom => "custom",
+        },
+        match settings.preparation_position_mode {
             FocusMiniPositionMode::BottomRight => "bottom_right",
             FocusMiniPositionMode::Center => "center",
             FocusMiniPositionMode::Custom => "custom",

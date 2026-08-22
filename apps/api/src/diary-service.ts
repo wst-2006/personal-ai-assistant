@@ -4,6 +4,7 @@ import type { AppDatabase } from "@personal-ai/db/client";
 import { cyberDiaries, dailyBriefs, focusSessionSegmentRuns, focusSessions, reviewMessages, reviewSessions, taskFeedback, taskOutcomes, tasks } from "@personal-ai/db/schema";
 import type { z } from "zod";
 import type { cyberDiaryContentSchema } from "@personal-ai/domain/diary";
+import { isTaskOutcomeCompleted } from "@personal-ai/domain/task";
 import { indexFocusSecondsBySession, recordedFocusSeconds } from "./focus-accounting.js";
 
 type DiaryContent = z.infer<typeof cyberDiaryContentSchema>;
@@ -60,6 +61,16 @@ function progressAverage(taskRows: TaskRow[], latestOutcomeByTask: Map<string, O
   return Math.round(taskRows.reduce((sum, task) => sum + (latestOutcomeByTask.get(task.id)?.progressPercent ?? 0), 0) / taskRows.length);
 }
 
+function startedWithinScheduledWindow(task: TaskRow, sessionRows: FocusRow[]) {
+  if (task.scheduleKind !== "exact" || !task.startAt || !task.endAt) return false;
+  const startAt = task.startAt;
+  const endAt = task.endAt;
+  return sessionRows.some((session) => {
+    if (!session.startedAt || !["running", "paused", "ended", "evaluated"].includes(session.state)) return false;
+    return session.startedAt >= startAt && session.startedAt < endAt;
+  });
+}
+
 function dailyGrowthBreakdown(overallExecution: number, focusMinutes: number, feedback: FeedbackRow[], hasReviewMessage: boolean): DailyGrowthBreakdown {
   const satisfactionAverage = feedback.length
     ? feedback.reduce((sum, item) => sum + (item.satisfaction === "satisfied" ? 100 : item.satisfaction === "neutral" ? 60 : 20), 0) / feedback.length
@@ -112,7 +123,11 @@ export function buildDiaryDayData(taskRows: TaskRow[], sessions: FocusRow[], out
   const latestFormalOutcomes = [...latestOutcomeByTask.entries()].filter(([taskId]) => formalTaskIds.has(taskId)).map(([, outcome]) => outcome);
   const latestOutcomes = latestFormalOutcomes;
   const outcomeCount = latestOutcomes.length;
-  const completeCount = latestOutcomes.filter((outcome) => outcome.outcome === "complete").length;
+  const completeCount = plannedTaskRows.filter((task) => {
+    const latestOutcome = latestOutcomeByTask.get(task.id);
+    if (latestOutcome) return isTaskOutcomeCompleted(latestOutcome.outcome);
+    return startedWithinScheduledWindow(task, formalSessions.filter((session) => session.taskId === task.id));
+  }).length;
   const quality = outcomeCount ? Math.round(latestOutcomes.reduce((sum, outcome) => sum + outcome.progressPercent, 0) / outcomeCount) : 0;
   const focusMinutes = Math.round(effectiveFocusSeconds / 60);
   const mainlineProgress = progressAverage(plannedTaskRows.filter((task) => task.sourceLongRangePlanId !== null), latestOutcomeByTask);
@@ -132,6 +147,7 @@ export function buildDiaryDayData(taskRows: TaskRow[], sessions: FocusRow[], out
       focusMinutes: Math.round((focusByTask.get(task.id)?.effectiveSeconds ?? 0) / 60),
       rawFocusMinutes: Math.round((focusByTask.get(task.id)?.rawSeconds ?? 0) / 60),
       latestOutcome: latestOutcomeByTask.get(task.id)?.outcome ?? null,
+      startedWithinWindow: startedWithinScheduledWindow(task, formalSessions.filter((session) => session.taskId === task.id)),
       latestSatisfaction: latestFeedbackByTask.get(task.id)?.satisfaction ?? null,
       latestFeedbackNote: latestFeedbackByTask.get(task.id)?.note ?? null
     })),
@@ -189,7 +205,7 @@ export class DiaryService {
         const dayTasks = taskRows.filter((task) => task.localDate === localDate);
         const savedDiary = diaryByDate.get(localDate);
         const savedSnapshot = readSnapshot(savedDiary?.content);
-        const focusMinutes = savedSnapshot?.dayData.effectiveFocusMinutes ?? Math.round(dayTasks.reduce((sum, task) => sum + (focusByTask.get(task.id) ?? 0), 0) / 60);
+        const focusMinutes = Math.round(dayTasks.reduce((sum, task) => sum + (focusByTask.get(task.id) ?? 0), 0) / 60);
         const formalDayTasks = dayTasks.filter((task) => task.recordKind !== "backfill");
         const closedTasks = savedSnapshot?.dayData.closedTasks ?? formalDayTasks.filter((task) => task.lifecycleStatus === "closed").length;
         const dayTaskIds = new Set(formalDayTasks.map((task) => task.id));

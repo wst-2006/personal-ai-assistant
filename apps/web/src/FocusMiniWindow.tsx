@@ -28,6 +28,16 @@ import { loadUserProfile, type UserProfile } from "./user-profile-client";
 const evaluationSurface = new URLSearchParams(window.location.search).get("focus-evaluation") === "1";
 const preparationSurface = new URLSearchParams(window.location.search).get("focus-preparation") === "1";
 
+function safeTimeZone(value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) return "Asia/Shanghai";
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format();
+    return value;
+  } catch {
+    return "Asia/Shanghai";
+  }
+}
+
 function surfaceCommand(base: "hide" | "minimize" | "start_drag") {
   if (evaluationSurface) return `focus_evaluation_${base}`;
   if (preparationSurface) return `focus_preparation_${base}`;
@@ -143,7 +153,7 @@ export function FocusMiniWindow() {
   const phaseEnd = useMemo(() => {
     if (!snapshot?.phaseEndsAt) return null;
     return new Intl.DateTimeFormat("zh-CN", {
-      timeZone: snapshot.task.timeZone,
+      timeZone: safeTimeZone(snapshot.task.timeZone),
       hour: "2-digit",
       minute: "2-digit",
       hour12: false,

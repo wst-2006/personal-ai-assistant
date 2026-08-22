@@ -56,6 +56,88 @@ export type FocusSnapshotResponse = {
   snapshot: FocusSessionSnapshot | null;
 };
 
+const SNAPSHOT_STATES = new Set<FocusSessionState>([
+  "scheduled", "reminded", "preparing", "armed", "awaiting_late_start",
+  "running", "paused", "ended", "evaluated", "stopped_no_response", "stopped_for_change",
+]);
+const SNAPSHOT_PHASES = new Set<FocusSessionSnapshot["phase"]>([
+  "scheduled", "reminder", "preparation", "armed", "awaiting_late_start", "focus", "break", "ended",
+]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function nullableString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function safeTimeZone(value: unknown): string {
+  if (typeof value !== "string" || !value.trim()) return "Asia/Shanghai";
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value }).format();
+    return value;
+  } catch {
+    return "Asia/Shanghai";
+  }
+}
+
+function normalizeSnapshotSegment(value: unknown): FocusSnapshotSegment | null {
+  if (!isRecord(value)) return null;
+  const position = Number(value.position);
+  const durationMinutes = Number(value.durationMinutes);
+  const segmentType = value.segmentType === "focus" || value.segmentType === "break" ? value.segmentType : null;
+  if (!segmentType || !Number.isInteger(position) || position < 0 || !Number.isFinite(durationMinutes) || durationMinutes <= 0) return null;
+  const startsAt = nullableString(value.startsAt);
+  const endsAt = nullableString(value.endsAt);
+  if (!startsAt || !endsAt) return null;
+  return { position, segmentType, durationMinutes, startsAt, endsAt };
+}
+
+function normalizeSnapshot(value: unknown): FocusSessionSnapshot | null {
+  if (!isRecord(value) || !isRecord(value.session) || !isRecord(value.task)) return null;
+  const sessionState = value.session.state;
+  const phase = value.phase;
+  if (typeof value.session.id !== "string" || typeof value.session.taskId !== "string" || !SNAPSHOT_STATES.has(sessionState as FocusSessionState)) return null;
+  if (!SNAPSHOT_PHASES.has(phase as FocusSessionSnapshot["phase"])) return null;
+  const segments = Array.isArray(value.segments)
+    ? value.segments.map(normalizeSnapshotSegment).filter((segment): segment is FocusSnapshotSegment => Boolean(segment))
+    : [];
+  const currentSegment = normalizeSnapshotSegment(value.currentSegment);
+  const nextSegment = normalizeSnapshotSegment(value.nextSegment);
+  return {
+    serverNow: typeof value.serverNow === "string" ? value.serverNow : new Date().toISOString(),
+    serverNowEpochMs: Number.isFinite(Number(value.serverNowEpochMs)) ? Number(value.serverNowEpochMs) : Date.now(),
+    session: {
+      id: value.session.id,
+      taskId: value.session.taskId,
+      state: sessionState as FocusSessionState,
+      version: Number.isInteger(Number(value.session.version)) && Number(value.session.version) > 0 ? Number(value.session.version) : 1,
+      plannedStartAt: nullableString(value.session.plannedStartAt),
+      plannedEndAt: nullableString(value.session.plannedEndAt),
+      pausedAt: nullableString(value.session.pausedAt),
+      endedAt: nullableString(value.session.endedAt),
+      rawActiveSeconds: Math.max(0, Number(value.session.rawActiveSeconds) || 0),
+    },
+    task: {
+      id: value.task.id as string,
+      title: typeof value.task.title === "string" && value.task.title.trim() ? value.task.title : "未命名任务",
+      timeZone: safeTimeZone(value.task.timeZone),
+      startAt: nullableString(value.task.startAt),
+      endAt: nullableString(value.task.endAt),
+    },
+    phase: phase as FocusSessionSnapshot["phase"],
+    phaseStartedAt: nullableString(value.phaseStartedAt),
+    phaseEndsAt: nullableString(value.phaseEndsAt),
+    phaseEndsAtEpochMs: Number.isFinite(Number(value.phaseEndsAtEpochMs)) ? Number(value.phaseEndsAtEpochMs) : null,
+    sessionEndsAt: nullableString(value.sessionEndsAt),
+    sessionEndsAtEpochMs: Number.isFinite(Number(value.sessionEndsAtEpochMs)) ? Number(value.sessionEndsAtEpochMs) : null,
+    currentSegment,
+    nextSegment,
+    segments,
+  };
+}
+
 export type FocusMiniPositionMode = "bottom_right" | "center" | "custom";
 
 export type FocusMiniSettings = {
@@ -92,7 +174,8 @@ export async function loadFocusSnapshot(
       : "/api/v1/focus-sessions/current";
   const response = await fetch(`${API}${path}`, { signal });
   if (!response.ok) throw new Error("focus_snapshot_unavailable");
-  return ((await response.json()) as FocusSnapshotResponse).snapshot;
+  const payload = (await response.json()) as FocusSnapshotResponse;
+  return payload.snapshot ? normalizeSnapshot(payload.snapshot) : null;
 }
 
 export async function runFocusSessionAction(

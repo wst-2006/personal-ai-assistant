@@ -11,6 +11,10 @@ export const conflictDecisionSchema = z.enum(["reject", "keep"]);
 export const PRODUCT_SCHEDULE_START_MINUTE = 7 * 60;
 export const PRODUCT_SCHEDULE_END_MINUTE = 23 * 60;
 
+export function isTaskOutcomeCompleted(outcome: string | null | undefined): boolean {
+  return outcome === "partial" || outcome === "complete";
+}
+
 export function extractPlanInstruction(value: string): string | null {
   const match = value.trim().match(/^计划(?:\s*[:：]\s*|\s+|$)([\s\S]*)$/u);
   return match ? (match[1] ?? "").trim() : null;

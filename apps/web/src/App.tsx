@@ -56,8 +56,10 @@ class WorkspaceErrorBoundary extends Component<{ children: ReactNode }, { hasErr
     return { hasError: true };
   }
 
-  componentDidCatch(_error: Error, _info: ErrorInfo) {
-    // Keep a render failure recoverable instead of replacing the whole desktop shell with a blank page.
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    // Keep the visible shell recoverable while retaining a local diagnostic for
+    // malformed legacy records or a future rendering regression.
+    console.error("[workspace-render-error]", error, info.componentStack);
   }
 
   render() {

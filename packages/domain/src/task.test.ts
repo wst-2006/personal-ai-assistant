@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { extractPlanInstruction, inferPlanInstructionDate, isWithinProductScheduleWindow, naturalLanguageTaskCandidateSchema, taskBackfillInputSchema, taskInputSchema, taskOutcomeInputSchema } from "./task.js";
+import { extractPlanInstruction, inferPlanInstructionDate, isTaskOutcomeCompleted, isWithinProductScheduleWindow, naturalLanguageTaskCandidateSchema, taskBackfillInputSchema, taskInputSchema, taskOutcomeInputSchema } from "./task.js";
+
+describe("task outcome completion", () => {
+  it("treats complete and partial as completed, but not not_completed", () => {
+    expect(isTaskOutcomeCompleted("complete")).toBe(true);
+    expect(isTaskOutcomeCompleted("partial")).toBe(true);
+    expect(isTaskOutcomeCompleted("not_completed")).toBe(false);
+    expect(isTaskOutcomeCompleted(null)).toBe(false);
+  });
+});
 
 const exactTask = {
   title: "Deep work",

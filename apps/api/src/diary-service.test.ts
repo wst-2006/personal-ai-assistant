@@ -61,6 +61,27 @@ describe("buildDiaryDayData", () => {
     expect(result.tasks[0]).toMatchObject({ focusMinutes: 57, rawFocusMinutes: 57 });
   });
 
+  it("counts a task started inside its exact window as completed before evaluation", () => {
+    const result = buildDiaryDayData(
+      [task("late", {
+        lifecycleStatus: "awaiting_outcome",
+        scheduleKind: "exact",
+        startAt: new Date("2026-07-30T01:00:00Z"),
+        endAt: new Date("2026-07-30T02:00:00Z")
+      })] as never,
+      [session("late-session", "late", 900, 900, {
+        state: "ended",
+        startedAt: new Date("2026-07-30T01:25:00Z")
+      })] as never,
+      [],
+      [],
+      false
+    );
+
+    expect(result.completedTasks).toBe(1);
+    expect(result.tasks[0]).toMatchObject({ startedWithinWindow: true, latestOutcome: null });
+  });
+
   it("counts only executed focus segments for a structured 55 + 5 minute session", () => {
     const result = buildDiaryDayData(
       [task("structured", { lifecycleStatus: "awaiting_outcome" })] as never,

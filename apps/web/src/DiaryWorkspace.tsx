@@ -18,12 +18,13 @@ type DayTask = {
   focusMinutes: number;
   rawFocusMinutes: number;
   latestOutcome: string | null;
+  startedWithinWindow?: boolean;
   latestSatisfaction?: "satisfied" | "neutral" | "dissatisfied" | null;
   latestFeedbackNote?: string | null;
 };
 type DayData = {
   tasks: DayTask[];
-  plannedTasks: number; closedTasks: number; rawFocusMinutes: number; effectiveFocusMinutes: number;
+  plannedTasks: number; closedTasks: number; completedTasks: number; rawFocusMinutes: number; effectiveFocusMinutes: number;
   satisfaction: { satisfied: number; neutral: number; dissatisfied: number };
   radar: Array<{ key: RadarKey; label: string; value: number | null; source: "system" | "user" }>; stateTone: "quiet" | "steady" | "bright" | "strained";
   tree: { kind: string; points: number; pointsBreakdown?: { execution: number; focus: number; satisfaction: number; review: number }; growthPercent: number; quality: number };
@@ -48,7 +49,7 @@ function DiaryTaskRecords({ tasks }: { tasks: DayTask[] }) {
   return <div className="diary-task-list">{tasks.slice(0, 6).map((task) => {
     const factual = task.recordKind === "backfill";
     const time = taskTimeRange(task);
-    const result = outcomeText[task.latestOutcome ?? task.lifecycleStatus] ?? "已记录";
+    const result = outcomeText[task.latestOutcome ?? (task.startedWithinWindow ? "complete" : task.lifecycleStatus)] ?? "已记录";
     const feeling = task.latestSatisfaction ? satisfactionText[task.latestSatisfaction] : null;
     return <div className={factual ? "diary-fact-record" : undefined} key={task.id}>
       <span className={`diary-task-dot ${factual ? "backfill" : task.lifecycleStatus}`} />
@@ -162,7 +163,7 @@ export function DiaryWorkspace({ onOpenReview }: { onOpenReview: () => void }) {
         <div className="diary-tree"><span className="tree-stem" style={{height:`${Math.max(34,data.dayData.tree.growthPercent * .72)}px`}} /><i /><b /></div>
         <div><p className="section-kicker">当日成长</p><strong>{data.dayData.tree.kind}</strong><span>{data.dayData.tree.points} 积分 · 质量 {data.dayData.tree.quality}%</span></div>
         <div className="diary-data-stat"><Clock3 /><strong>{data.dayData.effectiveFocusMinutes}m</strong><span>有效专注</span></div>
-        <div className="diary-data-stat"><CheckCircle2 /><strong>{data.dayData.closedTasks}/{data.dayData.plannedTasks}</strong><span>正式任务结束</span></div>
+        <div className="diary-data-stat"><CheckCircle2 /><strong>{data.dayData.completedTasks}/{data.dayData.plannedTasks}</strong><span>正式任务完成</span></div>
         <div className="diary-data-stat"><Timer /><strong>{data.dayData.rawFocusMinutes}m</strong><span>原始计时</span></div>
       </section>
       {data.dayData.tree.pointsBreakdown && <section className="diary-points-breakdown" aria-label="当日积分来源">

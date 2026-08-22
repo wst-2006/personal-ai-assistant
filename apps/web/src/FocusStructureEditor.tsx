@@ -66,18 +66,27 @@ export function FocusStructureEditor({ task, active, candidate, busy, onSave, on
       setFocusCount(focusDurations.length);
       setBreakMinutes(next.find((segment) => segment.segmentType === "break")?.durationMinutes ?? 0);
       setDistribution(inferDistribution(focusDurations));
+      setLocalError(null);
     } else {
-      const initial = allocateContinuousFocusStructure({
-        totalStartAt: task.startAt,
-        totalEndAt: task.endAt,
-        breakMinutes: totalMinutes === 30 ? 0 : 5
-      });
-      setSegments(initial.segments);
-      setFocusCount(1);
-      setBreakMinutes(initial.breakMinutes);
-      setDistribution("equal");
+      try {
+        const initial = allocateContinuousFocusStructure({
+          totalStartAt: task.startAt,
+          totalEndAt: task.endAt,
+          breakMinutes: totalMinutes === 30 ? 0 : 5
+        });
+        setSegments(initial.segments);
+        setFocusCount(1);
+        setBreakMinutes(initial.breakMinutes);
+        setDistribution("equal");
+        setLocalError(null);
+      } catch (error) {
+        setSegments([]);
+        setFocusCount(1);
+        setBreakMinutes(totalMinutes === 30 ? 0 : 5);
+        setDistribution("equal");
+        setLocalError(error instanceof Error ? templateError(error.message) : "当前时间块无法生成专注结构。");
+      }
     }
-    setLocalError(null);
   }, [active?.id, active?.version, candidate?.id, candidate?.version, task.id, task.startAt, task.endAt, totalMinutes]);
 
   const validation = useMemo(() => validateDraft(segments, totalMinutes), [segments, totalMinutes]);
@@ -360,6 +369,14 @@ function validateDraft(segments: FocusSegment[], totalMinutes: number): { valid:
 
 function segmentTimeline(startAt: string, timeZone: string, segments: FocusSegment[]) {
   let cursor = new Date(startAt).getTime();
+  if (!Number.isFinite(cursor)) {
+    return segments.map((segment, index) => ({
+      ...segment,
+      label: `${segment.segmentType === "focus" ? "专注" : "休息"} ${Math.floor(index / 2) + 1}`,
+      start: "--:--",
+      end: "--:--"
+    }));
+  }
   return segments.map((segment, index) => {
     const start = cursor;
     cursor += Math.max(0, segment.durationMinutes) * 60_000;
@@ -373,7 +390,19 @@ function segmentTimeline(startAt: string, timeZone: string, segments: FocusSegme
 }
 
 function formatClock(value: string, timeZone: string) {
-  return new Intl.DateTimeFormat("zh-CN", { timeZone, hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(value));
+  let safeZone = "Asia/Shanghai";
+  try {
+    if (timeZone) {
+      new Intl.DateTimeFormat("en-US", { timeZone }).format();
+      safeZone = timeZone;
+    }
+  } catch {
+    // Legacy tasks may carry a removed or malformed zone; keep the editor usable.
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? "--:--"
+    : new Intl.DateTimeFormat("zh-CN", { timeZone: safeZone, hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
 }
 
 function inferDistribution(values: number[]): FocusDistribution | "custom" {
@@ -388,6 +417,8 @@ function sameSegments(left: FocusSegment[], right: FocusSegment[]) {
 }
 
 function templateError(message: string) {
+  if (message.includes("positive multiple") || message.includes("valid date")) return "这项任务的时间范围不符合专注结构规则，请先回到今日页调整排期。";
+  if (message.includes("uninterrupted")) return "30 分钟任务应保持连续专注，不插入休息。";
   if (message.includes("strictly")) return "当前时长无法形成严格递增或递减结构，请增加任务时长或改用等长。";
   if (message.includes("requested number")) return "当前任务时间不足以容纳这些专注段和休息段。";
   return "当前时间块无法生成这个结构。";

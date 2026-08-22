@@ -564,6 +564,7 @@ export class FocusService {
         throw new FocusTransitionError(current.state, "skip a non-final break for");
       }
       await this.finalizeCurrentSegmentRun(transaction as AppDatabase, current, now, true);
+      await this.reconcileSegmentRuns(transaction as AppDatabase, current, now);
       const raw = elapsedSeconds(current, now);
       const effective = await this.recordedFocusSeconds(transaction as AppDatabase, current, raw);
       await this.cancelSessionTimerJobs(transaction as AppDatabase, current.id, now);
@@ -896,6 +897,49 @@ export class FocusService {
     }).where(eq(focusSessionSegmentRuns.id, run.id));
   }
 
+  /** Reconcile every segment at the fixed boundary so missed worker ticks do
+   * not drop focus time from earlier segments. */
+  private async reconcileSegmentRuns(
+    db: AppDatabase,
+    current: StoredFocusSession,
+    endedAt: Date,
+  ): Promise<void> {
+    if (!current.focusStructureId || !current.startedAt) return;
+    const execution = await this.structureById(db, current.focusStructureId);
+    if (!execution) return;
+    const runs = await db.select().from(focusSessionSegmentRuns)
+      .where(eq(focusSessionSegmentRuns.focusSessionId, current.id));
+    const actualStart = current.startedAt.getTime();
+    const structureStart = execution.structure.totalStartAt.getTime();
+    if (actualStart < structureStart) return;
+    const finalTime = Math.min(endedAt.getTime(), current.plannedEndAt?.getTime() ?? endedAt.getTime());
+    let cursor = execution.structure.totalStartAt.getTime();
+    for (const segment of execution.segments) {
+      const segmentStart = cursor;
+      const segmentEnd = cursor + segment.durationMinutes * 60_000;
+      cursor = segmentEnd;
+      const run = runs.find((item) => item.position === segment.position);
+      if (!run) continue;
+      const overlapStart = Math.max(actualStart, segmentStart);
+      const overlapEnd = Math.min(finalTime, segmentEnd);
+      const calculatedElapsedSeconds = overlapEnd > overlapStart
+        ? Math.floor((overlapEnd - overlapStart) / 1000)
+        : 0;
+      const elapsedSeconds = Math.min(
+        run.plannedDurationSeconds,
+        Math.max(run.elapsedSeconds, calculatedElapsedSeconds),
+      );
+      const skipped = segmentEnd <= actualStart;
+      await db.update(focusSessionSegmentRuns).set({
+        elapsedSeconds,
+        startedAt: run.startedAt && !skipped && segmentEnd > finalTime ? run.startedAt : null,
+        completedAt: run.completedAt ?? (!skipped && segmentEnd <= finalTime ? new Date(segmentEnd) : null),
+        skippedAt: run.skippedAt ?? (skipped ? current.startedAt : null),
+        updatedAt: endedAt,
+      }).where(eq(focusSessionSegmentRuns.id, run.id));
+    }
+  }
+
   private async recordedFocusSeconds(
     db: AppDatabase,
     current: StoredFocusSession,
@@ -1064,6 +1108,7 @@ export class FocusService {
     }
     if ((current.state !== "running" && current.state !== "paused") || !current.plannedEndAt || current.plannedEndAt > now) return current;
     await this.finalizeCurrentSegmentRun(db, current, current.plannedEndAt, false);
+    await this.reconcileSegmentRuns(db, current, current.plannedEndAt);
     const raw = elapsedSeconds(current, now);
     const effective = await this.recordedFocusSeconds(db, current, raw);
     await this.cancelSessionTimerJobs(db, current.id, now);
