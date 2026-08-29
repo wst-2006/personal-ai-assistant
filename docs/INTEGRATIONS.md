@@ -87,19 +87,16 @@ HTTP 回调属于高级部署方式，本地单机用户优先使用 `websocket`
 
 ## 视觉模型
 
-用途：可选的睡眠截图分析。它与 DeepSeek 文本模型分开配置。
-
-默认示例使用阿里云百炼 / Model Studio 的 OpenAI 兼容接口：
+用途：使用 DeepSeek 视觉模型分析用户主动上传的睡眠截图。文本和视觉请求共用同一个服务端 DeepSeek API Key，原图不会保存。
 
 ```dotenv
-VISION_API_KEY=
-VISION_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-VISION_MODEL=请填写支持图片输入的模型
+DEEPSEEK_API_KEY=
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+DEEPSEEK_MODEL=deepseek-v4-flash
+DEEPSEEK_VISION_MODEL=deepseek-v4-flash-vision-exp
 ```
 
-官方文档：`https://help.aliyun.com/zh/model-studio/`
-
-必须选择明确支持图片输入的模型。没有配置或模型不支持图片时，睡眠截图分析会显示不可用，不会伪造结果。
+视觉请求使用 OpenAI 兼容的 Chat Completions 接口，并以原图细节模式发送 PNG、JPEG 或 WebP 截图。没有配置 DeepSeek Key 时，API 不会启动；模型调用失败不会保存原图或伪造分析结果。
 
 ## 配置安全检查
 

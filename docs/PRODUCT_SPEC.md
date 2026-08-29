@@ -80,17 +80,16 @@ creates search-backed daily briefs when explicitly requested.
   the current day's task or pending-evaluation list.
 - Every eligible exact task enters a one-minute desktop preparation surface at
   `startAt - 1 minute`. Preparation, a persisted schedule, and reminder delivery
-  never count as execution by themselves. The task produces focus time only
-  after the user explicitly chooses `Start task` in the desktop or Feishu card,
-  or explicitly tells the Feishu AI that the task has started.
+  never count as execution by themselves. The task starts automatically at its
+  fixed `startAt`; choosing `Start task` earlier starts it immediately and keeps
+  the original fixed `endAt` as the cap.
 - After the user confirms `Start task` during preparation, the preparation
   window hides immediately; it does not remain as a second timer. At the fixed
   `startAt`, the running focus window is created or restored automatically.
-- A start confirmation during the one-minute preparation arms the task to begin
-  at its fixed `startAt`. If no confirmation exists at `startAt`, the session
-  enters a temporary `awaiting_late_start` state rather than running or closing.
-  It may still start from the actual confirmation time while a focus segment
-  remains inside the original interval. The fixed task end is never extended.
+- A start action during preparation starts the task immediately. If no action is
+  taken, the worker starts the session automatically at `startAt`. Legacy
+  `armed`/`awaiting_late_start` rows remain readable and can be started from the
+  current time; the fixed task end is never extended.
 - A new focus session may be created only for an `open`, formal task with
   `scheduleKind = exact` and persisted `startAt`/`endAt`. Unscheduled and
   daypart tasks stay outside the focus picker until the user drags them into

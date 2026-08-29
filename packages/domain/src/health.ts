@@ -68,6 +68,7 @@ export const healthDailyReferenceSchema = z.object({
   mealExamples: healthMealExamplesSchema.optional(),
   proteinRotationSources: z.array(z.string().trim().min(1).max(120)).min(1).max(5).optional(),
   foodReference: healthFoodReferenceSchema.optional(),
+  fruitOptions: z.array(z.string().trim().min(1).max(120)).min(1).max(10).optional(),
   plateGuidance: z.array(z.string().trim().min(1).max(240)).min(1).max(5),
   seasonalVegetables: z.array(z.string().trim().min(1).max(80)).min(1).max(6),
   seasonalGuidance: z.string().trim().min(1).max(500).nullable().optional(),
@@ -112,11 +113,41 @@ export const healthPlanContentSchema = z.object({
 
 export const generatedHealthPlanContentSchema = healthPlanContentSchema.superRefine((plan, context) => {
   plan.days.forEach((day, dayIndex) => {
-    for (const key of ["nutritionTargets", "hydrationGuidance", "mealExamples", "proteinRotationSources", "foodReference"] as const) {
+    for (const key of ["nutritionTargets", "hydrationGuidance", "mealExamples", "proteinRotationSources", "foodReference", "fruitOptions"] as const) {
       if (day[key] === undefined) context.addIssue({ code: z.ZodIssueCode.custom, path: ["days", dayIndex, key], message: `${key} is required for newly generated health references` });
     }
-    if (day.movement.focus === undefined) context.addIssue({ code: z.ZodIssueCode.custom, path: ["days", dayIndex, "movement", "focus"], message: "movement focus is required for newly generated health references" });
-    if (day.movement.safetyNotes === undefined) context.addIssue({ code: z.ZodIssueCode.custom, path: ["days", dayIndex, "movement", "safetyNotes"], message: "movement safety notes are required for newly generated health references" });
+
+    const proteinConversions = day.foodReference?.proteinOptions ?? [];
+    for (const [label, pattern] of [
+      ["鸡蛋", /鸡蛋/u],
+      ["牛肉", /牛肉/u],
+      ["鸡胸肉", /鸡胸(?:肉)?/u]
+    ] as const) {
+      const conversion = proteinConversions.find((item) => pattern.test(item));
+      if (!conversion || !/\d/u.test(conversion)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["days", dayIndex, "foodReference", "proteinOptions"],
+          message: `protein conversion for ${label} is required for newly generated health references`
+        });
+      }
+    }
+
+    if (!(day.hydrationGuidance ?? []).some((item) => /纸杯/u.test(item) && /\d/u.test(item))) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["days", dayIndex, "hydrationGuidance"],
+        message: "paper cup hydration conversion is required for newly generated health references"
+      });
+    }
+
+    if ((day.fruitOptions?.length ?? 0) < 2 || day.fruitOptions?.some((item) => !/(?:\d|半|一|二|两|三).*(?:克|g|个|份|片|杯)/iu.test(item))) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["days", dayIndex, "fruitOptions"],
+        message: "at least two fruit options with portions are required for newly generated health references"
+      });
+    }
   });
 });
 
@@ -154,7 +185,8 @@ export const healthSleepRevisionCandidateSchema = z.object({
 }).strict();
 
 const sleepImageMimeTypeSchema = z.enum(["image/png", "image/jpeg", "image/webp"]);
-const sleepImageDataUrlSchema = z.string().max(8_000_000).regex(
+// A 6 MiB image expands to just over 8 MiB when encoded as base64.
+const sleepImageDataUrlSchema = z.string().max(8_500_000).regex(
   /^data:image\/(?:png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/,
   "sleep screenshot must be a base64 PNG, JPEG, or WebP data URL"
 );

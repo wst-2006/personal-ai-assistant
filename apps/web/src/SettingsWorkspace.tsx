@@ -65,7 +65,10 @@ export function SettingsWorkspace({ onProfileSaved }: SettingsWorkspaceProps) {
         setDesktopSettings(loadedDesktopSettings);
         onProfileSaved?.(loadedProfile);
       })
-      .catch(() => setError("无法读取设置。请确认本地服务正在运行。"))
+      .catch((loadError) => {
+        if (loadError instanceof DOMException && loadError.name === "AbortError") return;
+        setError("无法读取设置。请确认本地服务正在运行。");
+      })
       .finally(() => setLoading(false));
     return () => controller.abort();
   }, [desktopRuntime, onProfileSaved]);

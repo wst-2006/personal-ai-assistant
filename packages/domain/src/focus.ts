@@ -216,9 +216,8 @@ export function calculateSegmentElapsedSeconds(input: {
 
 /**
  * Allocates a continuous focus block without changing its fixed end time.
- * A 30-minute task is uninterrupted. Longer blocks reserve only the final
- * rest interval, so effective focus time remains derived from the fixed task
- * interval and the selected rest duration.
+ * Every task reserves a final rest interval. The default follows the product
+ * rule: 30=25+5, 60=55+5, 90=80+10, 120=105+15.
  */
 export function allocateContinuousFocusStructure(input: {
   totalStartAt: Date | string;
@@ -232,13 +231,10 @@ export function allocateContinuousFocusStructure(input: {
     throw new Error("Focus task duration must be a positive multiple of 30 minutes");
   }
 
-  const defaultBreak = totalMinutes === 30 ? 0 : totalMinutes >= 120 ? 15 : totalMinutes >= 90 ? 10 : 5;
+  const defaultBreak = totalMinutes >= 120 ? 15 : totalMinutes >= 90 ? 10 : 5;
   const breakMinutes = input.breakMinutes ?? defaultBreak;
-  if (totalMinutes === 30 && breakMinutes !== 0) {
-    throw new Error("A 30-minute task must remain uninterrupted");
-  }
-  if (totalMinutes > 30 && (!Number.isInteger(breakMinutes) || breakMinutes < 5 || breakMinutes > 15)) {
-    throw new Error("Tasks longer than 30 minutes require a 5-15 minute final break");
+  if (!Number.isInteger(breakMinutes) || breakMinutes < 5 || breakMinutes > 15) {
+    throw new Error("Tasks require a 5-15 minute final break");
   }
   const focusMinutes = totalMinutes - breakMinutes;
   if (focusMinutes < 25) throw new Error("The selected break leaves less than 25 minutes of focus");
@@ -379,10 +375,8 @@ function validateFocusStructureInput(input: FocusStructureInputShape, context: z
   }
   if (input.mode === "continuous") {
     if (input.segments !== undefined) context.addIssue({ code: z.ZodIssueCode.custom, path: ["segments"], message: "Continuous structures are allocated by the server" });
-    if (totalMinutes === 30 && input.breakMinutes !== 0) {
-      context.addIssue({ code: z.ZodIssueCode.custom, path: ["breakMinutes"], message: "A 30-minute task must remain uninterrupted" });
-    } else if (totalMinutes > 30 && (input.breakMinutes < 5 || input.breakMinutes > 15)) {
-      context.addIssue({ code: z.ZodIssueCode.custom, path: ["breakMinutes"], message: "Tasks longer than 30 minutes require a 5-15 minute final break" });
+    if (input.breakMinutes < 5 || input.breakMinutes > 15) {
+      context.addIssue({ code: z.ZodIssueCode.custom, path: ["breakMinutes"], message: "Tasks require a 5-15 minute final break" });
     }
   } else if (!input.segments) {
     context.addIssue({ code: z.ZodIssueCode.custom, path: ["segments"], message: "Segmented structures require segments" });

@@ -36,7 +36,7 @@ test("软件内 AI 对话真实保存、刷新恢复并作为独立复盘上下�
 
     await page.locator(".ai-drawer").getByRole("button", { name: "关闭 AI 助手", exact: true }).click();
     await page.locator(".app-rail").getByRole("button", { name: "复盘", exact: true }).click();
-    await expect(page.getByRole("heading", { name: "今天与 AI 商量过的内容", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "与 AI 的交流", exact: true })).toBeVisible();
     await expect(page.locator(".review-software-conversations").getByText(message, { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "结束今日复盘并生成简报", exact: true })).toBeDisabled();
 

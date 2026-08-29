@@ -18,11 +18,15 @@ const generatedDay = {
     hydrationLiters: { minimum: 2, maximum: 2.5 },
     macroRatioPercent: { protein: 25, carbohydrate: 50, fat: 25 }
   },
-  hydrationGuidance: ["起床后和三餐之间分散补水。", "运动日根据出汗情况少量多次补水。"],
+  hydrationGuidance: ["2.5L 水约等于 10 个 250ml 纸杯，只是便于理解的估算。", "起床后和三餐之间分散补水。"],
   mealExamples: { breakfast: ["鸡蛋与燕麦"], lunch: ["牛肉、米饭和蔬菜"], dinner: ["鸡肉、南瓜和绿叶菜"], snack: ["无糖酸奶"] },
   proteinRotationSources: ["鸡蛋", "牛肉"],
-  foodReference: { proteinOptions: ["鸡蛋", "豆腐"], fiberOptions: ["燕麦", "蔬菜"], carbOptions: ["米饭", "土豆"] },
-  movement: { ...day.movement, focus: ["下肢主动作", "上肢推拉", "收操拉伸"], safetyNotes: ["膝部不适时降低负荷"] }
+  foodReference: {
+    proteinOptions: ["约 15 个鸡蛋", "约 650 克牛肉", "约 550 克鸡胸肉"],
+    fiberOptions: ["燕麦", "蔬菜"],
+    carbOptions: ["米饭", "土豆"]
+  },
+  fruitOptions: ["1 个苹果", "200 克草莓"]
 };
 
 describe("health reference contracts", () => {
@@ -50,6 +54,22 @@ describe("health reference contracts", () => {
     expect(healthPlanContentSchema.safeParse(legacy).success).toBe(true);
     expect(generatedHealthPlanContentSchema.safeParse(legacy).success).toBe(false);
     expect(generatedHealthPlanContentSchema.safeParse(generated).success).toBe(true);
+  });
+
+  it("requires fruit portions and everyday protein and water conversions for generated plans", () => {
+    const content = { overview: "新生成参考", supplements: ["自然食物优先，必要时再查看补充剂标签。"], days: Array.from({ length: 7 }, () => generatedDay) };
+    expect(generatedHealthPlanContentSchema.safeParse({
+      ...content,
+      days: content.days.map((item) => ({ ...item, fruitOptions: undefined }))
+    }).success).toBe(false);
+    expect(generatedHealthPlanContentSchema.safeParse({
+      ...content,
+      days: content.days.map((item) => ({ ...item, hydrationGuidance: ["全天分次饮水。"] }))
+    }).success).toBe(false);
+    expect(generatedHealthPlanContentSchema.safeParse({
+      ...content,
+      days: content.days.map((item) => ({ ...item, foodReference: { ...item.foodReference, proteinOptions: ["鸡蛋", "牛肉"] } }))
+    }).success).toBe(false);
   });
 
   it("rejects incomplete nutrition ranges and misleading macro totals", () => {

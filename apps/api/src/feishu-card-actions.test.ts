@@ -26,7 +26,8 @@ function service(
   const taskService = {
     get: vi.fn().mockResolvedValue({ task }),
     update: vi.fn().mockResolvedValue({ task: { ...task, scheduleKind: "none" }, historicalOverlaps: [] }),
-    cancel: vi.fn().mockResolvedValue({ ...task, lifecycleStatus: "cancelled" })
+    cancel: vi.fn().mockResolvedValue({ ...task, lifecycleStatus: "cancelled" }),
+    cancelAndTrash: vi.fn().mockResolvedValue({ ...task, lifecycleStatus: "cancelled", deletedAt: new Date() })
   };
   const focusService = {
     currentForTask: vi.fn().mockResolvedValue(current),
@@ -68,7 +69,7 @@ describe("Feishu card actions", () => {
     expect(focusService.create).toHaveBeenCalledWith(taskId, 8, "prepare", commandId);
   });
 
-  it("records a late explicit start as running without backfilling", async () => {
+  it("records an explicit start as running without backfilling", async () => {
     const { actions } = service("running", {
       id: "focus-late",
       taskId,
@@ -76,7 +77,7 @@ describe("Feishu card actions", () => {
       state: "awaiting_late_start"
     });
     await expect(actions.handle("ou_owner", { action: "start", taskId, scheduleRevision: 3 }))
-      .resolves.toMatchObject({ type: "success", message: expect.stringContaining("实际开始后") });
+      .resolves.toMatchObject({ type: "success", message: expect.stringContaining("从现在计时") });
   });
 
   it("treats a repeated start for the same running task as idempotent success", async () => {
@@ -131,8 +132,8 @@ describe("Feishu card actions", () => {
     expect(taskService.cancel).not.toHaveBeenCalled();
 
     const confirmed = await actions.handle("ou_owner", { action: "cancel_confirm", taskId, scheduleRevision: 3 });
-    expect(confirmed).toMatchObject({ type: "success", message: "任务已取消。", card: expect.any(Object) });
-    expect(taskService.cancel).toHaveBeenCalledWith(taskId, 8, "飞书二次确认取消任务");
+    expect(confirmed).toMatchObject({ type: "success", message: "任务已取消并移入回收站。", card: expect.any(Object) });
+    expect(taskService.cancelAndTrash).toHaveBeenCalledWith(taskId, 8, "飞书二次确认取消任务");
     expect(JSON.stringify(confirmed.card)).not.toContain("确认取消");
   });
 });

@@ -69,11 +69,11 @@ backward compatibility.
 
 The normal explicit-confirmation path is:
 
-`scheduled -> preparing -> armed -> running -> ended -> evaluated`
+`scheduled -> preparing -> running -> ended -> evaluated`
 
-The preparation companion is a confirmation surface only. `preparing -> armed`
-immediately hides that surface; `armed -> running` at the fixed start time
-creates or restores the running companion window automatically.
+The preparation companion offers three actions. `Start task` immediately enters
+`running`; if untouched, `preparing -> running` occurs automatically at the
+fixed start time. The fixed task end remains the cap.
 
 The preparation decisions `other_arrangement` and `cancel_task` are each one
 local transactional command over both the focus session and its task. The first
@@ -84,12 +84,10 @@ the recycle bin. A failed command changes neither record, so the UI cannot
 expose a stopped session paired with an unchanged task.
 
 The local Worker enters `preparing` at `startAt - 1 minute`. `Start task` during
-that minute performs `preparing -> armed`; `armed -> running` occurs at the
-fixed `startAt`. If no start confirmation exists at `startAt`, the session
-performs `preparing -> awaiting_late_start`. A desktop start command or an
-explicit Feishu AI message while a focus segment still remains performs
-`awaiting_late_start -> running` and records the actual start time. Repeated
-start commands for `armed` or `running` are idempotent.
+that minute performs `preparing -> running` and records the click time. If no
+start action exists at `startAt`, the timer worker performs `preparing -> running`
+automatically. Legacy `armed` and `awaiting_late_start` sessions can still be
+started from the current time; repeated starts for `running` are idempotent.
 
 Only one session may be in `running` or recovery-only `paused` at a time. The
 API and Worker take the same transaction lock before `armed -> running`, first
@@ -97,11 +95,11 @@ finalize any earlier session whose fixed end has arrived, and reject or retry
 the new start if another session is still genuinely running. An `ended`
 session waiting for evaluation does not block the next scheduled task.
 
-Preparation and `awaiting_late_start` are not execution. They do not activate
-the task, create focus seconds, or imply completion. Reaching the fixed end
-without a valid start performs `awaiting_late_start -> stopped_no_response`,
-records one objective `not_completed` outcome, closes the task, and never
-creates an evaluation or subjective-feedback record.
+Preparation and legacy `awaiting_late_start` are not execution. Once the fixed
+start or an early `Start task` action occurs, the session activates the task and
+records focus until the fixed end. If no session can be started before the fixed
+end, the worker records one objective `not_completed` outcome and never creates
+an evaluation or subjective-feedback record.
 
 Plan-change advice is not a task state. A structured schedule candidate may
 target only an `open` task and remains transient. It carries the task version
@@ -174,9 +172,8 @@ block a new task from running.
 
 Every eligible exact task has four revision-bound durable transitions: T-15
 creates one Feishu reminder card, T-1 updates the same card with `Start task`
-and opens desktop preparation, T0 disables an unpressed start control and
-enters `awaiting_late_start`, and fixed-end finalizes a never-started task as
-missed. The original Feishu message ID is persisted so `started`,
+and opens desktop preparation, T0 auto-starts an untouched preparation session,
+and fixed-end finalizes a never-started task as missed. The original Feishu message ID is persisted so `started`,
 `returned_to_unscheduled`, `cancelled`, and `missed` replace the original
 controls instead of leaving stale buttons.
 
@@ -187,11 +184,12 @@ confirmation card and the second action performs the lifecycle transition.
 Neither action is valid after `running` begins.
 
 Focus structures are durable candidates tied to the task version and
-`scheduleRevision`. A continuous block of 30 minutes is one uninterrupted
-focus segment. A block of 60 minutes or longer reserves a final rest segment,
-defaulting to 5 minutes and allowing 5-15 minutes. Segmented structures must
-alternate focus and rest, every focus segment must have its own 5-15 minute
-rest segment, and all segments must exactly fill the fixed task interval.
+`scheduleRevision`. Every continuous block reserves a final rest segment. The
+default allocation is 30 = 25 + 5, 60 = 55 + 5, 90 = 80 + 10, and
+120 = 105 + 15 minutes; a manually selected final rest may be 5-15 minutes.
+Segmented structures must alternate focus and rest, every focus segment must
+have its own 5-15 minute rest segment, and all segments must exactly fill the
+fixed task interval.
 
 ## Review, Brief, and Diary
 

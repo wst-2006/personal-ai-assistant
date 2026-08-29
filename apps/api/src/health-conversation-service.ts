@@ -60,7 +60,11 @@ export class HealthConversationService {
           .where(eq(healthWeekConversations.weekStart, weekStart)).limit(1))[0];
       }
       if (!conversation) throw new Error("Health collaboration creation did not return a conversation.");
-      return { conversation, messages: await this.messages(transaction as AppDatabase, conversation.id) };
+      return {
+        conversation,
+        messages: await this.messages(transaction as AppDatabase, conversation.id),
+        replyInFlight: this.replyInFlight.has(conversation.id)
+      };
     });
   }
 
@@ -164,7 +168,7 @@ export class HealthConversationService {
       }).returning();
       const [updatedConversation] = await transaction.update(healthWeekConversations)
         .set({ updatedAt: new Date() }).where(eq(healthWeekConversations.id, conversationId)).returning();
-      return { conversation: updatedConversation!, userMessage: userMessage!, messages: [...existingMessages, userMessage!] };
+      return { conversation: updatedConversation!, userMessage: userMessage!, messages: [...existingMessages, userMessage!], replyInFlight: false };
     });
   }
 
@@ -182,7 +186,7 @@ export class HealthConversationService {
       }).returning();
       const [updatedConversation] = await transaction.update(healthWeekConversations)
         .set({ updatedAt: new Date() }).where(eq(healthWeekConversations.id, conversationId)).returning();
-      return { conversation: updatedConversation!, messages: [...messages, assistantMessage!] };
+      return { conversation: updatedConversation!, messages: [...messages, assistantMessage!], replyInFlight: false };
     });
   }
 

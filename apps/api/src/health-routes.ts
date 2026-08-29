@@ -175,7 +175,7 @@ export async function healthRoutes(app: FastifyInstance, options: {
       app.log.warn({
         reason: error instanceof Error ? error.message : "unknown",
         validationIssues: error instanceof HealthPlanningOutputError ? error.validationIssues : undefined
-      }, "DeepSeek health planning failed");
+      }, "AI health planning failed");
       return healthPlanningError(reply, error);
     }
   });
@@ -191,7 +191,7 @@ export async function healthRoutes(app: FastifyInstance, options: {
         || error instanceof SleepAnalysisNotFoundError
         || error instanceof SleepAnalysisOutsideWeekError
         || error instanceof HealthPlanBaseChangedError) return healthError(reply, error);
-      app.log.warn({ reason: error instanceof Error ? error.message : "unknown" }, "DeepSeek sleep-based health revision failed");
+      app.log.warn({ reason: error instanceof Error ? error.message : "unknown" }, "AI sleep-based health revision failed");
       return reply.status(502).send({ error: "ai_health_plan_unavailable", message: "AI 暂时无法生成睡眠修订候选，现有参考保持不变。" });
     }
   });
@@ -220,25 +220,25 @@ export async function healthRoutes(app: FastifyInstance, options: {
 }
 
 function healthPlanningError(reply: { status: (statusCode: number) => { send: (body: unknown) => unknown } }, error: unknown) {
-  if (error instanceof HealthPlanningTimeoutError) return reply.status(504).send({ error: "ai_health_plan_timeout", message: "DeepSeek 已收到请求，但在健康候选等待时限内没有返回完整结果；没有写入候选，也不会自动重复扣费重试。" });
+  if (error instanceof HealthPlanningTimeoutError) return reply.status(504).send({ error: "ai_health_plan_timeout", message: "AI 已收到请求，但在健康候选等待时限内没有返回完整结果；没有写入候选，也不会自动重复请求。" });
   if (error instanceof HealthPlanningOutputError) return reply.status(502).send({
     error: "ai_health_plan_invalid",
-    message: `DeepSeek 本次没有产生可写入的完整候选：${error.userMessage}；本周交流已经保留，现有参考没有变化。如需重试，请再次点击“根据本页交流生成候选”；系统不会自动重复请求。`,
+    message: `AI 本次没有产生可写入的完整候选：${error.userMessage}；本周交流已经保留，现有参考没有变化。请修正后重新生成候选；系统不会自动重复请求。`,
     validationIssues: error.validationIssues
   });
-  if (error instanceof HealthPlanningProviderError) return reply.status(502).send({ error: "ai_health_plan_provider_error", message: "DeepSeek 服务暂时拒绝或中断了本次请求；没有写入候选。" });
+  if (error instanceof HealthPlanningProviderError) return reply.status(502).send({ error: "ai_health_plan_provider_error", message: "AI 服务暂时拒绝或中断了本次请求；没有写入候选。" });
   return reply.status(502).send({ error: "ai_health_plan_unavailable", message: "AI 暂时无法生成健康参考，现有计划没有变化。" });
 }
 
 function healthCollaborationError(reply: { status: (statusCode: number) => { send: (body: unknown) => unknown } }, error: unknown) {
   if (error instanceof HealthConversationNotFoundError) return reply.status(404).send({ error: "health_collaboration_not_found" });
   if (error instanceof HealthConversationNoPendingReplyError) return reply.status(409).send({ error: "health_collaboration_has_no_pending_reply" });
-  if (error instanceof HealthConversationReplyPendingError) return reply.status(409).send({ error: "health_collaboration_reply_pending", message: "上一条健康说明已经保存，等待 DeepSeek 回应或直接重试即可，不需要重复发送。" });
+  if (error instanceof HealthConversationReplyPendingError) return reply.status(409).send({ error: "health_collaboration_reply_pending", message: "上一条健康说明已经保存，等待 AI 回应或直接重试即可，不需要重复发送。" });
   if (error instanceof HealthConversationReplyUnavailableError) return reply.status(502).send({
     error: "ai_health_collaboration_unavailable",
     conversationId: error.conversationId,
     userMessageId: error.userMessageId,
-    message: "你的健康说明已经保存，但 DeepSeek 暂时没有返回回应；可以直接重试，不需要重新输入。"
+    message: "你的健康说明已经保存，但 AI 暂时没有返回回应；可以直接重试，不需要重新输入。"
   });
   throw error;
 }

@@ -218,6 +218,37 @@ describe("ReminderWorker", () => {
     expect(provider.deliver).not.toHaveBeenCalled();
   });
 
+  it("creates desktop preparation even when the Feishu provider is unavailable", async () => {
+    const readyJob: ReminderJob = { ...job, id: "job-ready-no-provider", kind: "task_start_ready" };
+    const execute = vi.fn()
+      .mockResolvedValueOnce({ rows: [readyJob] })
+      .mockResolvedValueOnce({ rows: [{
+        scheduleRevision: 4, lifecycleStatus: "open", scheduleKind: "exact",
+        recordKind: "formal", startAt: job.scheduledAt, endAt: new Date("2026-07-29T03:00:00.000Z"), deletedAt: null
+      }] })
+      .mockResolvedValueOnce({ rows: [enabledSettings] })
+      .mockResolvedValueOnce({ rows: [{
+        id: "task-1", startAt: job.scheduledAt, endAt: new Date("2026-07-29T03:00:00.000Z"), scheduleRevision: 4
+      }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{
+        id: "structure-1", version: 1, taskScheduleRevision: 4, totalStartAt: job.scheduledAt
+      }] })
+      .mockResolvedValueOnce({ rows: [{ position: 0, segmentType: "focus", durationMinutes: 55 }, { position: 1, segmentType: "break", durationMinutes: 5 }] })
+      .mockResolvedValueOnce({ rows: [{ id: "session-preparing" }] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
+    const database = {
+      execute,
+      transaction: async (callback: (db: unknown) => unknown) => callback({ execute })
+    } as unknown as AppDatabase;
+    const worker = new ReminderWorker(database);
+
+    await expect(worker.processNext(null, now)).resolves.toBe("retry");
+    expect(execute).toHaveBeenCalledTimes(12);
+  });
+
   it("cancels the complete focus pipeline in memo mode", async () => {
     const readyJob: ReminderJob = { ...job, id: "job-ready-memo", kind: "task_start_ready" };
     const execute = vi.fn()

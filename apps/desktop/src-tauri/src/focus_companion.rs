@@ -27,6 +27,7 @@ const FOCUS_MINI_WIDTH: f64 = 360.0;
 const FOCUS_MINI_HEIGHT: f64 = 236.0;
 const FOCUS_EVALUATION_WIDTH: f64 = 540.0;
 const FOCUS_EVALUATION_HEIGHT: f64 = 620.0;
+const WINDOWS_MINIMIZED_POSITION_LIMIT: i32 = -10_000;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -161,7 +162,8 @@ struct FocusSegment {
 }
 
 pub fn install(app: &AppHandle) -> tauri::Result<()> {
-    let settings = load_settings(app);
+    let settings = sanitize_settings(load_settings(app));
+    save_settings(app, &settings);
     *app.state::<FocusCompanionState>()
         .settings
         .lock()
@@ -721,11 +723,21 @@ fn position_preparation_window(app: &AppHandle, window: &tauri::WebviewWindow) {
         return;
     }
     let Some(base) = current_mini_window(app) else {
+        restore_window_position(window, &FocusMiniPositionMode::BottomRight, None);
         return;
     };
+    if base.is_minimized().unwrap_or(false) {
+        restore_window_position(window, &FocusMiniPositionMode::BottomRight, None);
+        return;
+    }
     let Ok(base_position) = base.outer_position() else {
+        restore_window_position(window, &FocusMiniPositionMode::BottomRight, None);
         return;
     };
+    if !is_persistable_window_position(base_position.x, base_position.y) {
+        restore_window_position(window, &FocusMiniPositionMode::BottomRight, None);
+        return;
+    }
     let Ok(size) = window.outer_size() else {
         return;
     };
@@ -1007,6 +1019,25 @@ mod tests {
                 &preferences
             ));
         }
+    }
+
+    #[test]
+    fn minimized_windows_coordinates_are_removed_from_saved_settings() {
+        let mut settings = FocusMiniSettings::default();
+        settings.position_mode = FocusMiniPositionMode::Custom;
+        settings.x = Some(-32_000);
+        settings.y = Some(-32_000);
+
+        let sanitized = sanitize_settings(settings);
+
+        assert_eq!(sanitized.position_mode, FocusMiniPositionMode::BottomRight);
+        assert_eq!(sanitized.x, None);
+        assert_eq!(sanitized.y, None);
+    }
+
+    #[test]
+    fn legitimate_negative_monitor_coordinates_remain_available() {
+        assert!(is_persistable_window_position(-1_920, 120));
     }
 
     #[test]
@@ -1348,6 +1379,13 @@ pub fn handle_window_event(app: &AppHandle, label: &str, event: &WindowEvent) ->
             }
         }
         WindowEvent::Moved(position) if is_mini || is_preparation => {
+            let minimized = app
+                .get_webview_window(label)
+                .and_then(|window| window.is_minimized().ok())
+                .unwrap_or(false);
+            if minimized || !is_persistable_window_position(position.x, position.y) {
+                return true;
+            }
             let state = app.state::<FocusCompanionState>();
             let mut settings = state
                 .settings
@@ -1594,6 +1632,34 @@ fn load_settings(app: &AppHandle) -> FocusMiniSettings {
         }
     }
     settings
+}
+
+fn sanitize_settings(mut settings: FocusMiniSettings) -> FocusMiniSettings {
+    if settings
+        .x
+        .zip(settings.y)
+        .map(|(x, y)| !is_persistable_window_position(x, y))
+        .unwrap_or(false)
+    {
+        settings.x = None;
+        settings.y = None;
+        settings.position_mode = FocusMiniPositionMode::BottomRight;
+    }
+    if settings
+        .preparation_x
+        .zip(settings.preparation_y)
+        .map(|(x, y)| !is_persistable_window_position(x, y))
+        .unwrap_or(false)
+    {
+        settings.preparation_x = None;
+        settings.preparation_y = None;
+        settings.preparation_position_mode = FocusMiniPositionMode::BottomRight;
+    }
+    settings
+}
+
+fn is_persistable_window_position(x: i32, y: i32) -> bool {
+    x > WINDOWS_MINIMIZED_POSITION_LIMIT && y > WINDOWS_MINIMIZED_POSITION_LIMIT
 }
 
 fn save_settings(app: &AppHandle, settings: &FocusMiniSettings) {

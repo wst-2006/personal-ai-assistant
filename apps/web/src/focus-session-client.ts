@@ -181,6 +181,7 @@ export async function loadFocusSnapshot(
 export async function runFocusSessionAction(
   snapshot: FocusSessionSnapshot,
   action: "skip-preparation" | "skip-final-break" | "other-arrangement",
+  surface: "current" | "execution" | "evaluation" | "preparation" = "current",
 ): Promise<FocusSessionSnapshot | null> {
   const response = await fetch(`${API}/api/v1/focus-sessions/${snapshot.session.id}/${action}`, {
     method: "POST",
@@ -191,7 +192,7 @@ export async function runFocusSessionAction(
     }),
   });
   if (!response.ok) throw new Error("focus_action_failed");
-  return loadFocusSnapshot();
+  return loadFocusSnapshot(undefined, surface);
 }
 
 export async function resolveFocusPreparationDecision(

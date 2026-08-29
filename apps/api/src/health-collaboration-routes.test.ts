@@ -11,6 +11,7 @@ const conversationId = "11111111-1111-4111-8111-111111111111";
 const userMessageId = "22222222-2222-4222-8222-222222222222";
 const state = {
   conversation: { id: conversationId, weekStart: "2026-08-16", createdAt: new Date(), updatedAt: new Date() },
+  replyInFlight: true,
   messages: [{
     id: userMessageId,
     conversationId,
@@ -25,6 +26,7 @@ const state = {
 const saveUserMessage = vi.fn().mockResolvedValue(state);
 const retryLast = vi.fn().mockResolvedValue({
   ...state,
+  replyInFlight: false,
   messages: [...state.messages, {
     id: "33333333-3333-4333-8333-333333333333",
     conversationId,
@@ -52,6 +54,17 @@ const app = buildApp({
 afterAll(async () => app.close());
 
 describe("health collaboration routes", () => {
+  it("reports an in-flight reply so the health page can reconnect after navigation", async () => {
+    const response = await app.inject({ method: "GET", url: "/api/v1/health/weeks/2026-08-16/collaboration" });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      conversation: { id: conversationId },
+      replyInFlight: true,
+      messages: [{ role: "user" }]
+    });
+  });
+
   it("saves the user message first without waiting for or duplicating the AI reply", async () => {
     const response = await app.inject({
       method: "POST",

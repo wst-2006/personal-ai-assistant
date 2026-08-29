@@ -8,7 +8,8 @@ import { eq } from "drizzle-orm";
 
 test("赛博日记读取真实日数据、持久保存、刷新恢复并导出", async ({ page }) => {
   const suffix = Date.now().toString(36);
-  const localDate = `2098-07-${String(10 + Number(BigInt(Date.now()) % 10n)).padStart(2, "0")}`;
+  const dateSeed = randomUUID().replaceAll("-", "");
+  const localDate = `${2200 + (Number.parseInt(dateSeed.slice(0, 4), 16) % 500)}-${String(1 + (Number.parseInt(dateSeed.slice(4, 6), 16) % 12)).padStart(2, "0")}-${String(1 + (Number.parseInt(dateSeed.slice(6, 8), 16) % 28)).padStart(2, "0")}`;
   const previousMonthDate = new Date(`${localDate}T12:00:00Z`);
   previousMonthDate.setUTCMonth(previousMonthDate.getUTCMonth() - 1);
   const previousMonth = previousMonthDate.toISOString().slice(0, 7);

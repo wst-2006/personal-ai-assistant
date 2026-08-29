@@ -2108,25 +2108,11 @@ html[data-focus-immersive="true"] .topbar:hover { opacity: .82; }
 .review-location-panel {
   overflow: hidden;
   isolation: isolate;
-  min-height: 560px;
-  padding-bottom: 190px !important;
+  min-height: 0;
 }
 
 .review-location-panel::before {
-  position: absolute;
-  z-index: 0;
-  inset: auto 0 0;
-  height: 178px;
-  background-image: url('/art/qingming-riverside.jpg');
-  background-position: 72% bottom;
-  background-size: auto 178px;
-  background-repeat: no-repeat;
-  filter: saturate(.68) sepia(.06) contrast(1.02);
-  opacity: .8;
-  -webkit-mask-image: linear-gradient(to right, transparent 0%, rgba(0,0,0,.08) 14%, rgba(0,0,0,.42) 34%, rgba(0,0,0,.84) 58%, #000 78% 100%);
-  mask-image: linear-gradient(to right, transparent 0%, rgba(0,0,0,.08) 14%, rgba(0,0,0,.42) 34%, rgba(0,0,0,.84) 58%, #000 78% 100%);
-  content: "";
-  pointer-events: none;
+  content: none;
 }
 
 .review-location-panel > * { position: relative; z-index: 1; }
@@ -2134,7 +2120,23 @@ html[data-focus-immersive="true"] .topbar:hover { opacity: .82; }
 .review-location-controls label { min-width: 0; }
 .review-location-buttons { display: grid; grid-template-columns: 1fr; gap: 8px; }
 .review-location-buttons .quiet-button { width: 100%; justify-content: center; background: rgba(249,247,240,.82); backdrop-filter: blur(2px); }
-.review-weather-result { background: rgba(249,247,240,.82); backdrop-filter: blur(2px); }
+.review-weather-result {
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, .92fr);
+  grid-template-rows: auto;
+  min-height: 118px;
+  gap: 14px;
+  padding: 16px 18px 34px;
+  background-color: rgba(249,247,240,.86);
+  background-image: url('/art/qingming-riverside.jpg');
+  background-position: right 18px bottom 11px;
+  /* Display the complete handscroll as a narrow strip at its original aspect ratio. */
+  background-size: calc(100% - 36px) auto;
+  background-repeat: no-repeat;
+  backdrop-filter: blur(2px);
+}
+.review-weather-main { grid-column: 1; align-self: center; }
+.review-weather-meta { grid-column: 2; align-self: center; padding-bottom: 0; }
+.review-weather-meta p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .growth-score-detail { position: absolute; z-index: 4; right: 2%; bottom: 12px; width: min(520px, 48%); color: var(--canvas-blue-gray); font-size: 10px; }
 .growth-score-detail summary { cursor: pointer; color: var(--canvas-pine); font-family: var(--font-display); }
@@ -2156,9 +2158,15 @@ html[data-focus-immersive="true"] .topbar:hover { opacity: .82; }
   .review-side-column { grid-template-columns: 1fr; }
   .review-side-column .review-radar-archive,
   .review-side-column .review-location-panel { padding: 18px; }
-  .review-location-panel { min-height: 520px; padding-bottom: 160px !important; }
-  .review-location-panel::before { height: 145px; background-size: auto 145px; background-position: 70% bottom; }
-  .review-weather-result { gap: 10px; }
+  .review-location-panel { min-height: 0; }
+  .review-weather-result {
+    grid-template-columns: minmax(0, 1.08fr) minmax(0, .92fr);
+    min-height: 112px;
+    gap: 10px;
+    padding: 14px 16px 32px;
+    background-position: right 16px bottom 10px;
+    background-size: calc(100% - 32px) auto;
+  }
   .review-weather-meta { justify-items: start; text-align: left; }
   .growth-score-detail { position: static; width: auto; margin: 14px 18px 0; }
 }
@@ -2176,3 +2184,46 @@ html[data-focus-immersive="true"] .topbar:hover { opacity: .82; }
   .review-location-art { inset: 0; opacity: .48; }
   .review-close-scroll { position: absolute; right: 8px; bottom: 26px; margin: 0; }
 }
+
+/* Health references keep fruit, supplements, and meals as separate reading
+   surfaces so the daily food guidance can be scanned without a training plan. */
+.health-day-detail > .health-side-column {
+  display: grid;
+  align-content: start;
+  gap: 20px;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.health-side-column > section {
+  min-height: 0;
+  margin: 0;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: rgba(255,255,255,.52);
+}
+.health-side-column .health-supplements {
+  margin: 0;
+  padding: 20px;
+  border: 1px solid #d9d6bd;
+  border-radius: var(--radius-md);
+  background: #fbfaf1;
+}
+.health-fruit-reference h3,
+.health-meal-sheet-bottom h3 { margin-top: 0; }
+.health-fruit-reference ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--canvas-ink);
+  font-size: 11px;
+  line-height: 1.65;
+}
+.health-meal-sheet-bottom {
+  grid-column: 1 / -1;
+  min-height: 0 !important;
+}
+.health-meal-sheet-bottom dl { margin-bottom: 0; }

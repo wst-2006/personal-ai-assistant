@@ -56,9 +56,9 @@ export class DeepSeekFocusStructurePlanner implements FocusStructurePlanner {
               "你是个人专注结构规划器，只生成候选，不替用户作最终决定。",
               "输出 JSON 对象：{\"segments\":[{\"segmentType\":\"focus|break\",\"durationMinutes\":整数}]}。",
               "所有分钟之和必须严格等于任务总分钟数，不得改变任务开始或结束时间。",
-              "30 分钟任务只能返回一个 30 分钟 focus，不插入休息。",
+              "30 分钟任务必须返回 25 分钟 focus + 5 分钟 break；60 分钟默认 55+5，90 分钟默认 80+10，120 分钟默认 105+15。",
               "其他结构必须从 focus 开始，focus 与 break 交替，并在最后一个 focus 后保留 break。",
-              "每个 focus 至少 30 分钟；每个 break 为 5 至 15 分钟。",
+              "每个 focus 至少 25 分钟；每个 break 为 5 至 15 分钟。",
               "只使用用户本次要求和任务信息，不推断人格、意志力、精神或健康状态。",
               "只返回 JSON，不要 Markdown 或解释。",
               context

@@ -3,7 +3,11 @@ import { readFileSync, existsSync } from "node:fs";
 import { join, extname } from "node:path";
 
 const root = process.cwd();
-const publicFiles = execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], { cwd: root }).toString().split("\0").filter(Boolean);
+const publicFiles = execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], { cwd: root })
+  .toString()
+  .split("\0")
+  .filter(Boolean)
+  .filter((file) => existsSync(join(root, file)));
 const findings = [];
 
 const forbiddenTracked = /(^|[\\/])(?:\.env(?:\..*)?|node_modules|dist|target|runtime|test-results|playwright-report|output|\.pnpm-store)(?:[\\/]|$)/i;

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { resolveSolarTerm, shanghaiDateKey, type SeasonalAccentKind, type SeasonalPlantKind } from "./solar-terms";
+import { resolveSolarTerm, type SeasonalAccentKind, type SeasonalPlantKind } from "./solar-terms";
+import { useShanghaiDate } from "./useShanghaiDate";
 
 function PlantDrawing({ kind }: { kind: SeasonalPlantKind }) {
   if (kind === "orchid") {
@@ -70,17 +71,39 @@ function TermAccent({ kind }: { kind: SeasonalAccentKind }) {
   return <g className="seasonal-term-accent seasonal-accent-frost"><path d="M39 76l15-15M54 61l10-11M50 65l-11-3M58 57l1-11M65 51l10 2" /></g>;
 }
 
+const plantLabel: Record<SeasonalPlantKind, string> = { orchid: "兰", lotus: "荷", chrysanthemum: "菊", plum: "梅" };
+
+function PlantScene({ kind, accent }: { kind: SeasonalPlantKind; accent: SeasonalAccentKind }) {
+  return <svg viewBox="0 0 270 235" role="img" aria-hidden="true">
+    <path className="seasonal-wash" d="M77 35C118 4 196 7 234 49C269 88 256 163 210 200C163 238 75 226 37 179C2 136 29 70 77 35Z" />
+    <path className="seasonal-mist" d="M23 196C77 184 115 201 163 193C202 186 235 190 267 203" />
+    <TermAccent kind={accent} />
+    <PlantDrawing kind={kind} />
+  </svg>;
+}
+
+export function DecorativePlant({ kind, label = plantLabel[kind], note, accent = "breeze", className = "" }: {
+  kind: SeasonalPlantKind;
+  label?: string;
+  note: string;
+  accent?: SeasonalAccentKind;
+  className?: string;
+}) {
+  return <aside
+    className={`seasonal-corner seasonal-page-plant seasonal-${kind} ${className}`}
+    data-plant={label}
+    data-season-phase="3"
+    data-accent={accent}
+    aria-label={`${label}水墨植物，${note}`}
+  >
+    <PlantScene kind={kind} accent={accent} />
+    <div className="seasonal-caption" aria-hidden="true"><span>一页一景</span><strong>{label}</strong><small>{note}</small></div>
+  </aside>;
+}
+
 export function SeasonalPlant({ date }: { date?: string }) {
-  const [clock, setClock] = useState(() => Date.now());
-  const live = !date || date === shanghaiDateKey(new Date(clock));
-  const motif = useMemo(() => resolveSolarTerm(live ? new Date(clock) : date), [clock, date, live]);
-  useEffect(() => {
-    if (!live) return;
-    const now = Date.now();
-    const delay = Math.max(1_000, Math.min(60 * 60 * 1_000, motif.nextStart.getTime() - now + 250));
-    const timer = window.setTimeout(() => setClock(Date.now()), delay);
-    return () => window.clearTimeout(timer);
-  }, [live, motif.nextStart]);
+  const todayDateKey = useShanghaiDate();
+  const motif = useMemo(() => resolveSolarTerm(date ?? todayDateKey), [date, todayDateKey]);
   return <aside
     className={`seasonal-corner seasonal-${motif.kind} seasonal-term-${motif.slug}`}
     data-solar-term={motif.term}
@@ -93,12 +116,7 @@ export function SeasonalPlant({ date }: { date?: string }) {
     data-next-term-start={motif.nextStart.toISOString()}
     aria-label={`${motif.term}，${motif.season}季${motif.plant}花水墨，${motif.note}`}
   >
-    <svg key={`${motif.term}:${motif.start.toISOString()}`} viewBox="0 0 270 235" role="img" aria-hidden="true">
-      <path className="seasonal-wash" d="M77 35C118 4 196 7 234 49C269 88 256 163 210 200C163 238 75 226 37 179C2 136 29 70 77 35Z" />
-      <path className="seasonal-mist" d="M23 196C77 184 115 201 163 193C202 186 235 190 267 203" />
-      <TermAccent kind={motif.accent} />
-      <PlantDrawing kind={motif.kind} />
-    </svg>
+    <PlantScene key={`${motif.term}:${motif.start.toISOString()}`} kind={motif.kind} accent={motif.accent} />
     <div className="seasonal-caption" aria-hidden="true"><span>{motif.term}</span><strong>{motif.plant}</strong><small>{motif.note}</small></div>
   </aside>;
 }

@@ -164,10 +164,13 @@ export function FocusMiniWindow() {
     if (!snapshot || busy) return;
     setBusy(true);
     try {
-      const next = await runFocusSessionAction(snapshot, action);
+      const next = await runFocusSessionAction(
+        snapshot,
+        action,
+        evaluationSurface ? "evaluation" : preparationSurface ? "preparation" : "execution",
+      );
       setSnapshot(next);
-      // Clicking "开始任务" ends the preparation/countdown surface immediately.
-      // The execution surface will be shown separately when the fixed start is reached.
+      // Starting switches the companion from preparation to the live timer.
       if (action === "skip-preparation") {
         await invokeDesktop(surfaceCommand("hide")).catch(() => undefined);
       }
@@ -337,17 +340,17 @@ export function FocusMiniWindow() {
         <cite>{quote.source}</cite>
       </div> : null}
       <div className="focus-mini-controls" aria-label="专注悬浮窗操作">
-        {snapshot.session.state === "preparing" || snapshot.session.state === "awaiting_late_start"
+        {snapshot.session.state === "reminded" || snapshot.session.state === "scheduled" || snapshot.session.state === "preparing" || snapshot.session.state === "armed" || snapshot.session.state === "awaiting_late_start"
           ? <>
-            <button className="primary" type="button" disabled={busy} title="确认开始任务" onClick={() => void act("skip-preparation")}><Play />{snapshot.session.state === "preparing" ? "开始任务" : "现在开始"}</button>
+            <button className="primary" type="button" disabled={busy} title="开始任务" onClick={() => void act("skip-preparation")}><Play />开始任务</button>
             <button type="button" disabled={busy} title="停止本次准备并退回未排期" onClick={() => void decidePreparation("other-arrangement")}><CalendarClock />另有安排</button>
             <button className="danger" type="button" disabled={busy} title="直接取消这项任务" onClick={() => void decidePreparation("cancel-task")}><XCircle />取消任务</button>
           </>
           : null}
         {finalBreak ? <button type="button" disabled={busy} title="跳过最后休息并进入评价" onClick={() => void act("skip-final-break")}><SkipForward />跳过休息</button> : null}
       </div>
-      {!preparationSurface && (snapshot.session.state === "preparing" || snapshot.session.state === "armed" || snapshot.session.state === "awaiting_late_start")
-        ? <p className="focus-mini-confirm-hint">桌面或飞书确认一次即可</p>
+      {!preparationSurface && (snapshot.session.state === "reminded" || snapshot.session.state === "scheduled" || snapshot.session.state === "preparing" || snapshot.session.state === "armed" || snapshot.session.state === "awaiting_late_start")
+        ? <p className="focus-mini-confirm-hint">到点会自动开始，也可以现在开始</p>
         : null}
       {!preparationSurface && !["preparing", "armed", "awaiting_late_start"].includes(snapshot.session.state)
         ? <button className={`focus-mini-auto ${settings?.autoShow ? "active" : ""}`} type="button" onClick={() => void updateSetting("focus_mini_set_auto_show", !settings?.autoShow)}>开始时自动出现</button>

@@ -109,11 +109,11 @@ function buildReminderCard(payload: ReturnType<typeof parsePayload>, context: Re
         ]
       : stage === "upcoming" ? sharedActions : [];
   const copy = stage === "missed"
-    ? `**${payload.title}**\n固定时段内没有确认开始，已记录为未完成。`
+    ? `**${payload.title}**\n固定时段内未进入专注，已记录为未完成。`
     : stage === "late"
       ? `**${payload.title}**\n开始按钮已经过期。若仍在原任务时段内，请直接告诉 AI“我开始了这个任务”，系统只从实际开始时刻记录。`
       : stage === "ready"
-        ? `**${payload.title}**\n还有 1 分钟开始。只有点击“开始任务”才会进入专注；未确认不会自动计时。`
+        ? `**${payload.title}**\n还有 1 分钟开始。到点会自动进入专注，也可以现在开始。`
         : `**${payload.title}**\n将在 ${time} 开始。开始按钮会在前 1 分钟出现在这张卡片上。`;
   return {
     config: { wide_screen_mode: true },

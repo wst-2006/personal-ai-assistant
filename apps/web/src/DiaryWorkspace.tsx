@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowRight, BarChart3, CalendarDays, Check, CheckCircle2, ChevronLeft, ChevronRight, Clock3, CloudSun, Download, Leaf, MapPin, NotebookPen, Sparkles, Timer } from "lucide-react";
 
 type Brief = { id: string; content: { title: string; reflection: string; taskSummary: string; location?: { name: string } | null; weather?: { temperatureCelsius: number; apparentTemperatureCelsius: number; weatherCode: number } | null } };
@@ -94,20 +94,27 @@ export function DiaryWorkspace({ onOpenReview }: { onOpenReview: () => void }) {
   const [radarValues, setRadarValues] = useState<RadarValues>(() => defaultRadar());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const loadRequestRef = useRef(0);
   const load = useCallback(async () => {
+    const requestId = ++loadRequestRef.current;
     setData(null);
     setError(null);
     const [result, month] = await Promise.all([
       request<DiaryRead>(`/api/v1/diaries/${selectedDate}`),
       request<MonthData>(`/api/v1/diaries?month=${selectedDate.slice(0, 7)}`)
     ]);
+    if (requestId !== loadRequestRef.current) return;
     setData(result);
     setMonthData(month);
     if (result.diary) { setTitle(result.diary.content.title); setBody(result.diary.content.body); }
     else { setTitle(displayDate(selectedDate)); setBody(""); }
     setRadarValues(result.diary?.content.radar ?? defaultRadar(result.dayData));
   }, [selectedDate]);
-  useEffect(() => { void load().catch(() => setError("无法读取赛博日记，请确认 API 正在运行。")); }, [load]);
+  useEffect(() => {
+    const pending = load();
+    const requestId = loadRequestRef.current;
+    void pending.catch(() => { if (requestId === loadRequestRef.current) setError("无法读取赛博日记，请确认 API 正在运行。"); });
+  }, [load]);
   const ready = Boolean(data?.review && data.hasReviewMessage && data.confirmedBrief);
   function prepareDraft() {
     if (!data?.confirmedBrief) return;

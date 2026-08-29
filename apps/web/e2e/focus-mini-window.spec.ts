@@ -68,7 +68,7 @@ test.describe("独立专注窗口", () => {
   test("置顶与锁定固定在标题栏，底部只保留明确的计时动作", async ({ page }) => {
     await page.setViewportSize({ width: 360, height: 236 });
     await routeProfile(page);
-    await page.route(`${apiBase}/api/v1/focus-sessions/current`, (route) => route.fulfill({
+    await page.route(`${apiBase}/api/v1/focus-sessions/current-execution`, (route) => route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({ session: snapshot("running").session, snapshot: snapshot("running") }),
@@ -93,7 +93,7 @@ test.describe("独立专注窗口", () => {
     await routeProfile(page);
     let confirmed = false;
     let confirmCount = 0;
-    await page.route(`${apiBase}/api/v1/focus-sessions/current`, (route) => {
+    await page.route(`${apiBase}/api/v1/focus-sessions/overlapping-preparation`, (route) => {
       const value = snapshot(confirmed ? "armed" : "preparing");
       return route.fulfill({
         status: 200,
@@ -111,12 +111,11 @@ test.describe("独立专注窗口", () => {
       });
     });
 
-    await page.goto("/?focus-mini=1");
+    await page.goto("/?focus-mini=1&focus-preparation=1");
     await expect(page.getByRole("button", { name: "开始任务" })).toBeVisible();
     await expect(page.getByRole("button", { name: "另有安排" })).toBeVisible();
     await expect(page.getByRole("button", { name: "取消任务" })).toBeVisible();
     await expect(page.locator(".focus-mini-quote")).toHaveCount(0);
-    await expect(page.getByText("桌面或飞书确认一次即可")).toBeVisible();
     await page.getByRole("button", { name: "开始任务" }).click();
     await expect(page.getByText("已确认", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "开始任务" })).toHaveCount(0);
@@ -129,7 +128,7 @@ test.describe("独立专注窗口", () => {
     await page.clock.setFixedTime(fixedNow);
     await page.setViewportSize({ width: 540, height: 620 });
     await routeProfile(page);
-    await page.route(`${apiBase}/api/v1/focus-sessions/current`, (route) => {
+    await page.route(`${apiBase}/api/v1/focus-sessions/pending-evaluation`, (route) => {
       const value = snapshot("ended", { now: fixedNow.getTime() });
       return route.fulfill({
         status: 200,
@@ -138,7 +137,7 @@ test.describe("独立专注窗口", () => {
       });
     });
 
-    await page.goto("/?focus-mini=1");
+    await page.goto("/?focus-mini=1&focus-evaluation=1");
     await expect(page.getByText("尚未操作，90 秒后自动关闭并保留为待评价")).toBeVisible();
     await page.clock.fastForward(90_000);
     await expect(page.getByRole("heading", { name: "为这一段留下真实记录" })).toHaveCount(0);
@@ -150,7 +149,7 @@ test.describe("独立专注窗口", () => {
     await routeProfile(page);
     let evaluated = false;
     let payload: Record<string, unknown> | null = null;
-    await page.route(`${apiBase}/api/v1/focus-sessions/current`, (route) => route.fulfill({
+    await page.route(`${apiBase}/api/v1/focus-sessions/pending-evaluation`, (route) => route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify(evaluated
@@ -167,7 +166,7 @@ test.describe("独立专注窗口", () => {
       });
     });
 
-    await page.goto("/?focus-mini=1");
+    await page.goto("/?focus-mini=1&focus-evaluation=1");
     await expect(page.getByRole("heading", { name: "为这一段留下真实记录" })).toBeVisible();
     await expect(page.getByText("完成专注窗口结构验收", { exact: true })).toBeVisible();
 
@@ -202,7 +201,7 @@ test.describe("独立专注窗口", () => {
     await page.clock.setFixedTime(fixedNow);
     await routeProfile(page, "ink");
     let remainingSeconds = 42;
-    await page.route(`${apiBase}/api/v1/focus-sessions/current`, (route) => {
+    await page.route(`${apiBase}/api/v1/focus-sessions/current-execution`, (route) => {
       const value = snapshot("running", { now: fixedNow.getTime(), remainingSeconds });
       return route.fulfill({
         status: 200,
@@ -272,7 +271,7 @@ test.describe("独立专注窗口", () => {
     await page.setViewportSize({ width: 540, height: 620 });
     await routeProfile(page, "cyber");
     let payload: Record<string, unknown> | null = null;
-    await page.route(`${apiBase}/api/v1/focus-sessions/current`, (route) => route.fulfill({
+    await page.route(`${apiBase}/api/v1/focus-sessions/pending-evaluation`, (route) => route.fulfill({
       status: 200,
       contentType: "application/json",
       body: JSON.stringify({ session: snapshot("ended").session, snapshot: snapshot("ended") }),
@@ -286,7 +285,7 @@ test.describe("独立专注窗口", () => {
       });
     });
 
-    await page.goto("/?focus-mini=1");
+    await page.goto("/?focus-mini=1&focus-evaluation=1");
     await expect(page.locator(".focus-mini")).toHaveClass(/focus-theme-cyber/);
     const objective = page.getByRole("listbox", { name: "客观完成情况" });
     await expect(objective).toBeFocused();

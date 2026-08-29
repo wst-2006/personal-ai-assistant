@@ -173,7 +173,7 @@ export class BriefProviders {
       if (!match?.name || match.latitude === undefined || match.longitude === undefined || !match.timezone) {
         return { section: { title: "天气与地点", body: `没有找到“${query}”，请检查地点名称。` }, source: null, location: null, weather: null };
       }
-      const name = formatLocationName([match.country, match.admin1, match.name]);
+      const name = formatLocationName([match.name, match.admin1, match.country]);
       const location = { name, latitude: match.latitude, longitude: match.longitude, timeZone: match.timezone };
       const response = await this.fetcher(`https://api.open-meteo.com/v1/forecast?latitude=${match.latitude}&longitude=${match.longitude}&current=temperature_2m,apparent_temperature,weather_code&timezone=auto`, { signal: AbortSignal.timeout(8_000) });
       if (!response.ok) throw new Error("weather_response_failed");
@@ -201,7 +201,7 @@ export class BriefProviders {
       const reverseResponse = await this.fetcher(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${encodeURIComponent(latitude)}&longitude=${encodeURIComponent(longitude)}&localityLanguage=zh`, { signal: AbortSignal.timeout(8_000) });
       const reverse = reverseResponse.ok ? await reverseResponse.json() as { countryName?: string; principalSubdivision?: string; city?: string; locality?: string } : {};
       const timezone = "Asia/Shanghai";
-      const name = formatLocationName([reverse.countryName, reverse.principalSubdivision, reverse.city, reverse.locality]) || "本机位置（行政区暂不可用）";
+      const name = formatLocationName([reverse.locality, reverse.city, reverse.principalSubdivision, reverse.countryName]) || "本机位置（行政区暂不可用）";
       const response = await this.fetcher(`https://api.open-meteo.com/v1/forecast?latitude=${encodeURIComponent(latitude)}&longitude=${encodeURIComponent(longitude)}&current=temperature_2m,apparent_temperature,weather_code&timezone=auto`, { signal: AbortSignal.timeout(8_000) });
       if (!response.ok) throw new Error("weather_response_failed");
       const data = await response.json() as { timezone?: string; current?: { time?: string; temperature_2m?: number; apparent_temperature?: number; weather_code?: number } };
@@ -229,7 +229,7 @@ export class BriefProviders {
       const geocoding = await geocodingResponse.json() as { results?: Array<{ name?: string; admin1?: string; country?: string; latitude?: number; longitude?: number; timezone?: string }> };
       const match = geocoding.results?.[0];
       if (!match?.name || match.latitude === undefined || match.longitude === undefined || !match.timezone) return { source: null, location: null, days: [] };
-      const name = formatLocationName([match.country, match.admin1, match.name]);
+      const name = formatLocationName([match.name, match.admin1, match.country]);
       const location = { name, latitude: match.latitude, longitude: match.longitude, timeZone: match.timezone };
       const url = `https://api.open-meteo.com/v1/forecast?latitude=${match.latitude}&longitude=${match.longitude}&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto&start_date=${startDate}&end_date=${endDate}`;
       const response = await this.fetcher(url, { signal: AbortSignal.timeout(8_000) });

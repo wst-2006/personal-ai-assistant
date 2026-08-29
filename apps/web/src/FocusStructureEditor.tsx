@@ -47,9 +47,10 @@ const distributions: Array<{ value: FocusDistribution | "custom"; label: string 
 
 export function FocusStructureEditor({ task, active, candidate, busy, onSave, onPlanAi, onConfirm, onConfirmDraft, onDiscard }: Props) {
   const totalMinutes = Math.round((new Date(task.endAt).getTime() - new Date(task.startAt).getTime()) / 60_000);
+  const defaultBreak = totalMinutes >= 120 ? 15 : totalMinutes >= 90 ? 10 : 5;
   const [focusCount, setFocusCount] = useState(1);
   const [distribution, setDistribution] = useState<FocusDistribution | "custom">("equal");
-  const [breakMinutes, setBreakMinutes] = useState(totalMinutes === 30 ? 0 : 5);
+  const [breakMinutes, setBreakMinutes] = useState(defaultBreak);
   const [segments, setSegments] = useState<FocusSegment[]>([]);
   const [expanded, setExpanded] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
@@ -60,7 +61,10 @@ export function FocusStructureEditor({ task, active, candidate, busy, onSave, on
   useEffect(() => {
     const stored = candidate ?? active;
     if (stored) {
-      const next = stored.segments.map(({ segmentType, durationMinutes }) => ({ segmentType, durationMinutes }));
+      const storedSegments = stored.segments.map(({ segmentType, durationMinutes }) => ({ segmentType, durationMinutes }));
+      const next = totalMinutes === 30 && storedSegments.length === 1 && storedSegments[0]?.segmentType === "focus" && storedSegments[0].durationMinutes === 30
+        ? [{ segmentType: "focus" as const, durationMinutes: 25 }, { segmentType: "break" as const, durationMinutes: 5 }]
+        : storedSegments;
       const focusDurations = next.filter((segment) => segment.segmentType === "focus").map((segment) => segment.durationMinutes);
       setSegments(next);
       setFocusCount(focusDurations.length);
@@ -72,7 +76,7 @@ export function FocusStructureEditor({ task, active, candidate, busy, onSave, on
         const initial = allocateContinuousFocusStructure({
           totalStartAt: task.startAt,
           totalEndAt: task.endAt,
-          breakMinutes: totalMinutes === 30 ? 0 : 5
+          breakMinutes: defaultBreak
         });
         setSegments(initial.segments);
         setFocusCount(1);
@@ -82,7 +86,7 @@ export function FocusStructureEditor({ task, active, candidate, busy, onSave, on
       } catch (error) {
         setSegments([]);
         setFocusCount(1);
-        setBreakMinutes(totalMinutes === 30 ? 0 : 5);
+        setBreakMinutes(defaultBreak);
         setDistribution("equal");
         setLocalError(error instanceof Error ? templateError(error.message) : "当前时间块无法生成专注结构。");
       }
@@ -91,8 +95,12 @@ export function FocusStructureEditor({ task, active, candidate, busy, onSave, on
 
   const validation = useMemo(() => validateDraft(segments, totalMinutes), [segments, totalMinutes]);
   const candidateSegments = candidate?.segments.map(({ segmentType, durationMinutes }) => ({ segmentType, durationMinutes })) ?? null;
+  const activeSegments = active?.segments.map(({ segmentType, durationMinutes }) => ({ segmentType, durationMinutes })) ?? null;
   const candidateMatchesDraft = candidateSegments ? sameSegments(candidateSegments, segments) : false;
+  const activeMatchesDraft = activeSegments ? sameSegments(activeSegments, segments) : false;
+  const usingActive = Boolean(active && !candidate && activeMatchesDraft);
   const timeline = useMemo(() => segmentTimeline(task.startAt, task.timeZone, segments), [task.startAt, task.timeZone, segments]);
+  const timeRange = `${formatClock(task.startAt, task.timeZone)}–${formatClock(task.endAt, task.timeZone)}`;
 
   function applyTemplate(count: number, mode: FocusDistribution, rest = breakMinutes) {
     try {
@@ -101,7 +109,7 @@ export function FocusStructureEditor({ task, active, candidate, busy, onSave, on
         totalEndAt: task.endAt,
         focusCount: count,
         distribution: mode,
-        breakMinutes: count === 1 && totalMinutes === 30 ? 0 : rest || 5
+        breakMinutes: rest || defaultBreak
       });
       setFocusCount(count);
       setDistribution(mode);
@@ -182,9 +190,9 @@ export function FocusStructureEditor({ task, active, candidate, busy, onSave, on
       <header className="structure-heading">
         <div>
           <p className="section-kicker">执行结构</p>
-          <strong>{candidate ? candidate.source === "ai" ? "AI 候选，等待你确认" : "候选方案，等待确认" : active ? "已确认方案" : "先安排这段时间"}</strong>
+          <strong>{candidate ? candidate.source === "ai" ? "AI 候选，等待你确认" : "候选方案，等待确认" : usingActive ? "当前使用方案" : active ? "已调整，等待确认" : "先安排这段时间"}</strong>
         </div>
-        <span>{formatClock(task.startAt, task.timeZone)}–{formatClock(task.endAt, task.timeZone)} · {totalMinutes} 分钟</span>
+        <span>{timeRange} · {totalMinutes} 分钟</span>
       </header>
 
       <div className="structure-template-row" aria-label="专注段数">
@@ -327,20 +335,21 @@ export function FocusStructureEditor({ task, active, candidate, busy, onSave, on
         </div>
       )}
 
-      <div className={`structure-balance ${validation.valid ? "valid" : "invalid"}`} role="status">
-        <span>已使用 {validation.used} 分钟</span>
-        <span>{validation.remaining === 0 ? "刚好填满任务时间" : validation.remaining > 0 ? `还剩 ${validation.remaining} 分钟` : `超出 ${Math.abs(validation.remaining)} 分钟`}</span>
+      <div className={`structure-balance ${validation.valid ? "valid" : "invalid"} ${usingActive ? "active" : ""}`} role="status" aria-live="polite">
+        {usingActive
+          ? <><span className="structure-active-status"><Check />正在使用 {timeRange}</span><span>{validation.used} 分钟 · {focusCount} 段专注</span></>
+          : <><span>已安排 {validation.used} 分钟</span><span>{validation.remaining === 0 ? "刚好填满任务时间" : validation.remaining > 0 ? `还剩 ${validation.remaining} 分钟` : `超出 ${Math.abs(validation.remaining)} 分钟`}</span></>}
         {!validation.valid && <strong>{validation.message}</strong>}
         {localError && <strong>{localError}</strong>}
       </div>
 
       <footer className="structure-actions">
-        {active && <button type="button" className="focus-secondary" disabled={busy} onClick={restoreActive}><RotateCcw />恢复已确认</button>}
+        {active && <button type="button" className="focus-secondary" disabled={busy || usingActive} onClick={restoreActive}><RotateCcw />恢复已确认</button>}
         {candidate && <button type="button" className="focus-secondary danger" disabled={busy} onClick={() => void onDiscard()}><Trash2 />放弃候选</button>}
-        <button type="button" className="focus-secondary" disabled={busy || !validation.valid || candidateMatchesDraft} onClick={() => void save()}><Save />暂存候选</button>
-        <button type="button" className="primary-button" disabled={busy || !validation.valid} onClick={() => void (candidateMatchesDraft ? onConfirm() : onConfirmDraft(segments))}><Check />确认并使用</button>
+        <button type="button" className="focus-secondary" disabled={busy || !validation.valid || candidateMatchesDraft || usingActive} onClick={() => void save()}><Save />暂存候选</button>
+        <button type="button" className={`primary-button ${usingActive ? "structure-active-button" : ""}`} disabled={busy || !validation.valid || usingActive} onClick={() => void (candidateMatchesDraft ? onConfirm() : onConfirmDraft(segments))}><Check />{usingActive ? "已使用" : "确认并使用"}</button>
       </footer>
-      <p className="structure-note">确认后按这份结构执行；任务的固定开始和结束时间不会改变。</p>
+      <p className="structure-note">{usingActive ? `当前会按 ${timeRange} 的这份结构执行。` : "确认后按这份结构执行；任务的固定开始和结束时间不会改变。"}</p>
     </section>
   );
 }
@@ -348,13 +357,10 @@ export function FocusStructureEditor({ task, active, candidate, busy, onSave, on
 function validateDraft(segments: FocusSegment[], totalMinutes: number): { valid: boolean; used: number; remaining: number; message: string } {
   const used = segments.reduce((sum, segment) => sum + (Number.isFinite(segment.durationMinutes) ? segment.durationMinutes : 0), 0);
   const remaining = totalMinutes - used;
-  if (segments.length === 1 && totalMinutes === 30 && segments[0]?.segmentType === "focus" && segments[0].durationMinutes === 30) {
-    return { valid: true, used, remaining, message: "" };
-  }
   for (let index = 0; index < segments.length; index += 1) {
     const segment = segments[index]!;
-    if (index % 2 === 0 && (segment.segmentType !== "focus" || segment.durationMinutes < 30)) {
-      return { valid: false, used, remaining, message: `第 ${Math.floor(index / 2) + 1} 段专注不能少于 30 分钟。` };
+    if (index % 2 === 0 && (segment.segmentType !== "focus" || segment.durationMinutes < 25)) {
+      return { valid: false, used, remaining, message: `第 ${Math.floor(index / 2) + 1} 段专注不能少于 25 分钟。` };
     }
     if (index % 2 === 1 && (segment.segmentType !== "break" || segment.durationMinutes < 5 || segment.durationMinutes > 15)) {
       return { valid: false, used, remaining, message: `第 ${Math.floor(index / 2) + 1} 段休息必须为 5–15 分钟。` };
@@ -418,7 +424,7 @@ function sameSegments(left: FocusSegment[], right: FocusSegment[]) {
 
 function templateError(message: string) {
   if (message.includes("positive multiple") || message.includes("valid date")) return "这项任务的时间范围不符合专注结构规则，请先回到今日页调整排期。";
-  if (message.includes("uninterrupted")) return "30 分钟任务应保持连续专注，不插入休息。";
+  if (message.includes("final break") || message.includes("5-15")) return "任务最后必须保留 5–15 分钟休息。";
   if (message.includes("strictly")) return "当前时长无法形成严格递增或递减结构，请增加任务时长或改用等长。";
   if (message.includes("requested number")) return "当前任务时间不足以容纳这些专注段和休息段。";
   return "当前时间块无法生成这个结构。";

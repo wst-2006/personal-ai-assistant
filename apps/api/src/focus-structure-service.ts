@@ -125,16 +125,10 @@ export class FocusStructureService {
       instructions: input.instructions
     });
     const focusCount = segments.filter((segment) => segment.segmentType === "focus").length;
-    if (totalMinutes === 30) {
-      if (segments.length !== 1 || segments[0]?.segmentType !== "focus" || segments[0].durationMinutes !== 30) {
-        throw new InvalidFocusStructureError("AI returned an invalid 30-minute focus structure.");
-      }
-    } else {
-      try {
-        validateSegmentedFocusStructure({ totalStartAt: task.startAt, totalEndAt: task.endAt, segments });
-      } catch (error) {
-        throw new InvalidFocusStructureError(`AI returned an invalid focus structure: ${error instanceof Error ? error.message : "unknown validation error"}`);
-      }
+    try {
+      validateSegmentedFocusStructure({ totalStartAt: task.startAt, totalEndAt: task.endAt, segments });
+    } catch (error) {
+      throw new InvalidFocusStructureError(`AI returned an invalid focus structure: ${error instanceof Error ? error.message : "unknown validation error"}`);
     }
     const breakMinutes = segments.find((segment) => segment.segmentType === "break")?.durationMinutes ?? 0;
     return this.createCandidate({

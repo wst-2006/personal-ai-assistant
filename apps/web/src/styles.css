@@ -287,10 +287,14 @@ textarea, input, select { width: 100%; min-width: 0; border: 1px solid #ccd8d0; 
 .structure-balance.valid { color: #8bd0b5; }
 .structure-balance.invalid { color: #f0ad91; background: rgba(168,78,65,.13); }
 .structure-balance strong { flex-basis: 100%; font-size: 11px; }
+.structure-balance.active { border: 1px solid rgba(63,115,84,.24); color: #285f46; background: rgba(220,235,222,.78); }
+.structure-active-status { display: inline-flex; align-items: center; gap: 6px; font-weight: 750; }
+.structure-active-status svg { width: 14px; height: 14px; }
 .structure-actions { display: flex; align-items: center; justify-content: flex-end; gap: 7px; flex-wrap: wrap; }
 .structure-actions button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
 .structure-actions svg { width: 14px; }
 .structure-actions .danger { color: #efb39d; }
+.structure-actions .structure-active-button:disabled { cursor: default; opacity: 1; color: #f7fff9; background: #397760; box-shadow: inset 0 0 0 1px rgba(255,255,255,.18); }
 .structure-note { margin: -4px 0 0; color: #789288; font-size: 10px; line-height: 1.45; }
 
 @media (max-width: 1050px) { .focus-workspace { grid-template-columns: minmax(0,1fr); }.focus-workspace .focus-picker { display: grid; margin-top: 18px; } }
@@ -390,6 +394,9 @@ textarea, input, select { width: 100%; min-width: 0; border: 1px solid #ccd8d0; 
 .sleep-file-picker { flex: 0 0 auto; padding: 7px 9px; border: 1px solid #c6dacf; border-radius: 4px; color: #2f6d43; background: #f5faf6; font-size: 11px; cursor: pointer; }
 .sleep-file-picker:hover, .sleep-file-picker:focus-visible { border-color: #2f7a4b; background: #e4f0e7; outline: none; }
 .sleep-file-picker:disabled, .sleep-dropzone[aria-disabled="true"] { cursor: not-allowed; opacity: .55; }
+.sleep-preview-shell { display: grid; gap: 6px; margin-top: 8px; padding: 8px; border: 1px solid #d4e2d8; border-radius: var(--radius-sm); background: #f8fcf9; }
+.sleep-preview-shell img { display: block; width: 100%; max-height: 260px; object-fit: contain; border-radius: 4px; background: #edf4ef; }
+.sleep-preview-shell small { color: var(--ink-500); font-size: 10px; line-height: 1.45; }
 @media (max-width: 600px) { .sleep-dropzone { align-items: flex-start; flex-wrap: wrap; }.sleep-file-picker { margin-left: 34px; } }
 
 /* Ink wash visual system v1: restrained paper, ink and traditional accent tones. */
@@ -1851,6 +1858,33 @@ html[data-document-hidden="true"] :is(.focus-mist, .focus-mountain-far, .focus-w
   font-size: 9px;
   letter-spacing: .2em;
   opacity: .72;
+}
+
+.seasonal-page-plant {
+  top: -27px;
+  right: 8px;
+  z-index: 1;
+}
+
+.seasonal-corner.focus-page-plant {
+  top: 8px;
+  right: 10px;
+  z-index: 1;
+}
+
+.seasonal-corner.focus-page-plant svg {
+  transform: translateX(14px);
+}
+
+.review-page {
+  position: relative;
+  isolation: isolate;
+}
+
+.seasonal-corner.review-page-plant {
+  top: -16px;
+  right: 8px;
+  z-index: 1;
 }
 
 .timeline-date {
@@ -4587,3 +4621,9 @@ html[data-document-hidden="true"] .focus-water-ripples {
 @media (max-width: 470px) {
   .task-dialog > form > footer { margin-inline: -18px; padding-inline: 18px; }
 }
+.review-date-controls { display: flex; align-items: end; flex-wrap: wrap; gap: 9px; margin-top: 16px; }
+.review-date-controls label { display: grid; gap: 5px; color: var(--canvas-blue-gray); font-size: 11px; }
+.review-date-controls input { min-height: 34px; padding: 0 9px; border: 1px solid rgba(55,79,66,.22); border-radius: 3px; color: var(--canvas-ink); background: rgba(255,255,255,.58); font: inherit; }
+.review-date-controls .quiet-button { min-height: 34px; }
+.review-date-controls .review-date-step { display: grid; width: 34px; min-width: 34px; padding: 0; place-items: center; }
+.review-date-controls .review-date-step svg { width: 16px; height: 16px; }

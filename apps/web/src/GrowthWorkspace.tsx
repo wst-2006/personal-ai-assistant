@@ -507,11 +507,12 @@ const CHART_HEIGHT = 220;
 const CHART_PADDING = { top: 18, right: 18, bottom: 42, left: 48 };
 
 const localDate = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-async function request<T>(path: string, method = "GET", body?: Record<string, unknown>): Promise<T> {
+async function request<T>(path: string, method = "GET", body?: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
   const response = await fetch(`${API}${path}`, {
     method,
     headers: body ? { "content-type": "application/json" } : undefined,
-    body: body ? JSON.stringify(body) : undefined
+    body: body ? JSON.stringify(body) : undefined,
+    signal
   });
   if (!response.ok) throw new Error((await response.json().catch(() => ({})) as { error?: string }).error ?? "growth_request_failed");
   return response.json() as Promise<T>;
@@ -652,7 +653,7 @@ function GrowthLandscape({ summary }: { summary: Summary }) {
       <path className="growth-river" d="M52 421C245 393 389 424 573 402C752 381 922 418 1148 388" />
     </svg>
     <div className="growth-scene-copy">
-      <strong>橙</strong>
+      <strong>成</strong>
       <p className="growth-focus-quote">
         <span>“{focusQuote.text}”</span>
         <cite>——{focusQuote.author}</cite>
@@ -683,7 +684,7 @@ export function GrowthWorkspace() {
   const [radarError, setRadarError] = useState<string | null>(null);
 
   const loadSummary = useCallback(async (signal?: AbortSignal) => {
-    const body = await request<{ summary: Summary }>(`/api/v1/growth/summary?endDate=${selectedDate}&days=${windowDays}`);
+    const body = await request<{ summary: Summary }>(`/api/v1/growth/summary?endDate=${selectedDate}&days=${windowDays}`, "GET", undefined, signal);
     if (signal?.aborted) return;
     setSummary(body.summary);
     const radarInput = Object.fromEntries(body.summary.currentRadar.map((metric) => [metric.key, metric.value])) as Partial<Record<RadarKey, number | null>>;
@@ -737,7 +738,7 @@ export function GrowthWorkspace() {
       <div className="growth-selected-date"><span>{dateTitle(summary.range.end)}</span><small>{rangeDescription}数据 · 可切换历史日期</small></div>
       <GrowthLandscape summary={summary} />
       <details className="growth-ledger">
-        <summary><span>查看精确数据与积分账簿</span><small>第一眼看生长，第二层再看数字</small></summary>
+        <summary><span>查看精确数据与积分账簿</span></summary>
         <section className="growth-score-ledger" aria-label="成长积分构成">
           <div><span>执行进度</span><strong>{summary.garden.pointsBreakdown.execution}/45</strong></div>
           <div><span>有效专注</span><strong>{summary.garden.pointsBreakdown.focus}/25</strong></div>

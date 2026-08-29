@@ -213,28 +213,8 @@ export class FocusTimerWorker {
         return "completed";
       }
 
-      if (job.kind === "confirmation_timeout" || job.kind === "preparation_complete") {
-        if (session.state === "preparing" || session.state === "reminded") {
-          const lateResult = await db.execute(sql`
-            UPDATE focus_sessions
-            SET state = 'awaiting_late_start', preparing_ends_at = NULL, confirmation_deadline_at = NULL,
-              version = version + 1, updated_at = ${now}
-            WHERE id = ${session.id} AND version = ${job.expectedSessionVersion}
-              AND state IN ('preparing', 'reminded')
-            RETURNING id
-          `);
-          if (lateResult.rows.length === 0) throw new Error("focus session version changed while waiting for late start");
-          await this.completeJob(db, job.id, now);
-          return "completed";
-        }
-        if (session.state !== "armed") {
-          await this.cancelJob(db, job.id, "focus session is no longer awaiting confirmation", now);
-          return "cancelled";
-        }
-      }
-
       if (job.kind === "preparation_complete" || job.kind === "confirmation_timeout") {
-        if (session.state !== "armed") {
+        if (!["preparing", "reminded", "armed"].includes(session.state)) {
           await this.cancelJob(db, job.id, "focus session is no longer preparing", now);
           return "cancelled";
         }
@@ -257,8 +237,10 @@ export class FocusTimerWorker {
         const startedResult = await db.execute(sql`
           UPDATE focus_sessions
           SET state = 'running', started_at = ${now}, active_since_at = ${now},
+            preparing_ends_at = NULL, confirmation_deadline_at = NULL,
             version = version + 1, updated_at = ${now}
-          WHERE id = ${session.id} AND version = ${job.expectedSessionVersion} AND state = 'armed'
+          WHERE id = ${session.id} AND version = ${job.expectedSessionVersion}
+            AND state IN ('preparing', 'reminded', 'armed')
           RETURNING id
         `);
         if (startedResult.rows.length === 0) throw new Error("focus session version changed while starting");

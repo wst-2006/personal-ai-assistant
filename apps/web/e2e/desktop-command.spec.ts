@@ -10,6 +10,8 @@ test("飞书打开任务命令只在 Windows 软件加载对应任务后完成",
   const commandId = randomUUID();
   const clientId = `desktop-e2e-${randomUUID()}`;
   const title = `E2E 飞书打开桌面任务 ${Date.now().toString(36)}`;
+  const startAt = new Date(Math.ceil((Date.now() + 30 * 60_000) / (30 * 60_000)) * (30 * 60_000));
+  const endAt = new Date(startAt.getTime() + 30 * 60_000);
   const { client, db } = await connectVerifiedDatabase(loadDatabaseConfig());
 
   try {
@@ -17,10 +19,12 @@ test("飞书打开任务命令只在 Windows 软件加载对应任务后完成",
       id: taskId,
       title,
       lifecycleStatus: "open",
-      scheduleKind: "none",
+      scheduleKind: "exact",
       localDate: new Intl.DateTimeFormat("en-CA", {
         timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit"
-      }).format(new Date()),
+      }).format(startAt),
+      startAt,
+      endAt,
       timeZone: "Asia/Shanghai",
       version: 1,
       scheduleRevision: 1

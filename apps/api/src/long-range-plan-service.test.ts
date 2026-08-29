@@ -90,14 +90,20 @@ describe("long-range plan persistence", () => {
         const newest = await service.get(createdIds.at(-1)!);
         await service.setStatus(newest.id, newest.version, "archived");
       }
-      await expect(service.create({
+      const fourthAttempt = service.create({
         scope: "month",
         title: "不应创建的第四项",
         periodStart: "2098-12-01",
         periodEnd: "2098-12-31",
         description: null,
         milestones: []
-      })).rejects.toBeInstanceOf(LongRangePlanScopeLimitError);
+      }).then((plan) => {
+        // Keep an unexpected successful write in the cleanup set so a failed
+        // assertion cannot pollute the next database-backed test run.
+        createdIds.push(plan.id);
+        return plan;
+      });
+      await expect(fourthAttempt).rejects.toBeInstanceOf(LongRangePlanScopeLimitError);
     } finally {
       for (const id of createdIds) {
         await connection.db.delete(longRangePlanMilestones).where(eq(longRangePlanMilestones.longRangePlanId, id));

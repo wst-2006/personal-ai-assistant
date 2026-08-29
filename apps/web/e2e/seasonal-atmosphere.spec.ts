@@ -44,6 +44,7 @@ test("今日页日期切换会同步更换节气题字、植物和气象印记",
   const cases = [
     { date: "2026-02-18", term: "雨水", season: "春", plant: "兰", accent: "rain" },
     { date: "2026-06-21", term: "夏至", season: "夏", plant: "荷", accent: "sun" },
+    { date: "2026-08-23", term: "处暑", season: "秋", plant: "菊", accent: "breeze" },
     { date: "2026-09-23", term: "秋分", season: "秋", plant: "菊", accent: "balance" },
     { date: "2026-12-22", term: "冬至", season: "冬", plant: "梅", accent: "sun" },
   ];
@@ -56,4 +57,49 @@ test("今日页日期切换会同步更换节气题字、植物和气象印记",
     await expect(seasonal.locator(".seasonal-caption")).toContainText(item.term);
     await expect(seasonal.locator(".seasonal-caption")).toContainText(item.plant);
   }
+});
+
+test("专注页与复盘页各自展示一株带动效的案头植物", async ({ page }) => {
+  await page.goto("/");
+
+  await page.getByRole("button", { name: "专注" }).click();
+  const focusPlant = page.locator(".focus-page-plant");
+  await expect(focusPlant).toHaveAttribute("data-plant", "兰");
+  await expect(focusPlant).toHaveAttribute("data-accent", "rain");
+  await expect(focusPlant).toHaveAttribute("aria-label", /幽兰自守/u);
+
+  await page.getByRole("button", { name: "复盘" }).click();
+  const reviewPlant = page.locator(".review-page-plant");
+  await expect(reviewPlant).toHaveAttribute("data-plant", "梅");
+  await expect(reviewPlant).toHaveAttribute("data-accent", "frost");
+  await expect(reviewPlant).toHaveAttribute("aria-label", /疏影留白/u);
+});
+
+test("页面会在上海午夜自动进入新的一天", async ({ page }) => {
+  await page.addInitScript(() => {
+    const RealDate = Date;
+    const base = RealDate.parse("2026-08-23T15:59:58.500Z");
+    const startedAt = performance.now();
+    const now = () => base + (performance.now() - startedAt);
+    class MidnightDate extends RealDate {
+      constructor(...args: ConstructorParameters<typeof Date>) {
+        if (args.length === 0) {
+          super(now());
+        } else {
+          super(...args);
+        }
+      }
+
+      static now() {
+        return now();
+      }
+    }
+    Object.defineProperty(window, "Date", { configurable: true, value: MidnightDate });
+  });
+
+  await page.goto("/");
+  const datePicker = page.getByLabel("时间轴日期");
+  await expect(datePicker).toHaveValue("2026-08-23");
+  await expect.poll(() => datePicker.inputValue(), { timeout: 7_000 }).toBe("2026-08-24");
+  await expect(page.locator(".seasonal-corner")).toHaveAttribute("data-solar-term", "处暑");
 });

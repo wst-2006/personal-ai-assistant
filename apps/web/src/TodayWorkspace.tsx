@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { createPortal } from "react-dom";
 import { AlertTriangle, CalendarDays, CalendarPlus, Check, CheckCircle2, ChevronDown, CircleDashed, GripHorizontal, HeartPulse, History, Leaf, Lightbulb, ListTodo, LoaderCircle, MoreHorizontal, Pencil, Play, RotateCcw, Search, Sparkles, Trash2, X, XCircle } from "lucide-react";
 import { SeasonalPlant } from "./SeasonalAtmosphere";
+import { useShanghaiDate } from "./useShanghaiDate";
 import type { FocusTheme } from "@personal-ai/domain/user-profile";
 import { CyberFocusEvaluation } from "./CyberFocusEvaluation";
 import { FocusEvaluationForm, progressForOutcome, validFocusEvaluation, type FocusOutcome, type FocusSatisfaction } from "./FocusEvaluationForm";
@@ -156,7 +157,8 @@ const healthActivityLabel:Record<HealthDaySummary["day"]["content"]["movement"][
 const healthIntensityLabel:Record<HealthDaySummary["day"]["content"]["movement"]["intensity"],string>={rest:"休息",low:"低强度",moderate:"中等强度",high:"高强度"};
 
 export function TodayWorkspace({ onFocus, onOpenHealth, healthTaskDraft, onHealthTaskDraftConsumed, planChangeTaskEditRequest, onPlanChangeTaskEditRequestConsumed, refreshToken=0 }:{ onFocus:(id:string)=>void; onOpenHealth:()=>void; healthTaskDraft?:HealthTaskDraft|null; onHealthTaskDraftConsumed?:()=>void; planChangeTaskEditRequest?:PlanChangeTaskEditRequest|null; onPlanChangeTaskEditRequestConsumed?:()=>void; refreshToken?:number }) {
-  const [date,setDate]=useState(today());
+  const todayDate = useShanghaiDate();
+  const [date,setDate]=useState(todayDate);
   const [tasks,setTasks]=useState<Task[]>([]); const [inbox,setInbox]=useState<InboxEntry[]>([]); const [trash,setTrash]=useState<Task[]>([]);
   const [pairs,setPairs]=useState<Pair[]>([]); const [history,setHistory]=useState<Pair[]>([]);
   const [form,setForm]=useState<FormState|null>(null); const [editing,setEditing]=useState<Task|null>(null); const [source,setSource]=useState<InboxEntry|null>(null);
@@ -187,8 +189,15 @@ export function TodayWorkspace({ onFocus, onOpenHealth, healthTaskDraft, onHealt
   const combinedScrollPositionsRef=useRef(new Map<string,number>());
   const feedbackTimersRef=useRef<number[]>([]);
   const pendingConflictPulseIdsRef=useRef(new Set<string>());
+  const previousTodayDateRef=useRef(todayDate);
 
   useEffect(()=>()=>{feedbackTimersRef.current.forEach(timer=>window.clearTimeout(timer));if(placementScrollFrameRef.current)window.cancelAnimationFrame(placementScrollFrameRef.current);if(placementHoldTimerRef.current)window.clearTimeout(placementHoldTimerRef.current);},[]);
+  useEffect(()=>{
+    const previous=previousTodayDateRef.current;
+    previousTodayDateRef.current=todayDate;
+    if(previous===todayDate)return;
+    setDate(current=>current===previous?todayDate:current);
+  },[todayDate]);
   useEffect(()=>{
     let interval=0;
     const tick=()=>setClockNowMs(Date.now());

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Archive, Check, ChevronRight, CircleAlert, LoaderCircle, Plus, RotateCcw, Save, Sparkles, Trash2 } from "lucide-react";
 
 type PlanScope = "month" | "semester" | "annual";
@@ -162,22 +162,26 @@ export function LongRangePlansWorkspace() {
   const [taskTreeBusy, setTaskTreeBusy] = useState(false);
   const [organizing, setOrganizing] = useState(false);
   const [organizedCandidate, setOrganizedCandidate] = useState<OrganizedPlanCandidate | null>(null);
+  const loadRequestRef = useRef(0);
   const selectedPlan = useMemo(() => plans.find((plan) => plan.id === selectedId) ?? null, [plans, selectedId]);
   const scopeCopy = scopeOptions.find((option) => option.value === scope)!;
 
   const loadPlans = useCallback(async (nextScope = scope, nextIncludeArchived = includeArchived) => {
+    const requestId = ++loadRequestRef.current;
     setLoading(true);
     try {
       const result = await requestPlan<{ plans: LongRangePlan[] }>(`/api/v1/long-range-plans?scope=${nextScope}&includeArchived=${nextIncludeArchived}`, "GET");
+      if (requestId !== loadRequestRef.current) return;
       setPlans(result.plans);
       setSelectedId((current) => result.plans.some((plan) => plan.id === current) ? current : null);
       setError(null);
     } catch (loadError) {
+      if (requestId !== loadRequestRef.current) return;
       setError(textForFailure(loadError));
       setPlans([]);
       setSelectedId(null);
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestRef.current) setLoading(false);
     }
   }, [includeArchived, scope]);
 
@@ -387,7 +391,6 @@ export function LongRangePlansWorkspace() {
       <div>
         <p className="section-kicker">手动规划</p>
         <h1 id="long-range-title">把目光放远，也把决定留在自己手里。</h1>
-        <p>月度主线、学期计划和年度方向相互照见，但不会自动拆成任务或改写你的时间轴。</p>
       </div>
       <button className="primary-button" type="button" onClick={beginNewPlan}><Plus />新建规划</button>
     </header>
@@ -424,7 +427,7 @@ export function LongRangePlansWorkspace() {
           <div className="long-range-date-row"><label><span>开始日期</span><input aria-label="开始日期" type="date" required disabled={saving || selectedPlan?.status === "archived"} value={draft.periodStart} onChange={(event) => updateDraft({ periodStart: event.target.value })} /></label><label><span>结束日期</span><input aria-label="结束日期" type="date" required disabled={saving || selectedPlan?.status === "archived"} value={draft.periodEnd} onChange={(event) => updateDraft({ periodEnd: event.target.value })} /></label></div>
         </div>}
 
-        {editorStep === 2 && <section className="plan-step-panel plan-idea-step" aria-labelledby="plan-idea-title"><div className="plan-step-heading"><div><p className="section-kicker">第二步</p><h3 id="plan-idea-title">先把你的原始想法留下来</h3></div><span>AI 只整理，不替你决定。</span></div><label className="plan-description-field plan-original-idea"><span>你的原始想法与目标</span><textarea aria-label="规划说明" rows={9} maxLength={8000} disabled={saving || organizing || selectedPlan?.status === "archived"} value={draft.description} onChange={(event) => { updateDraft({ description: event.target.value }); setOrganizedCandidate(null); }} placeholder="像说话一样写：想达成什么、为什么、有哪些边界和现实条件。" /><small>这段原文会一直保留，AI 候选不会自动覆盖它。</small>{selectedPlan?.status !== "archived" && draft.description.trim() && <button className="quiet-button plan-organize-button" type="button" disabled={saving || organizing} onClick={() => void organizePlanDraft()}>{organizing ? <LoaderCircle className="spin" /> : <Sparkles />}{organizing ? "正在整理候选" : "让 AI 整理成候选"}</button>}</label></section>}
+        {editorStep === 2 && <section className="plan-step-panel plan-idea-step" aria-labelledby="plan-idea-title"><div className="plan-step-heading"><div><p className="section-kicker">第二步</p><h3 id="plan-idea-title">先把你的原始想法留下来</h3></div></div><label className="plan-description-field plan-original-idea"><span>你的原始想法与目标</span><textarea aria-label="规划说明" rows={9} maxLength={8000} disabled={saving || organizing || selectedPlan?.status === "archived"} value={draft.description} onChange={(event) => { updateDraft({ description: event.target.value }); setOrganizedCandidate(null); }} placeholder="像说话一样写：想达成什么、为什么、有哪些边界和现实条件。" />{selectedPlan?.status !== "archived" && draft.description.trim() && <button className="quiet-button plan-organize-button" type="button" disabled={saving || organizing} onClick={() => void organizePlanDraft()}>{organizing ? <LoaderCircle className="spin" /> : <Sparkles />}{organizing ? "正在整理候选" : "让 AI 整理成候选"}</button>}</label></section>}
 
         {editorStep === 4 && organizedCandidate && <section className="organized-plan-candidate" aria-label="AI 整理的规划候选"><header><div><p className="section-kicker">尚未应用</p><h3>AI 整理候选</h3></div><span>原始输入仍保留</span></header><strong>{organizedCandidate.title}</strong><p>{organizedCandidate.description}</p><ol>{organizedCandidate.milestones.map((milestone, index) => <li key={`${milestone.title}-${index}`}><span>{String(index + 1).padStart(2, "0")}</span><div><b>{milestone.title}</b><small>{milestone.targetDate ?? "日期待定"}{milestone.notes ? ` · ${milestone.notes}` : ""}</small></div></li>)}</ol><footer><button className="quiet-button" type="button" onClick={() => setOrganizedCandidate(null)}>保留原稿</button><button className="primary-button" type="button" onClick={applyOrganizedCandidate}><Check />应用后继续微调</button></footer></section>}
 
@@ -435,8 +438,8 @@ export function LongRangePlansWorkspace() {
 
         {editorStep === 4 && <section className="plan-step-panel task-tree-section" aria-labelledby="task-tree-title">
           <header><div><p className="section-kicker">可选的 AI 协作</p><h3 id="task-tree-title">框架级拆分候选</h3></div>{taskTreeCandidate?.state === "confirmed" && <span className="task-tree-confirmed"><Check />已确认并建立任务</span>}</header>
-          {!selectedPlan ? <p className="milestone-empty">先保存一条规划，再让 AI 根据它提出有限的阶段候选。</p> : taskTreeCandidate?.state === "confirmed" ? <div className="task-tree-result"><strong>{taskTreeCandidate.proposal.summary}</strong><p>已创建 {taskTreeCandidate.createdTaskIds.length} 个未排期任务。它们不会自动进入具体时间轴。</p></div> : taskTreeCandidate?.state === "cancelled" ? <div className="task-tree-result"><strong>这份候选已取消。</strong><p>规划和任务没有变化。你可以重新生成一份新的候选。</p><button className="quiet-button" type="button" disabled={taskTreeBusy || selectedPlan.status === "archived"} onClick={() => setTaskTreeCandidate(null)}><RotateCcw />重新生成候选</button></div> : <>
-            {!taskTreeCandidate && <><p className="task-tree-note">AI 只提出阶段、成果或资料整理节点，不会擅自拆成课程知识点，也不会在此处直接写入任务。</p><textarea aria-label="拆分补充说明" rows={3} maxLength={1000} value={taskTreeInstructions} onChange={(event) => setTaskTreeInstructions(event.target.value)} placeholder="可选：告诉 AI 你希望保留的边界或重点" /><button className="quiet-button" type="button" disabled={taskTreeBusy || selectedPlan.status === "archived"} onClick={() => void generateTaskTree()}>{taskTreeBusy ? <LoaderCircle className="spin" /> : <Plus />}{taskTreeBusy ? "正在生成候选" : "生成 AI 候选"}</button></>}
+          {!selectedPlan ? <p className="milestone-empty">先保存一条规划。</p> : taskTreeCandidate?.state === "confirmed" ? <div className="task-tree-result"><strong>{taskTreeCandidate.proposal.summary}</strong><p>已创建 {taskTreeCandidate.createdTaskIds.length} 个未排期任务。</p></div> : taskTreeCandidate?.state === "cancelled" ? <div className="task-tree-result"><strong>这份候选已取消。</strong><button className="quiet-button" type="button" disabled={taskTreeBusy || selectedPlan.status === "archived"} onClick={() => setTaskTreeCandidate(null)}><RotateCcw />重新生成候选</button></div> : <>
+            {!taskTreeCandidate && <><textarea aria-label="拆分补充说明" rows={3} maxLength={1000} value={taskTreeInstructions} onChange={(event) => setTaskTreeInstructions(event.target.value)} placeholder="可选：告诉 AI 你希望保留的边界或重点" /><button className="quiet-button" type="button" disabled={taskTreeBusy || selectedPlan.status === "archived"} onClick={() => void generateTaskTree()}>{taskTreeBusy ? <LoaderCircle className="spin" /> : <Plus />}{taskTreeBusy ? "正在生成候选" : "生成 AI 候选"}</button></>}
             {taskTreeCandidate && <div className="task-tree-candidate"><p className="task-tree-summary">{taskTreeCandidate.proposal.summary}</p><div className="task-tree-items">{taskTreeCandidate.proposal.tasks.map((item, index) => <article key={`${taskTreeCandidate.id}-${index}`}><span>{String(index + 1).padStart(2, "0")}</span><div><input aria-label={`候选任务 ${index + 1}`} value={item.title} onChange={(event) => setTaskTreeCandidate((current) => current ? { ...current, proposal: { ...current.proposal, tasks: current.proposal.tasks.map((task, position) => position === index ? { ...task, title: event.target.value } : task) } } : current)} /><input aria-label={`候选任务 ${index + 1} 日期`} type="date" value={item.targetDate ?? ""} onChange={(event) => setTaskTreeCandidate((current) => current ? { ...current, proposal: { ...current.proposal, tasks: current.proposal.tasks.map((task, position) => position === index ? { ...task, targetDate: event.target.value || null } : task) } } : current)} /></div></article>)}</div><footer><button className="quiet-button" type="button" disabled={taskTreeBusy} onClick={() => void cancelTaskTreeCandidate()}><Trash2 />放弃这份候选</button><button className="quiet-button" type="button" disabled={taskTreeBusy} onClick={() => void saveTaskTreeCandidate()}><Save />保存候选修改</button><button className="primary-button" type="button" disabled={taskTreeBusy} onClick={() => void confirmTaskTreeCandidate()}><Check />确认并建立任务</button></footer></div>}
           </>}
         </section>}

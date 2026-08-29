@@ -1,18 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 import { OpenAiCompatibleSleepImageAnalyzer } from "./sleep-image-analyzer.js";
-import type { VisionConfig } from "./vision-config.js";
+import type { DeepSeekConfig } from "./config.js";
 
-const config: VisionConfig = {
-  VISION_API_KEY: "vision-test-key",
-  VISION_BASE_URL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-  VISION_MODEL: "qwen3.7-flash",
-  VISION_TIMEOUT_MS: 30_000,
-  VISION_MAX_RETRIES: 2,
-  VISION_MAX_OUTPUT_TOKENS: 1_200
+const config: DeepSeekConfig = {
+  DEEPSEEK_API_KEY: "deepseek-test-key",
+  DEEPSEEK_BASE_URL: "https://api.deepseek.com",
+  DEEPSEEK_MODEL: "deepseek-v4-flash",
+  DEEPSEEK_TIMEOUT_MS: 30_000,
+  DEEPSEEK_MAX_RETRIES: 2,
+  DEEPSEEK_MAX_OUTPUT_TOKENS: 4_096,
+  DEEPSEEK_USER_CONTEXT_MAX_CHARS: 6_000
 };
 
 describe("OpenAiCompatibleSleepImageAnalyzer", () => {
-  it("sends only the screenshot context to the separately configured vision provider", async () => {
+  it("sends the screenshot to the DeepSeek vision model at original detail", async () => {
     const analysis = {
       totalSleepMinutes: 438,
       deepSleepMinutes: 96,
@@ -55,13 +56,14 @@ describe("OpenAiCompatibleSleepImageAnalyzer", () => {
       });
       expect(fetchMock).toHaveBeenCalledTimes(1);
       const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit];
-      expect(url).toBe("https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions");
-      expect(options.headers).toMatchObject({ authorization: "Bearer vision-test-key" });
+      expect(url).toBe("https://api.deepseek.com/chat/completions");
+      expect(options.headers).toMatchObject({ authorization: "Bearer deepseek-test-key" });
       const body = JSON.parse(String(options.body));
-      expect(body.model).toBe("qwen3.7-flash");
-      expect(body.enable_thinking).toBe(false);
+      expect(body.model).toBe("deepseek-v4-flash-vision-exp");
+      expect(body.stream).toBe(false);
+      expect(body).not.toHaveProperty("enable_thinking");
       expect(body).not.toHaveProperty("response_format");
-      expect(body.messages[1].content[1]).toEqual({ type: "image_url", image_url: { url: "data:image/png;base64,iVBORw0KGgo=" } });
+      expect(body.messages[1].content[1]).toEqual({ type: "image_url", image_url: { url: "data:image/png;base64,iVBORw0KGgo=", detail: "original" } });
       expect(body.messages[0].content).not.toContain("个人背景");
     } finally {
       vi.unstubAllGlobals();

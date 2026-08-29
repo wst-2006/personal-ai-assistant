@@ -23,7 +23,7 @@ async function pollDueJobs() {
     const recycleResult = await recycleRetentionWorker.processNext();
     const recoveredFocus = await focusWorker.reconcileOverdueSession();
     const focusResult = recoveredFocus ? "completed" : await focusWorker.processNext();
-    const reminderResult = provider ? await worker.processNext(provider) : "idle";
+    const reminderResult = await worker.processNext(provider);
     if (dayEndResult === "idle" && recycleResult === "idle" && focusResult === "idle" && reminderResult === "idle") return;
   }
 }
@@ -47,6 +47,10 @@ async function shutdown() {
 
 process.once("SIGINT", () => void shutdown());
 process.once("SIGTERM", () => void shutdown());
-if (!provider) console.warn("Reminder worker is idle: Feishu credentials and target are not configured.");
+if (!provider) {
+  console.warn(
+    "Reminder worker: Feishu credentials and target are not configured; local focus preparation still runs, Feishu jobs will retry."
+  );
+}
 await pollSafely();
 console.log("Reminder worker ready.");

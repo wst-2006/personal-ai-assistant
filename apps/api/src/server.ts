@@ -25,7 +25,6 @@ import { DeepSeekHealthConversationResponder } from "./ai/health-conversation-re
 import { HealthConversationService } from "./health-conversation-service.js";
 import { FeishuHealthMessenger, loadFeishuHealthMessengerConfig } from "./feishu-health-messenger.js";
 import { OpenAiCompatibleSleepImageAnalyzer } from "./ai/sleep-image-analyzer.js";
-import { loadVisionConfig } from "./ai/vision-config.js";
 import { LongRangePlanService } from "./long-range-plan-service.js";
 import { LongRangeTaskTreeService } from "./long-range-task-tree-service.js";
 import { DeepSeekLongRangeTaskTreePlanner } from "./ai/long-range-task-tree-planner.js";
@@ -56,7 +55,6 @@ const healthConversationService = new HealthConversationService(
   feishuHealthMessengerConfig ? new FeishuHealthMessenger(feishuHealthMessengerConfig) : undefined
 );
 const deepSeekConfig = loadDeepSeekConfig();
-const visionConfig = loadVisionConfig();
 const briefProviders = new BriefProviders({
   ...process.env,
   // External daily-brief sources are intentionally disabled in the published build.
@@ -97,9 +95,7 @@ const app = buildApp({
   healthConversationService,
   healthConversationResponder: new DeepSeekHealthConversationResponder(deepSeekConfig, userProfileService),
   healthFeishuSyncAvailable: Boolean(feishuHealthMessengerConfig),
-  sleepImageAnalyzer: visionConfig
-    ? new OpenAiCompatibleSleepImageAnalyzer(visionConfig)
-    : undefined,
+  sleepImageAnalyzer: new OpenAiCompatibleSleepImageAnalyzer(deepSeekConfig),
   longRangePlanService: new LongRangePlanService(database.db),
   longRangeTaskTreeService: new LongRangeTaskTreeService(database.db),
   longRangeTaskTreePlanner: new DeepSeekLongRangeTaskTreePlanner(deepSeekConfig, userProfileService),

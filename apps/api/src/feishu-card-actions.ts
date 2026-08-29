@@ -122,15 +122,15 @@ function startedResult(title: string, state: string): FeishuCardActionResult {
   if (state === "armed") {
     return {
       type: "success",
-      message: "任务已经开始。计时将在固定开始时刻进入执行，原卡片按钮已失效。",
-      card: statusCard("任务已经开始", title, "已确认执行；到固定开始时刻后自动进入专注计时。", "green")
+      message: "任务已经开始。到点会自动进入计时，原卡片按钮已失效。",
+      card: statusCard("任务已经开始", title, "已记录你的开始意图；到固定开始时刻自动进入专注计时。", "green")
     };
   }
   if (state === "running") {
     return {
       type: "success",
-      message: "任务已经开始。系统只记录实际开始后的专注时间。",
-      card: statusCard("任务已经开始", title, "正在计时；只记录实际确认开始后的专注时间。", "green")
+      message: "任务已经开始，正在从现在计时到原定结束时间。",
+      card: statusCard("任务已经开始", title, "正在计时；本次专注从实际开始时间计算，并在原定结束时间停止。", "green")
     };
   }
   return { type: "error", message: "任务当前无法开始，请打开软件查看。", terminal: false };

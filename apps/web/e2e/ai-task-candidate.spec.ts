@@ -283,7 +283,7 @@ test("AI 服务失败时保留原句且不写入，明确重试后才允许确�
     expect(inboxWrites).toBe(0);
 
     await page.reload();
-    await expect(page.getByRole("button", { name: `未排期 ${title}`, exact: true })).toBeVisible();
+    await expect(page.locator(`[data-task-id="${task.id}"]`)).toContainText(title);
     const persisted = await request.get(`${apiBase}/api/v1/tasks/${task.id}`);
     expect(persisted.status()).toBe(200);
     expect((await persisted.json()).task).toMatchObject({ id: task.id, title, localDate, scheduleKind: "none" });

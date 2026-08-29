@@ -177,7 +177,7 @@ export class FeishuIntakeService {
       return { kind: "text", text: assistant?.content ?? "补充已经保存到本周健康交流。请回到健康栏目生成候选。" };
     } catch (error) {
       if (error instanceof HealthConversationReplyUnavailableError) {
-        return { kind: "text", text: "你的补充已经保存到本周健康交流，但 DeepSeek 暂时没有回应。回到健康栏目即可直接重试，不需要重新输入。" };
+        return { kind: "text", text: "你的补充已经保存到本周健康交流，但 AI 暂时没有回应。回到健康栏目即可直接重试，不需要重新输入。" };
       }
       if (error instanceof HealthConversationNoPendingReplyError) return { kind: "none" };
       throw error;

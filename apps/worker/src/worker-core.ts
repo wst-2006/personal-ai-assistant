@@ -93,7 +93,7 @@ export class ReminderWorker {
     return { eligible: true };
   }
 
-  async processNext(provider: ReminderDeliveryProvider, now = new Date()): Promise<"idle" | "sent" | "cancelled" | "retry"> {
+  async processNext(provider: ReminderDeliveryProvider | null, now = new Date()): Promise<"idle" | "sent" | "cancelled" | "retry"> {
     const job = await this.claimDueJob(now);
     if (!job) return "idle";
     const eligibility = await this.deliveryEligibility(job, now);
@@ -115,10 +115,14 @@ export class ReminderWorker {
       }
       if (job.kind === "task_start_ready") await this.ensurePreparationSession(job, now);
       if (job.kind === "task_start_expire") await this.finalizeMissedTask(job, now);
+      // Local focus transitions (especially the T-1 preparation session) must
+      // continue even when the optional Feishu delivery provider is unavailable.
+      // The provider failure is retried after those local side effects commit.
       if (!settings.feishuTaskCardsEnabled) {
         await this.markSent(job.id, now);
         return "sent";
       }
+      if (!provider) throw new Error("feishu_delivery_unavailable");
       const result = await provider.deliver(job, {
         now,
         timing: now.getTime() < job.scheduledAt.getTime() ? "upcoming" : "in_progress",
@@ -178,12 +182,32 @@ export class ReminderWorker {
       if (!task || new Date(task.endAt).getTime() <= now.getTime()) return;
 
       const existingResult = await db.execute(sql`
-        SELECT id FROM focus_sessions
+        SELECT id, state, version FROM focus_sessions
         WHERE task_id = ${task.id}
           AND state IN ('scheduled', 'reminded', 'preparing', 'armed', 'awaiting_late_start', 'awaiting_start', 'running', 'paused')
         ORDER BY created_at DESC LIMIT 1
       `);
-      if (existingResult.rows.length > 0) return;
+      const existing = existingResult.rows[0] as { id: string; state: string; version: number } | undefined;
+      if (existing) {
+        if (existing.state !== "reminded") return;
+        const nextVersion = existing.version + 1;
+        const promoted = await db.execute(sql`
+          UPDATE focus_sessions
+          SET state = 'preparing', preparing_ends_at = ${task.startAt},
+            confirmation_deadline_at = NULL, version = ${nextVersion}, updated_at = ${now}
+          WHERE id = ${existing.id} AND version = ${existing.version} AND state = 'reminded'
+          RETURNING id
+        `);
+        if (promoted.rows.length === 0) return;
+        await db.execute(sql`
+          UPDATE focus_timer_jobs
+          SET expected_session_version = ${nextVersion}, due_at = ${task.startAt},
+            status = 'pending', updated_at = ${now}
+          WHERE focus_session_id = ${existing.id} AND kind = 'confirmation_timeout'
+            AND status IN ('pending', 'processing', 'failed')
+        `);
+        return;
+      }
 
       let structureResult = await db.execute(sql`
         SELECT id, version, task_schedule_revision AS "taskScheduleRevision", total_start_at AS "totalStartAt"
@@ -226,7 +250,9 @@ export class ReminderWorker {
         SELECT position, segment_type AS "segmentType", duration_minutes AS "durationMinutes"
         FROM focus_structure_segments WHERE focus_structure_id = ${structure.id} ORDER BY position
       `);
-      const state = now.getTime() < new Date(task.startAt).getTime() ? "preparing" : "awaiting_late_start";
+      // The preparation job may be delivered late; it must still create a
+      // startable session so the focus worker can auto-start it immediately.
+      const state = "preparing";
       const createdSession = await db.execute(sql`
         INSERT INTO focus_sessions (
           id, task_id, focus_structure_id, focus_structure_version, focus_structure_schedule_revision,
@@ -255,8 +281,7 @@ export class ReminderWorker {
           )
         `);
       }
-      if (state === "preparing") {
-        await db.execute(sql`
+      await db.execute(sql`
           INSERT INTO focus_timer_jobs (
             id, focus_session_id, kind, expected_session_version, due_at,
             status, attempts, created_at, updated_at
@@ -265,8 +290,7 @@ export class ReminderWorker {
             'pending', 0, ${now}, ${now}
           )
           ON CONFLICT DO NOTHING
-        `);
-      }
+      `);
     });
   }
 
@@ -294,7 +318,7 @@ export class ReminderWorker {
       if (session) {
         const stopped = await db.execute(sql`
           UPDATE focus_sessions
-          SET state = 'stopped_no_response', ended_at = ${now}, stopped_reason = '固定截止前未确认开始',
+          SET state = 'stopped_no_response', ended_at = ${now}, stopped_reason = '固定结束时间已过，未进入专注',
             version = version + 1, updated_at = ${now}
           WHERE id = ${session.id} AND version = ${session.version}
             AND state IN ('scheduled', 'reminded', 'preparing', 'armed', 'awaiting_late_start', 'awaiting_start')
@@ -308,7 +332,7 @@ export class ReminderWorker {
             stopped_reason, raw_active_seconds, effective_focus_seconds, version, created_at, updated_at
           ) VALUES (
             gen_random_uuid(), ${task.id}, 'stopped_no_response', ${task.startAt}, ${task.endAt}, ${now},
-            '固定截止前未确认开始', 0, 0, 1, ${now}, ${now}
+            '固定结束时间已过，未进入专注', 0, 0, 1, ${now}, ${now}
           ) RETURNING id
         `);
         sessionId = (created.rows[0] as { id?: string } | undefined)?.id;
@@ -318,7 +342,7 @@ export class ReminderWorker {
         taskId: task.id,
         focusSessionId: sessionId,
         now,
-        reason: "固定截止前未确认开始"
+        reason: "固定结束时间已过，未进入专注"
       });
     });
   }

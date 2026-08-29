@@ -11,6 +11,7 @@ import { ReviewWorkspace } from "./ReviewWorkspace";
 import { SettingsWorkspace } from "./SettingsWorkspace";
 import { InitialInkLoadingScreen } from "./SeasonalAtmosphere";
 import { TodayWorkspace, type PlanChangeTaskEditRequest } from "./TodayWorkspace";
+import { useShanghaiDate } from "./useShanghaiDate";
 import { loadUserProfile, type UserProfile } from "./user-profile-client";
 import { extractPlanInstruction, PRODUCT_SCHEDULE_END_MINUTE, PRODUCT_SCHEDULE_START_MINUTE } from "@personal-ai/domain/task";
 import { Component, type ErrorInfo, type ReactNode } from "react";
@@ -232,7 +233,7 @@ async function requestWithConflictConfirmation<T>(path: string, method: string, 
 }
 
 export function App() {
-  const today = useMemo(shanghaiDate, []);
+  const today = useShanghaiDate();
   const [view, setView] = useState<View>("today");
   const [workspaceLayers, setWorkspaceLayers] = useState<WorkspaceLayer[]>([
     { view: "today", role: "current", direction: null, transitionId: 0, scrollOffset: 0 },
@@ -708,7 +709,7 @@ export function App() {
     <InitialInkLoadingScreen />
     <aside className="app-rail" aria-label="主要导航">
       <button className="brand-mark" type="button" aria-label="回到今日" onClick={() => navigateToView("today")}><span aria-hidden="true">序</span></button>
-      <nav className="rail-nav"><span className="rail-ink-cursor" aria-hidden="true" data-hidden={activeNavIndex < 0 ? "true" : undefined} style={{ "--nav-index": Math.max(0, activeNavIndex) } as CSSProperties} />{visibleNavItems.map(({ id, label, icon: Icon }, index) => <button className={`rail-button ${view === id ? "active" : ""}`} type="button" key={id} data-index={String(index + 1).padStart(2, "0")} aria-label={label} aria-current={view === id ? "page" : undefined} onClick={() => navigateToView(id)}><Icon /><span>{label}</span></button>)}</nav>
+      <nav className="rail-nav"><span className="rail-ink-cursor" aria-hidden="true" data-hidden={activeNavIndex < 0 ? "true" : undefined} style={{ "--nav-index": Math.max(0, activeNavIndex) } as CSSProperties} />{visibleNavItems.map(({ id, label, icon: Icon }, index) => <button className={`rail-button ${view === id ? "active" : ""}`} type="button" key={id} data-index={String(index + 1).padStart(2, "0")} aria-label={label} aria-current={view === id ? "page" : undefined} onClick={() => { if (id === "focus" && view !== "focus") setSelectedTaskId(null); navigateToView(id); }}><Icon /><span>{label}</span></button>)}</nav>
       <button className={`rail-settings-button ${view === "settings" ? "active" : ""}`} type="button" aria-label="设置" aria-current={view === "settings" ? "page" : undefined} onClick={() => navigateToView("settings")}><Settings2 /><span>设置</span></button>
     </aside>
     <section className="app-canvas">
