@@ -31,13 +31,12 @@ Personal AI Assistant 不只是任务清单。它把“今天准备做什么”�
 - 从长期计划生成可编辑的任务树候选。
 - 对冲突或计划变化给出建议，但不会自动改动时间表。
 - 在复盘和健康页面保留可恢复的对话记录。
-- AI 失败时保留用户原始输入，不伪造结果，也不写入错误候选。
+
 
 ### 复盘、日记与成长
 
 - 保存用户自己的每日复盘，并可选择请求 AI 回应。
-- 在本地保留复盘与日记素材；当前公开版本不启用 Agent 联网搜索、独立每日简报或 Work Buddy 简报导入。
-- 保存赛博日记及其来源快照，后续编辑不会偷偷重算历史。
+- 在本地保留复盘与日记素材。
 - 六维回看采用五层六边形阶段刻度，只能落在 `20 / 40 / 60 / 80 / 100` 五档顶点。
 - 成长页通过真实任务、专注和反馈呈现趋势、竹子阶段与情绪痕迹。
 
@@ -50,19 +49,14 @@ Personal AI Assistant 不只是任务清单。它把“今天准备做什么”�
 
 ### 个性化与数据控制
 
-- 统一设置计时主题、窗口位置、通知、飞书卡片、健康页和评价流程。
+- 统一设置5种专注计时主题。
+- 窗口位置、通知、飞书卡片、健康页和评价流程。
 - 本地逻辑备份由用户主动下载，不包含 API Key 或数据库密码。
 - 回收站支持保留期限和一键清空。
-- 没有公开注册、社交、监控、人格推断或惩罚机制。
 
 ## 隐私与安全边界
 
 - 应用是本地优先、单用户结构；API、Worker 和 PostgreSQL 均运行在用户自己的电脑上。
-- DeepSeek、视觉模型和飞书凭据只允许写入本地配置文件。
-- 浏览器前端、公开仓库、安装包、截图和备份中都不应出现真实密钥。
-- 桌面安装包只包含无密钥的 `.env.example`；首次启动后才在用户目录创建私有 `.env`。
-- `.env`、数据库文件、日志、备份、测试输出和安装包构建目录均被 Git 忽略。
-
 发现凭据泄露时，请先撤销或轮换凭据，再处理 Git 历史。完整边界见 [SECURITY.md](SECURITY.md)。
 
 ## 普通用户从零开始
@@ -82,60 +76,7 @@ Personal AI Assistant 不只是任务清单。它把“今天准备做什么”�
 
 外部服务全部是可选项。没有配置 AI 或飞书时，任务、排期、专注、复盘、成长和本地备忘录功能仍可独立使用。
 
-## 开发者启动
 
-### 环境要求
-
-- Node.js 24 与 Corepack（仓库固定使用 pnpm 11.9.0）
-- PostgreSQL 18.x
-- Rust stable 和 Windows C++ Build Tools（仅桌面构建需要）
-
-```powershell
-corepack enable
-corepack pnpm install --frozen-lockfile
-Copy-Item .env.example .env
-corepack pnpm db:preflight
-corepack pnpm db:migrate
-corepack pnpm dev:local
-```
-
-Web 页面：`http://127.0.0.1:5173`
-
-API 健康检查：`http://127.0.0.1:3000/health`
-
-桌面开发：
-
-```powershell
-corepack pnpm dev:desktop
-```
-
-生成并校验 Windows 安装包：
-
-```powershell
-corepack pnpm build:desktop
-```
-
-## 仓库结构
-
-- `apps/web`：React 用户界面
-- `apps/api`：Fastify API、AI 编排和外部服务边界
-- `apps/worker`：提醒、飞书投递和本地后台任务
-- `apps/desktop`：Tauri Windows 桌面壳与独立专注窗口
-- `packages/domain`：领域状态、输入校验和显式状态机
-- `packages/db`：Drizzle 数据结构、迁移与数据库保护
-- `docs`：产品规则、架构、安装、配置与发布文档
-
-## 发布前验证
-
-```powershell
-corepack pnpm release:audit
-corepack pnpm check
-corepack pnpm test
-corepack pnpm build
-corepack pnpm build:desktop
-```
-
-Windows 安装包通过 GitHub Release 单独分发，不提交到 `main`。每个安装包必须同时提供 SHA-256 校验值。
 
 ## 当前限制
 
