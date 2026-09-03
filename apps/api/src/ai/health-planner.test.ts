@@ -27,8 +27,9 @@ const generatedDay = {
   proteinRotationSources: ["鸡蛋", "牛肉"],
   foodReference: {
     proteinOptions: ["约 15 个鸡蛋可提供接近目标量的蛋白质", "约 650 克牛肉可提供接近目标量的蛋白质", "约 550 克鸡胸肉可提供接近目标量的蛋白质"],
-    fiberOptions: ["燕麦", "蔬菜"],
-    carbOptions: ["米饭", "土豆"]
+    fiberOptions: ["约 1000 克白菜"],
+    carbOptions: ["约 5 碗熟米饭"],
+    fatOptions: ["约 4 汤匙食用油"]
   },
   fruitOptions: ["1 个苹果", "200 克草莓"],
   plateGuidance: ["每餐包含一种主要蛋白质来源。"],
@@ -148,8 +149,9 @@ describe("DeepSeekHealthPlanner", () => {
       proteinRotationSources: generatedDay.proteinRotationSources,
       foodReference: {
         proteinFoods: ["约 15 个鸡蛋", "约 650 克牛肉", "约 550 克鸡胸肉"],
-        stapleFoods: ["米饭"],
-        vegetables: ["番茄"]
+        stapleFoods: ["约 7 碗熟米饭"],
+        vegetables: ["约 1200 克白菜"],
+        oilFoods: ["约 5 汤匙食用油"]
       },
       seasonalFruits: ["1 个苹果", "200 克草莓"],
       plateGuidance: "餐盘一半蔬菜，四分之一蛋白质，四分之一主食。",
@@ -173,7 +175,7 @@ describe("DeepSeekHealthPlanner", () => {
     expect(plan.days[0]).toMatchObject({
       hydrationGuidance: ["全天分次饮水，总量 2.5-3L，约等于 10-12 个 250ml 纸杯。"],
       nutritionTargets: { hydrationLiters: { minimum: 2.5, maximum: 3 } },
-      foodReference: { proteinOptions: ["约 15 个鸡蛋", "约 650 克牛肉", "约 550 克鸡胸肉"], fiberOptions: ["番茄"], carbOptions: ["米饭"] },
+      foodReference: { proteinOptions: ["约 15 个鸡蛋", "约 650 克牛肉", "约 550 克鸡胸肉"], fiberOptions: ["约 1200 克白菜"], carbOptions: ["约 7 碗熟米饭"], fatOptions: ["约 5 汤匙食用油"] },
       fruitOptions: ["1 个苹果", "200 克草莓"],
       plateGuidance: ["餐盘一半蔬菜，四分之一蛋白质，四分之一主食。"],
       seasonalPoem: { title: "秋词", author: "刘禹锡" },

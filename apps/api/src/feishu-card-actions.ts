@@ -49,12 +49,28 @@ export class FeishuCardActionService {
         return { type: "error", message: "任务排期已经变化，请在软件中查看最新安排。" };
       }
       const focus = await this.focusService.currentForTask(detail.task.id);
+      // The card's start action is only valid during the preparation window.
+      // After the fixed start time it must expire; the text command remains the
+      // explicit late-start entry point.
+      if (
+        action.data.action === "start"
+        && detail.task.startAt
+        && detail.task.startAt <= new Date()
+        && focus?.state !== "running"
+      ) {
+        return {
+          type: "error",
+          message: "倒计时已结束；卡片按钮已失效。请在软件中选择“现在开始计时”，或发送“我开始了这个任务”。",
+          terminal: true,
+          card: statusCard("准时确认已失效", detail.task, "如仍在原定时段内，请明确选择现在开始计时；系统只记录实际开始后的专注。", "grey")
+        };
+      }
       if (focus && ["armed", "running"].includes(focus.state)) {
-        if (action.data.action === "start") return startedResult(detail.task.title, focus.state);
+        if (action.data.action === "start") return startedResult(detail.task, focus.state);
         return {
           type: "success",
           message: "任务已经开始，当前卡片操作已失效。",
-          card: statusCard("任务已经开始", detail.task.title, "任务已进入固定时段，不能取消、改期或重复操作。", "green")
+          card: statusCard("任务已经开始", detail.task, "任务已进入固定时段，不能取消、改期或重复操作。", "green")
         };
       }
       if (action.data.action === "cancel_request") {
@@ -64,14 +80,14 @@ export class FeishuCardActionService {
         return {
           type: "success",
           message: "请再次确认是否取消任务。",
-          card: cancelConfirmationCard(detail.task.id, detail.task.scheduleRevision, detail.task.title)
+          card: cancelConfirmationCard(detail.task)
         };
       }
       if (action.data.action === "cancel_keep") {
-        return {
-          type: "success",
-          message: "已保留任务，原计划不变。",
-          card: reminderControlsCard(detail.task)
+      return {
+        type: "success",
+        message: "已保留任务，原计划不变。",
+        card: reminderControlsCard(detail.task)
         };
       }
       if (action.data.action === "cancel_confirm") {
@@ -79,12 +95,19 @@ export class FeishuCardActionService {
         return {
           type: "success",
           message: "任务已取消并移入回收站。",
-          card: statusCard("任务已取消", detail.task.title, "不会再启动或发送后续提醒；如需恢复，请在软件回收站操作。", "red")
+          card: statusCard("任务已取消", detail.task, "不会再启动或发送后续提醒；如需恢复，请在软件回收站操作。", "red")
         };
       }
       if (action.data.action === "start") {
-        const session = await this.focusService.create(detail.task.id, detail.task.version, "prepare", action.data.commandId);
-        return startedResult(detail.task.title, session.state);
+        let session = await this.focusService.create(detail.task.id, detail.task.version, "prepare", action.data.commandId);
+        if (["scheduled", "preparing", "reminded"].includes(session.state)) {
+          session = await this.focusService.begin(
+            session.id,
+            session.version,
+            action.data.commandId ? deriveCommandId(action.data.commandId, "begin") : undefined,
+          );
+        }
+        return startedResult(detail.task, session.state);
       }
       if (focus && ["scheduled", "reminded", "preparing", "awaiting_late_start"].includes(focus.state)) {
         await this.focusService.otherArrangement(
@@ -107,7 +130,7 @@ export class FeishuCardActionService {
       return {
         type: "success",
         message: "已退回未排期任务。",
-        card: statusCard("已退回未排期任务", detail.task.title, "原时间已释放；需要时可重新拖入时间轴安排。", "grey")
+        card: statusCard("已退回未排期任务", detail.task, "原时间已释放；需要时可重新拖入时间轴安排。", "grey")
       };
     } catch (error) {
       const message = error instanceof Error && error.message.includes("already active")
@@ -118,19 +141,19 @@ export class FeishuCardActionService {
   }
 }
 
-function startedResult(title: string, state: string): FeishuCardActionResult {
+function startedResult(task: Awaited<ReturnType<TaskService["get"]>>["task"], state: string): FeishuCardActionResult {
   if (state === "armed") {
     return {
       type: "success",
-      message: "任务已经开始。到点会自动进入计时，原卡片按钮已失效。",
-      card: statusCard("任务已经开始", title, "已记录你的开始意图；到固定开始时刻自动进入专注计时。", "green")
+      message: "任务已经开始准备；我会在原定时间准时开始。",
+      card: statusCard("已确认准时开始", task, "任务已经开始准备，但尚未开始计时；到达原定开始时间后会自动进入专注计时。", "orange")
     };
   }
   if (state === "running") {
     return {
       type: "success",
       message: "任务已经开始，正在从现在计时到原定结束时间。",
-      card: statusCard("任务已经开始", title, "正在计时；本次专注从实际开始时间计算，并在原定结束时间停止。", "green")
+      card: statusCard("任务已经开始", task, "正在计时；本次专注从实际开始时间计算，并在原定结束时间停止。", "green")
     };
   }
   return { type: "error", message: "任务当前无法开始，请打开软件查看。", terminal: false };
@@ -138,20 +161,20 @@ function startedResult(title: string, state: string): FeishuCardActionResult {
 
 function statusCard(
   heading: string,
-  title: string,
+  task: Awaited<ReturnType<TaskService["get"]>>["task"],
   detail: string,
-  template: "green" | "red" | "grey"
+  template: "green" | "red" | "grey" | "orange"
 ) {
   return {
     config: { wide_screen_mode: true },
     header: { template, title: { tag: "plain_text", content: heading } },
     elements: [
-      { tag: "div", text: { tag: "lark_md", content: `**${title}**\n${detail}` } }
+      { tag: "div", text: { tag: "lark_md", content: `**${task.title}**\n${taskScheduleText(task)}\n${detail}` } }
     ]
   };
 }
 
-function deriveCommandId(commandId: string, phase: "respond"): string {
+function deriveCommandId(commandId: string, phase: "respond" | "begin"): string {
   const bytes = createHash("sha256").update(`${commandId}:${phase}`).digest().subarray(0, 16);
   bytes[6] = (bytes[6]! & 0x0f) | 0x40;
   bytes[8] = (bytes[8]! & 0x3f) | 0x80;
@@ -159,15 +182,15 @@ function deriveCommandId(commandId: string, phase: "respond"): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-function cancelConfirmationCard(taskId: string, scheduleRevision: number, title: string) {
+function cancelConfirmationCard(task: Awaited<ReturnType<TaskService["get"]>>["task"]) {
   return {
     config: { wide_screen_mode: true },
     header: { template: "red", title: { tag: "plain_text", content: "确认取消任务" } },
     elements: [
-      { tag: "div", text: { tag: "lark_md", content: `**${title}**\n取消后任务保留在记录中，但不会再启动或提醒。` } },
+      { tag: "div", text: { tag: "lark_md", content: `**${task.title}**\n${taskScheduleText(task)}\n取消后任务保留在记录中，但不会再启动或提醒。` } },
       { tag: "action", actions: [
-        { tag: "button", text: { tag: "plain_text", content: "确认取消" }, type: "danger", value: { action: "cancel_confirm", taskId, scheduleRevision } },
-        { tag: "button", text: { tag: "plain_text", content: "保留任务" }, value: { action: "cancel_keep", taskId, scheduleRevision } }
+        { tag: "button", text: { tag: "plain_text", content: "确认取消" }, type: "danger", value: { action: "cancel_confirm", taskId: task.id, scheduleRevision: task.scheduleRevision } },
+        { tag: "button", text: { tag: "plain_text", content: "保留任务" }, value: { action: "cancel_keep", taskId: task.id, scheduleRevision: task.scheduleRevision } }
       ] }
     ]
   };
@@ -179,9 +202,9 @@ function reminderControlsCard(task: Awaited<ReturnType<TaskService["get"]>>["tas
   const endAt = task.endAt?.getTime() ?? Number.NEGATIVE_INFINITY;
   const actions: Array<Record<string, unknown>> = [];
   if (now >= startAt - 60_000 && now < startAt) {
-    actions.push({ tag: "button", text: { tag: "plain_text", content: "开始任务" }, type: "primary", value: { action: "start", taskId: task.id, scheduleRevision: task.scheduleRevision } });
+    actions.push({ tag: "button", text: { tag: "plain_text", content: "我会准时开始" }, type: "primary", value: { action: "start", taskId: task.id, scheduleRevision: task.scheduleRevision } });
   } else if (now >= startAt && now < endAt) {
-    actions.push({ tag: "button", text: { tag: "plain_text", content: "开始任务" }, disabled: true });
+    actions.push({ tag: "button", text: { tag: "plain_text", content: "准时确认已失效" }, disabled: true });
   }
   actions.push(
     { tag: "button", text: { tag: "plain_text", content: "另有安排" }, value: { action: "other_arrangement", taskId: task.id, scheduleRevision: task.scheduleRevision } },
@@ -191,10 +214,27 @@ function reminderControlsCard(task: Awaited<ReturnType<TaskService["get"]>>["tas
     config: { wide_screen_mode: true },
     header: { template: "green", title: { tag: "plain_text", content: "任务仍按原计划" } },
     elements: [
-      { tag: "div", text: { tag: "lark_md", content: `**${task.title}**\n已撤销取消操作。` } },
+      { tag: "div", text: { tag: "lark_md", content: `**${task.title}**\n${taskScheduleText(task)}\n已撤销取消操作。` } },
       { tag: "action", actions }
     ]
   };
+}
+
+function taskScheduleText(task: Awaited<ReturnType<TaskService["get"]>>["task"]): string {
+  if (!task.startAt || !task.endAt) return "时间：未设置";
+  const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: task.timeZone ?? "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  });
+  const timeFormatter = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: task.timeZone ?? "Asia/Shanghai",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  });
+  return `日期：${dateFormatter.format(task.startAt)}\n开始：${timeFormatter.format(task.startAt)}\n结束：${timeFormatter.format(task.endAt)}`;
 }
 
 export function loadFeishuCardActionConfig(env: NodeJS.ProcessEnv): FeishuCardActionConfig | null {

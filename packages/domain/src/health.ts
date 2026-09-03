@@ -51,7 +51,8 @@ const healthMealExamplesSchema = z.object({
 const healthFoodReferenceSchema = z.object({
   proteinOptions: z.array(z.string().trim().min(1).max(120)).min(1).max(10),
   fiberOptions: z.array(z.string().trim().min(1).max(120)).min(1).max(10),
-  carbOptions: z.array(z.string().trim().min(1).max(120)).min(1).max(10)
+  carbOptions: z.array(z.string().trim().min(1).max(120)).min(1).max(10),
+  fatOptions: z.array(z.string().trim().min(1).max(120)).min(1).max(10).optional()
 }).strict();
 
 export const healthDailyReferenceSchema = z.object({
@@ -119,9 +120,9 @@ export const generatedHealthPlanContentSchema = healthPlanContentSchema.superRef
 
     const proteinConversions = day.foodReference?.proteinOptions ?? [];
     for (const [label, pattern] of [
-      ["鸡蛋", /鸡蛋/u],
-      ["牛肉", /牛肉/u],
-      ["鸡胸肉", /鸡胸(?:肉)?/u]
+      ["鸡蛋", /(?:\d+(?:\.\d+)?\s*个[^；，。]*鸡蛋|鸡蛋[^；，。]*\d+(?:\.\d+)?\s*个)/u],
+      ["牛肉", /(?:\d+(?:\.\d+)?\s*(?:克|g)[^；，。]*牛肉|牛肉[^；，。]*\d+(?:\.\d+)?\s*(?:克|g))/iu],
+      ["鸡胸肉", /(?:\d+(?:\.\d+)?\s*(?:克|g)[^；，。]*鸡胸(?:肉)?|鸡胸(?:肉)?[^；，。]*\d+(?:\.\d+)?\s*(?:克|g))/iu]
     ] as const) {
       const conversion = proteinConversions.find((item) => pattern.test(item));
       if (!conversion || !/\d/u.test(conversion)) {
@@ -129,6 +130,21 @@ export const generatedHealthPlanContentSchema = healthPlanContentSchema.superRef
           code: z.ZodIssueCode.custom,
           path: ["days", dayIndex, "foodReference", "proteinOptions"],
           message: `protein conversion for ${label} is required for newly generated health references`
+        });
+      }
+    }
+
+    for (const [field, label, pattern] of [
+      ["carbOptions", "熟米饭", /(?:\d+(?:\.\d+)?[^；，。]*碗[^；，。]*(?:熟)?米饭|(?:熟)?米饭[^；，。]*\d+(?:\.\d+)?[^；，。]*碗)/u],
+      ["fiberOptions", "白菜", /(?:\d+(?:\.\d+)?\s*(?:克|g)[^；，。]*白菜|白菜[^；，。]*\d+(?:\.\d+)?\s*(?:克|g))/iu],
+      ["fatOptions", "食用油", /(?:\d+(?:\.\d+)?[^；，。]*汤匙[^；，。]*(?:食用)?油|(?:食用)?油[^；，。]*\d+(?:\.\d+)?[^；，。]*汤匙)/u]
+    ] as const) {
+      const conversion = day.foodReference?.[field]?.find((item) => pattern.test(item));
+      if (!conversion || !/\d/u.test(conversion)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["days", dayIndex, "foodReference", field],
+          message: `food conversion for ${label} is required for newly generated health references`
         });
       }
     }

@@ -3,12 +3,82 @@ import type { DeepSeekConfig } from "./config.js";
 import { personalContextInstruction, type UserAiContextProvider } from "./user-context.js";
 import type { HealthConversationResponder } from "../health-conversation-service.js";
 
-type ChatCompletionResponse = { choices?: Array<{ message?: { content?: string } }> };
+type ChatCompletionResponse = { choices?: Array<{ message?: { content?: unknown; reasoning_content?: unknown } }> };
 
 const replySchema = z.object({
   reply: z.string().trim().min(1).max(4_000),
   needsClarification: z.boolean()
 }).strict();
+
+class HealthConversationProviderError extends Error {
+  constructor(readonly status: number) {
+    super(`DeepSeek returned HTTP ${status}.`);
+  }
+}
+
+class HealthConversationOutputError extends Error {
+  constructor(message: string) {
+    super(message);
+  }
+}
+
+function isRetryable(error: unknown) {
+  if (error instanceof HealthConversationProviderError) return error.status === 408 || error.status === 429 || error.status >= 500;
+  if (error instanceof HealthConversationOutputError) return true;
+  return error instanceof TypeError || (error instanceof Error && error.name === "TimeoutError");
+}
+
+function providerText(value: unknown): string | null {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (Array.isArray(value)) {
+    const text = value.map((part) => {
+      if (typeof part === "string") return part;
+      if (part && typeof part === "object" && "text" in part && typeof part.text === "string") return part.text;
+      return "";
+    }).join("").trim();
+    return text || null;
+  }
+  if (value && typeof value === "object") return JSON.stringify(value);
+  return null;
+}
+
+function providerTexts(message: { content?: unknown; reasoning_content?: unknown } | undefined) {
+  return Array.from(new Set([
+    providerText(message?.content),
+    providerText(message?.reasoning_content)
+  ].filter((value): value is string => Boolean(value))));
+}
+
+function parseReply(text: string) {
+  const trimmed = text.trim();
+  const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(trimmed);
+  const candidate = fenced?.[1]?.trim() ?? trimmed;
+  try {
+    return replySchema.parse(JSON.parse(candidate));
+  } catch {
+    const start = candidate.indexOf("{");
+    if (start < 0) throw new Error("health_reply_json_missing");
+    let depth = 0;
+    let quoted = false;
+    let escaped = false;
+    for (let index = start; index < candidate.length; index += 1) {
+      const character = candidate[index];
+      if (quoted) {
+        if (escaped) escaped = false;
+        else if (character === "\\") escaped = true;
+        else if (character === '"') quoted = false;
+        continue;
+      }
+      if (character === '"') { quoted = true; continue; }
+      if (character === "{") depth += 1;
+      if (character === "}") {
+        depth -= 1;
+        if (depth === 0) return replySchema.parse(JSON.parse(candidate.slice(start, index + 1)));
+      }
+    }
+    throw new Error("health_reply_json_incomplete");
+  }
+}
 
 function boundedHistory(messages: Parameters<HealthConversationResponder["reply"]>[0]["messages"]) {
   const selected: typeof messages = [];
@@ -26,6 +96,20 @@ export class DeepSeekHealthConversationResponder implements HealthConversationRe
   constructor(private readonly config: DeepSeekConfig, private readonly userContext?: UserAiContextProvider) {}
 
   async reply(input: Parameters<HealthConversationResponder["reply"]>[0]) {
+    let lastError: unknown;
+    for (let attempt = 0; attempt <= this.config.DEEPSEEK_MAX_RETRIES; attempt += 1) {
+      try {
+        return await this.requestReply(input);
+      } catch (error) {
+        lastError = error;
+        if (attempt === this.config.DEEPSEEK_MAX_RETRIES || !isRetryable(error)) break;
+        await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error("DeepSeek health collaboration reply failed.");
+  }
+
+  private async requestReply(input: Parameters<HealthConversationResponder["reply"]>[0]) {
     const context = await personalContextInstruction(this.userContext, this.config.DEEPSEEK_USER_CONTEXT_MAX_CHARS);
     const response = await fetch(`${this.config.DEEPSEEK_BASE_URL.replace(/\/$/, "")}/chat/completions`, {
       method: "POST",
@@ -33,6 +117,7 @@ export class DeepSeekHealthConversationResponder implements HealthConversationRe
       body: JSON.stringify({
         model: this.config.DEEPSEEK_MODEL,
         temperature: 0.3,
+        thinking: { type: "disabled" },
         max_tokens: Math.min(1_500, this.config.DEEPSEEK_MAX_OUTPUT_TOKENS),
         response_format: { type: "json_object" },
         messages: [
@@ -55,10 +140,19 @@ export class DeepSeekHealthConversationResponder implements HealthConversationRe
       }),
       signal: AbortSignal.timeout(Math.max(60_000, this.config.DEEPSEEK_TIMEOUT_MS))
     });
-    if (!response.ok) throw new Error(`DeepSeek returned HTTP ${response.status}.`);
-    const content = (await response.json() as ChatCompletionResponse).choices?.[0]?.message?.content;
-    if (!content) throw new Error("DeepSeek returned no health collaboration reply.");
-    const parsed = replySchema.parse(JSON.parse(content));
-    return { content: parsed.reply, needsClarification: parsed.needsClarification };
+    if (!response.ok) throw new HealthConversationProviderError(response.status);
+    const message = (await response.json() as ChatCompletionResponse).choices?.[0]?.message;
+    const texts = providerTexts(message);
+    if (!texts.length) throw new HealthConversationOutputError("DeepSeek returned no health collaboration reply.");
+    let lastParseError: unknown;
+    for (const text of texts) {
+      try {
+        const parsed = parseReply(text);
+        return { content: parsed.reply, needsClarification: parsed.needsClarification };
+      } catch (error) {
+        lastParseError = error;
+      }
+    }
+    throw new HealthConversationOutputError(lastParseError instanceof Error ? lastParseError.message : "DeepSeek returned malformed health collaboration reply.");
   }
 }

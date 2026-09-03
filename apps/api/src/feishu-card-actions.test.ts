@@ -64,6 +64,8 @@ describe("Feishu card actions", () => {
 
     expect(result).toMatchObject({ type: "success", message: expect.stringContaining("任务已经开始"), card: expect.any(Object) });
     expect(JSON.stringify(result.card)).toContain("任务已经开始");
+    expect(JSON.stringify(result.card)).toContain("开始：15:00");
+    expect(JSON.stringify(result.card)).toContain("结束：16:00");
     expect(JSON.stringify(result.card)).not.toContain("另有安排");
     expect(JSON.stringify(result.card)).not.toContain("取消任务");
     expect(focusService.create).toHaveBeenCalledWith(taskId, 8, "prepare", commandId);
@@ -129,6 +131,8 @@ describe("Feishu card actions", () => {
     const first = await actions.handle("ou_owner", { action: "cancel_request", taskId, scheduleRevision: 3 });
     expect(first).toMatchObject({ type: "success", card: expect.any(Object) });
     expect(JSON.stringify(first.card)).toContain("确认取消");
+    expect(JSON.stringify(first.card)).toContain("开始：15:00");
+    expect(JSON.stringify(first.card)).toContain("结束：16:00");
     expect(taskService.cancel).not.toHaveBeenCalled();
 
     const confirmed = await actions.handle("ou_owner", { action: "cancel_confirm", taskId, scheduleRevision: 3 });

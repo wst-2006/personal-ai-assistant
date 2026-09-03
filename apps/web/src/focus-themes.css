@@ -61,6 +61,92 @@
 .flip-digit::before { top: 50%; border-top: 1px solid rgba(255, 255, 255, .2); }
 .flip-digit::after { inset: 0; background: linear-gradient(180deg, rgba(255,255,255,.05), transparent 46%, rgba(0,0,0,.08)); }
 .flip-digit b { position: relative; z-index: 1; font: inherit; }
+
+/* Each digit is a separate split-flap: static half-panels hold the current
+   face while a two-sided lower panel rotates over the centre hinge. */
+.flip-digit {
+  perspective: 420px;
+  transform-style: preserve-3d;
+}
+.flip-digit::before,
+.flip-digit::after { z-index: 5; pointer-events: none; }
+.flip-digit-half,
+.flip-digit-flap,
+.flip-digit-flap-face {
+  position: absolute;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  color: inherit;
+  background: inherit;
+  font: inherit;
+  line-height: 1;
+  backface-visibility: hidden;
+  transform-style: preserve-3d;
+  pointer-events: none;
+}
+.flip-digit-half {
+  right: 0;
+  left: 0;
+  height: 50%;
+}
+.flip-digit-half-top {
+  top: 0;
+  z-index: 1;
+}
+.flip-digit-half-bottom {
+  bottom: 0;
+  z-index: 1;
+}
+.flip-digit-half b,
+.flip-digit-flap-face b {
+  position: absolute;
+  right: 0;
+  left: 0;
+  height: 200%;
+  display: grid;
+  place-items: center;
+  z-index: 1;
+  font: inherit;
+  line-height: 1;
+}
+.flip-digit-half-top b,
+.flip-digit-flap-face.flip-digit-flap-back b { top: 0; }
+.flip-digit-half-bottom b,
+.flip-digit-flap-face.flip-digit-flap-front b { top: -100%; }
+.flip-digit-flap {
+  top: 50%;
+  right: 0;
+  left: 0;
+  z-index: 3;
+  height: 50%;
+  overflow: visible;
+  transform-origin: 50% 0;
+  transform-style: preserve-3d;
+}
+.flip-digit-flap-face {
+  inset: 0;
+  border: 0;
+  border-radius: inherit;
+  backface-visibility: hidden;
+  transform-style: preserve-3d;
+}
+.flip-digit-flap-front { z-index: 1; }
+.flip-digit-flap-back {
+  z-index: 2;
+  transform: rotateX(180deg);
+}
+.flip-digit-flap-face::before {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(255,255,255,.05), transparent 46%, rgba(0,0,0,.08));
+  content: "";
+  pointer-events: none;
+}
+.flip-digit-flap {
+  animation: split-flap-digit-turn 520ms cubic-bezier(.18,.82,.24,1) forwards;
+  will-change: transform;
+}
 .flip-colon { color: currentColor; font: 400 32px/1 "Cascadia Mono", Consolas, monospace; font-style: normal; }
 
 .nixie-clock { gap: 7px; }
@@ -166,7 +252,7 @@
   white-space: nowrap;
 }
 
-.focus-theme-ink { background: #f6f0e5; }
+.focus-mini.focus-theme-ink { background: #f6f0e5; }
 .focus-theme-ink .focus-mini-titlebar { background: rgba(246,240,229,.96); }
 .focus-theme-ink .focus-mini-clock { margin-top: 3px; }
 .focus-theme-ink .focus-mini-progress i::before { background: #52645a; }
@@ -181,7 +267,7 @@
 .focus-theme-ink.focus-phase-break .focus-mini-quote { color: rgba(233,229,218,.68); }
 .focus-theme-ink.focus-phase-break .focus-mini-progress::before { background: rgba(233,229,218,.2); }
 
-.focus-theme-flip { color: #151715; background: #fafaf7; }
+.focus-mini.focus-theme-flip { color: #151715; background: #fafaf7; }
 .focus-theme-flip .focus-mini-titlebar { background: rgba(248,248,245,.97); }
 .focus-theme-flip .focus-mini-progress i::before { background: #20211f; }
 .focus-theme-flip .focus-mini-progress b { background: #a78342; }
@@ -192,7 +278,7 @@
 .focus-theme-flip.focus-phase-break .focus-mini-quote { color: rgba(239,239,233,.64); }
 .focus-theme-flip.focus-phase-break .flip-digit { color: #20221f; background: #e8e7df; }
 
-.focus-theme-nixie {
+.focus-mini.focus-theme-nixie {
   color: #f1c08d;
   border-color: #382013;
   background: radial-gradient(circle at 50% 58%, #251005, #080605 55%, #030303);
@@ -210,12 +296,12 @@
 .focus-theme-nixie.focus-phase-break .focus-mini-progress i::before,
 .focus-theme-nixie.focus-phase-break .focus-mini-progress b { background: #64db9a; box-shadow: 0 0 10px rgba(100,219,154,.42); }
 
-.focus-theme-vapor {
+.focus-mini.focus-theme-vapor {
   color: #fff7ff;
   border-color: rgba(73,239,236,.42);
   background: linear-gradient(#29175c 0%, #84388e 48%, #df7699 100%);
 }
-.focus-theme-vapor::after {
+.focus-mini.focus-theme-vapor::after {
   position: absolute;
   z-index: 0;
   right: -15%;
@@ -239,13 +325,13 @@
 .focus-theme-vapor .focus-mini-progress b { background: #fff17d; box-shadow: 0 0 12px rgba(255,241,125,.55); }
 .focus-theme-vapor.focus-phase-break { background: linear-gradient(#142f48, #225d67 56%, #2c7a73); }
 
-.focus-theme-cyber {
+.focus-mini.focus-theme-cyber {
   color: #eaff4f;
   border-color: #3c565c;
   background: #0a0f12;
 }
-.focus-theme-cyber::before,
-.focus-theme-cyber::after {
+.focus-mini.focus-theme-cyber::before,
+.focus-mini.focus-theme-cyber::after {
   position: absolute;
   z-index: 4;
   height: 2px;
@@ -253,8 +339,8 @@
   content: "";
   pointer-events: none;
 }
-.focus-theme-cyber::before { top: 42px; left: 12px; width: 82px; }
-.focus-theme-cyber::after { right: 14px; bottom: 12px; width: 104px; }
+.focus-mini.focus-theme-cyber::before,
+.focus-mini.focus-theme-cyber::after { right: 14px; bottom: 12px; width: 104px; }
 .focus-theme-cyber .focus-mini-grain { opacity: .06; }
 .focus-theme-cyber .focus-mini-titlebar { color: #77a9a2; border-color: #29363c; background: #080c0e; }
 .focus-theme-cyber .focus-mini-titlebar button { color: #77a9a2; }
@@ -265,7 +351,7 @@
 .focus-theme-cyber .focus-mini-progress::before { background: rgba(53,226,223,.2); }
 .focus-theme-cyber .focus-mini-progress i::before { background: #35e2df; }
 .focus-theme-cyber .focus-mini-progress b { background: #eaff4f; box-shadow: 0 0 10px rgba(234,255,79,.38); }
-.focus-theme-cyber.focus-phase-break { color: #55efd1; }
+.focus-mini.focus-theme-cyber.focus-phase-break { color: #55efd1; }
 .focus-cyber-telemetry {
   position: absolute;
   z-index: 2;
@@ -351,14 +437,16 @@
 .cyber-key-help { color: #4da9a6; }
 
 @media (prefers-reduced-motion: no-preference) {
-  .focus-theme-flip .flip-digit b { animation: focus-digit-settle 260ms cubic-bezier(.2,.8,.2,1); }
   .focus-theme-nixie .nixie-tube b { animation: nixie-warm 420ms ease-out; }
   .focus-theme-vapor .text-theme-clock { animation: vapor-color-settle 480ms ease-out; }
 }
 
-@keyframes focus-digit-settle { from { opacity: .45; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes nixie-warm { from { opacity: .54; } to { opacity: 1; } }
 @keyframes vapor-color-settle { from { text-shadow: 1px 1px #31d6db; } to { text-shadow: 3px 3px #31d6db,-2px -1px rgba(255,96,190,.55); } }
+@keyframes split-flap-digit-turn {
+  from { transform: rotateX(0deg); }
+  to { transform: rotateX(-180deg); }
+}
 
 @media (max-width: 390px) {
   .lcd-clock { width: 150px; height: 50px; }
@@ -371,4 +459,823 @@
 @media (prefers-reduced-motion: reduce) {
   .theme-clock,
   .theme-clock * { animation: none !important; }
+  .flip-digit-flap { display: none; }
 }
+
+/* --------------------------------------------------------------------------
+   Distinct visual systems for the three non-ink themes.
+   Content and interaction stay shared; composition, materials and motion do not.
+   -------------------------------------------------------------------------- */
+
+/* Flip: an indexed paper instrument with physical page edges. */
+.focus-theme-flip .focus-stage,
+.focus-mini.focus-theme-flip {
+  color: #302c25;
+  border-color: #bdb4a4;
+  background:
+    linear-gradient(90deg, rgba(68,54,38,.08) 0 1px, transparent 1px 24px),
+    repeating-linear-gradient(0deg, rgba(93,75,49,.045) 0 1px, transparent 1px 5px),
+    #eee8dc;
+  box-shadow: 10px 12px 0 rgba(84,68,46,.08), inset 0 0 0 7px rgba(255,255,255,.24);
+  isolation: isolate;
+}
+.focus-theme-flip .focus-stage::before,
+.focus-theme-flip.focus-mini::before { position: absolute; inset: 16px; z-index: 0; border: 1px solid rgba(127,103,70,.28); background: transparent; opacity: 1; content: ""; pointer-events: none; }
+.focus-theme-flip .focus-stage-header,
+.focus-theme-flip .focus-mini-titlebar { color: #74634c; border-color: rgba(111,89,58,.25); background: rgba(232,224,211,.9); }
+.focus-theme-flip .focus-stage-header > span { color: #98703f; font: 700 10px/1 ui-monospace, monospace; letter-spacing: .2em; }
+.focus-theme-flip .focus-center { align-content: start; padding-top: 86px; }
+.focus-theme-flip .focus-center h1 { color: #322d26; font-family: "Noto Serif SC", serif; font-size: clamp(28px, 3vw, 42px); }
+.focus-theme-flip .focus-meta { color: #857561; }
+.focus-theme-flip .focus-timepiece {
+  width: min(700px, 92%); margin-top: 40px; padding: 30px 22px 25px;
+  border: 1px solid rgba(122,98,63,.35); border-radius: 2px;
+  background: rgba(250,247,240,.72); box-shadow: 0 13px 0 rgba(121,96,61,.08), inset 0 1px #fff;
+}
+.focus-theme-flip .focus-timepiece::before,
+.focus-theme-flip .focus-timepiece::after { width: 1px; height: 72px; top: 50%; background: #b59361; }
+.focus-theme-flip .focus-timepiece::before { right: auto; left: 18px; }
+.focus-theme-flip .focus-timepiece::after { right: 18px; left: auto; transform: none; }
+.focus-theme-flip .focus-timepiece-label { color: #a06f36; letter-spacing: .24em; }
+.focus-theme-flip .ink-clepsydra { min-height: 188px; gap: 26px; padding: 20px 28px; border: 1px solid #bda986; background: repeating-linear-gradient(0deg, rgba(142,113,70,.06) 0 1px, transparent 1px 7px), #eee5d6; box-shadow: inset 0 0 0 4px rgba(255,255,255,.32); }
+.focus-theme-flip .ink-clepsydra strong { color: #3c352b; font: 400 clamp(64px, 8vw, 92px)/1 "Noto Serif SC", serif; letter-spacing: .05em; }
+.focus-theme-flip .ink-clepsydra-line { bottom: 13px; }
+.focus-theme-flip .ink-clepsydra-line::before { background: #ae956e; }
+.focus-theme-flip .ink-clepsydra-line > i::before { background: #76552f; }
+.focus-theme-flip .ink-clepsydra-line > i > b { border-radius: 0; background: #76552f; box-shadow: 0 0 0 3px rgba(118,85,47,.12); transform: rotate(45deg); }
+.focus-theme-flip .flip-clock-leaf { border-color: #88704f; border-radius: 1px; color: #f3eee4; background: linear-gradient(#4a4439 0 49.3%, #332f29 49.5%); box-shadow: 0 8px 0 #cab99e, 0 14px 20px rgba(71,55,36,.16); }
+.focus-theme-flip .flip-clock-separator { color: #9b835e; }
+.focus-theme-flip .focus-time-progress { height: 6px; padding: 1px; border: 1px solid #b49a73; background: #e0d6c5; }
+.focus-theme-flip .focus-time-progress > i { background: repeating-linear-gradient(90deg, #8c6737 0 12px, #c39a5f 12px 14px); }
+.focus-theme-flip .focus-execution { width: min(760px, 94%); padding: 24px; border: 1px solid rgba(122,98,63,.28); background: rgba(249,245,236,.76); box-shadow: 0 16px 0 rgba(121,96,61,.07); }
+.focus-theme-flip .focus-execution-context { display: flex; align-items: baseline; justify-content: space-between; width: 100%; border-bottom: 1px solid rgba(122,98,63,.25); }
+.focus-theme-flip .focus-execution-context span { color: #a06f36; font: 700 10px/1 ui-monospace, monospace; letter-spacing: .18em; }
+.focus-theme-flip .focus-execution-context h1 { font-size: 24px; }
+.focus-theme-flip .focus-execution-actions button,
+.focus-theme-flip .focus-controls button { border-radius: 1px; box-shadow: 3px 3px 0 rgba(112,87,53,.12); }
+.focus-theme-flip .focus-arrangement-sheet,
+.focus-theme-flip .focus-arrangement-edit,
+.themed-outcome-dialog.focus-theme-flip { border-radius: 1px; border-color: #b9aa93; background: #f5efe4; box-shadow: 8px 8px 0 rgba(91,70,43,.1); }
+.focus-theme-flip .focus-evaluation-sheet { gap: 24px; padding: 8px 3px; }
+.focus-theme-flip .focus-evaluation-heading { grid-template-columns: auto 1fr; align-items: end; column-gap: 14px; border-bottom: 2px solid #8f6f43; }
+.focus-theme-flip .focus-evaluation-heading p { grid-row: span 2; writing-mode: vertical-rl; color: #a06f36; letter-spacing: .16em; }
+.focus-theme-flip .focus-evaluation-heading h1 { font-size: 28px; }
+.focus-theme-flip .focus-evaluation-section { padding: 14px 0; border-bottom: 1px dashed rgba(122,98,63,.35); }
+.focus-theme-flip .focus-evaluation-section legend,
+.focus-theme-flip .focus-evaluation-note > span { color: #665540; font-family: "Noto Serif SC", serif; }
+.focus-theme-flip .focus-evaluation-outcomes button { border-radius: 1px; border-color: #bca886; background: #eee5d6; }
+.focus-theme-flip .focus-evaluation-outcomes button.selected { color: #fffaf0; border-color: #7f5a31; background: #7f5a31; box-shadow: none; }
+.focus-theme-flip .focus-evaluation-feelings button { border-radius: 1px; background: transparent; }
+.focus-theme-flip .focus-evaluation-feelings button.selected {
+  color: #fffaf0;
+  border-color: #7f5a31;
+  background: linear-gradient(135deg, #6f5130, #8f6f43);
+  box-shadow: 4px 4px 0 rgba(112,87,53,.16), inset 0 -3px #c7a36a;
+  transform: translateY(-2px);
+}
+.focus-theme-flip .focus-evaluation-feelings button.selected strong,
+.focus-theme-flip .focus-evaluation-feelings button.selected small { color: inherit; opacity: 1; }
+.focus-theme-flip .focus-evaluation-note textarea { border: 1px solid #c9b99f; background: repeating-linear-gradient(to bottom, #f8f2e8 0 25px, #ded0b9 25px 26px); }
+.focus-theme-flip .focus-evaluation-footer button { border-radius: 1px; color: #fffaf0; background: #6f5130; }
+
+/* Nixie: a dark lab console arranged around one glowing instrument. */
+.focus-theme-nixie .focus-stage,
+.focus-mini.focus-theme-nixie { color: #f1c08d; border-color: #55311c; background: #090705; box-shadow: inset 0 0 80px rgba(255,91,0,.08), inset 0 0 0 1px #26140b; isolation: isolate; }
+.focus-theme-nixie .focus-stage::before,
+.focus-theme-nixie.focus-mini::before { position: absolute; inset: 35px 18px 18px; z-index: 0; border: 1px solid rgba(255,146,65,.2); background: repeating-linear-gradient(0deg, transparent 0 27px, rgba(255,132,42,.06) 28px), repeating-linear-gradient(90deg, transparent 0 42px, rgba(255,132,42,.04) 43px); opacity: 1; content: ""; pointer-events: none; }
+.focus-theme-nixie .focus-stage-header,
+.focus-theme-nixie .focus-mini-titlebar { color: #b9845d; border-color: #3a2114; background: rgba(9,6,4,.95); }
+.focus-theme-nixie .focus-stage-header > span { color: #ed9a4a; font: 700 10px/1 ui-monospace, monospace; letter-spacing: .2em; }
+.focus-theme-nixie .focus-center { align-content: center; padding-top: 48px; }
+.focus-theme-nixie .focus-center h1 { color: #ffd4a0; font-family: "Arial Narrow", sans-serif; letter-spacing: .08em; }
+.focus-theme-nixie .focus-meta { color: #b5825e; }
+.focus-theme-nixie .focus-timepiece { width: min(650px, 90%); margin-top: 26px; padding: 28px 24px 24px; border: 1px solid #603219; border-radius: 28px; background: rgba(19,10,5,.82); box-shadow: 0 0 0 7px rgba(255,112,34,.04), 0 0 34px rgba(255,77,0,.14); }
+.focus-theme-nixie .focus-timepiece::before,
+.focus-theme-nixie .focus-timepiece::after { top: 50%; width: 14px; height: 14px; border: 1px solid #bf6d32; border-radius: 50%; background: #160b05; }
+.focus-theme-nixie .focus-timepiece::before { right: auto; left: -7px; }
+.focus-theme-nixie .focus-timepiece::after { right: -7px; left: auto; transform: none; }
+.focus-theme-nixie .focus-timepiece-label { color: #ef9a4d; font-family: ui-monospace, monospace; }
+.focus-theme-nixie .ink-clepsydra { min-height: 190px; gap: 30px; padding: 18px 28px; border: 1px solid #713a1c; border-radius: 16px; background: radial-gradient(circle at 50% 40%, rgba(255,111,28,.12), transparent 58%), #120703; box-shadow: inset 0 0 24px rgba(255,92,17,.13); }
+.focus-theme-nixie .ink-clepsydra strong { color: #ff9a45; font: 300 clamp(70px, 8vw, 98px)/1 "Arial Narrow", sans-serif; letter-spacing: .08em; text-shadow: 0 0 4px #ffbd78, 0 0 16px #ff6a16, 0 0 32px rgba(255,58,0,.66); }
+.focus-theme-nixie .ink-clepsydra-line { bottom: 12px; }
+.focus-theme-nixie .ink-clepsydra-line::before { background: rgba(255,140,66,.25); }
+.focus-theme-nixie .ink-clepsydra-line > i::before { background: #ff7b1d; box-shadow: 0 0 10px #ff5a0a; }
+.focus-theme-nixie .ink-clepsydra-line > i > b { background: #ff9a45; box-shadow: 0 0 0 4px rgba(255,103,24,.16), 0 0 14px #ff5a0a; }
+.focus-theme-nixie .focus-time-progress { height: 8px; border: 1px solid #63351d; border-radius: 99px; background: #1c0c05; }
+.focus-theme-nixie .focus-time-progress > i { border-radius: inherit; background: #ff7b1d; box-shadow: 0 0 12px #ff5a0a; }
+.focus-theme-nixie .focus-execution { width: min(720px, 94%); padding: 26px; border: 1px solid #603219; border-radius: 18px; background: rgba(16,8,4,.86); box-shadow: 0 0 28px rgba(255,81,0,.12); }
+.focus-theme-nixie .focus-execution-context { display: grid; gap: 8px; width: 100%; text-align: left; }
+.focus-theme-nixie .focus-execution-context span { color: #ff9e50; font: 700 10px/1 ui-monospace, monospace; letter-spacing: .2em; }
+.focus-theme-nixie .focus-execution-context h1 { font-size: 25px; }
+.focus-theme-nixie .focus-execution-actions button { border-radius: 99px; border-color: #87431e; color: #ffc189; background: rgba(255,103,24,.08); }
+.focus-theme-nixie .focus-execution-primary { color: #190b04 !important; background: #ff9a3d !important; }
+.focus-theme-nixie .focus-arrangement-sheet,
+.focus-theme-nixie .focus-arrangement-edit,
+.themed-outcome-dialog.focus-theme-nixie { border-radius: 16px; border-color: #603219; background: #100804; box-shadow: 0 0 42px rgba(255,81,0,.18); }
+.focus-theme-nixie .focus-evaluation-sheet { gap: 18px; }
+.focus-theme-nixie .focus-evaluation-heading { padding: 14px; border: 1px solid #603219; border-radius: 10px; background: #170a04; }
+.focus-theme-nixie .focus-evaluation-heading p { color: #ff9440; font: 700 10px/1 ui-monospace, monospace; }
+.focus-theme-nixie .focus-evaluation-heading h1 { color: #ffd09b; font-family: "Arial Narrow", sans-serif; letter-spacing: .08em; }
+.focus-theme-nixie .focus-evaluation-heading > strong { color: #ca8f62; }
+.focus-theme-nixie .focus-evaluation-section { padding: 14px; border: 1px solid #4f2a18; border-radius: 10px; background: rgba(27,12,5,.72); }
+.focus-theme-nixie .focus-evaluation-section legend,
+.focus-theme-nixie .focus-evaluation-note > span { color: #e6a06b; font-family: ui-monospace, monospace; }
+.focus-theme-nixie .focus-evaluation-outcomes button { border-radius: 99px; border-color: #6a371d; color: #d99c70; background: #1c0d06; }
+.focus-theme-nixie .focus-evaluation-outcomes button.selected { color: #1a0903; border-color: #ff923b; background: #ff923b; box-shadow: 0 0 14px rgba(255,117,24,.4); }
+.focus-theme-nixie .focus-evaluation-feelings button { border-radius: 10px; background: rgba(255,103,24,.06); }
+.focus-theme-nixie .focus-evaluation-feelings button.selected {
+  color: #160904;
+  border-color: #ff9a45;
+  background: linear-gradient(135deg, #ff9a45, #ffbd78);
+  box-shadow: 0 0 0 2px rgba(255,117,24,.18), 0 0 20px rgba(255,81,0,.34);
+  transform: translateY(-2px);
+}
+.focus-theme-nixie .focus-evaluation-feelings button.selected strong,
+.focus-theme-nixie .focus-evaluation-feelings button.selected small { color: inherit; opacity: 1; }
+.focus-theme-nixie .focus-evaluation-note textarea { border: 1px solid #55301b; border-radius: 8px; color: #ffd3a6; background: #120804; }
+.focus-theme-nixie .focus-evaluation-footer button { border-radius: 99px; color: #1a0903; background: #ff9139; box-shadow: 0 0 18px rgba(255,117,24,.28); }
+
+/* Vapor: a layered arcade console with horizon, panes and chromatic offsets. */
+.focus-theme-vapor .focus-stage,
+.focus-mini.focus-theme-vapor { color: #fff7ff; border-color: #4ce9e7; background: linear-gradient(160deg, #20134b 0%, #5d2d7f 48%, #d76f9b 100%); box-shadow: inset 0 -100px 0 rgba(255,168,205,.12), 0 16px 34px rgba(57,21,93,.22); isolation: isolate; }
+.focus-theme-vapor .focus-stage::before,
+.focus-theme-vapor.focus-mini::before { position: absolute; inset: auto 0 0; z-index: 0; height: 44%; border-top: 1px solid rgba(108,245,241,.5); background: repeating-linear-gradient(90deg, transparent 0 45px, rgba(92,239,235,.35) 46px), repeating-linear-gradient(0deg, transparent 0 29px, rgba(92,239,235,.32) 30px); opacity: 1; transform: perspective(230px) rotateX(60deg); transform-origin: bottom; content: ""; pointer-events: none; }
+.focus-theme-vapor .focus-stage-header,
+.focus-theme-vapor .focus-mini-titlebar { color: #b8ffff; border-color: rgba(93,239,235,.38); background: rgba(31,18,74,.75); backdrop-filter: blur(10px); }
+.focus-theme-vapor .focus-stage-header > span { color: #fff18d; font: 700 10px/1 ui-monospace, monospace; letter-spacing: .2em; }
+.focus-theme-vapor .focus-center { align-content: start; padding-top: 78px; }
+.focus-theme-vapor .focus-center h1 { color: #fff; font-family: "Arial Rounded MT Bold", "Segoe UI", sans-serif; font-weight: 800; text-shadow: 3px 3px #ec6aa8, -2px -2px #35e2df; }
+.focus-theme-vapor .focus-meta { color: #d5c5ff; }
+.focus-theme-vapor .focus-timepiece { width: min(760px, 94%); margin-top: 34px; padding: 24px 24px 20px; border: 1px solid rgba(109,245,240,.62); border-radius: 18px; background: linear-gradient(135deg, rgba(35,17,79,.84), rgba(96,39,114,.62)); box-shadow: 8px 8px 0 rgba(241,100,172,.26), inset 0 1px rgba(255,255,255,.16); }
+.focus-theme-vapor .focus-timepiece::before,
+.focus-theme-vapor .focus-timepiece::after { top: 14px; width: 52px; height: 8px; border: 1px solid #fff18d; background: #fff18d; transform: none; }
+.focus-theme-vapor .focus-timepiece::before { right: auto; left: 18px; }
+.focus-theme-vapor .focus-timepiece::after { right: 18px; left: auto; }
+.focus-theme-vapor .focus-timepiece-label { color: #fff18d; font-family: ui-monospace, monospace; }
+.focus-theme-vapor .ink-clepsydra { min-height: 184px; gap: 24px; padding: 20px 28px; border: 1px solid rgba(109,245,240,.66); border-radius: 14px; background: linear-gradient(135deg, rgba(28,14,67,.9), rgba(112,41,124,.7)); box-shadow: 5px 5px 0 rgba(241,100,172,.28); }
+.focus-theme-vapor .ink-clepsydra strong { color: #fff; font: 800 clamp(65px, 8vw, 94px)/1 "Arial Rounded MT Bold", "Segoe UI", sans-serif; letter-spacing: .02em; text-shadow: 4px 4px #ec6aa8, -3px -2px #31e4df; }
+.focus-theme-vapor .ink-clepsydra-line { bottom: 12px; }
+.focus-theme-vapor .ink-clepsydra-line::before { background: rgba(109,245,240,.36); }
+.focus-theme-vapor .ink-clepsydra-line > i::before { background: linear-gradient(90deg, #31e4df, #fff18d, #ef6eac); box-shadow: 0 0 10px rgba(49,228,223,.72); }
+.focus-theme-vapor .ink-clepsydra-line > i > b { background: #fff18d; box-shadow: 0 0 0 4px rgba(255,241,125,.18), 0 0 16px rgba(255,241,125,.65); }
+.focus-theme-vapor .focus-time-progress { height: 7px; border-radius: 99px; background: rgba(31,18,74,.7); }
+.focus-theme-vapor .focus-time-progress > i { border-radius: inherit; background: linear-gradient(90deg, #31e4df, #fff18d, #ef6eac); box-shadow: 0 0 12px rgba(49,228,223,.6); }
+.focus-theme-vapor .focus-execution { width: min(760px, 94%); padding: 24px; border: 1px solid rgba(109,245,240,.55); border-radius: 18px; background: rgba(32,17,75,.68); box-shadow: 8px 8px 0 rgba(241,100,172,.2); backdrop-filter: blur(12px); }
+.focus-theme-vapor .focus-execution-context { display: grid; gap: 6px; width: 100%; text-align: left; }
+.focus-theme-vapor .focus-execution-context span { color: #fff18d; font: 700 10px/1 ui-monospace, monospace; letter-spacing: .2em; }
+.focus-theme-vapor .focus-execution-context h1 { font-size: 26px; }
+.focus-theme-vapor .focus-execution-actions button { border-radius: 99px; border-color: rgba(109,245,240,.6); color: #e9ffff; background: rgba(49,228,223,.12); }
+.focus-theme-vapor .focus-execution-primary { color: #291044 !important; background: #fff18d !important; box-shadow: 0 0 18px rgba(255,241,125,.35); }
+.focus-theme-vapor .focus-arrangement-sheet,
+.focus-theme-vapor .focus-arrangement-edit,
+.themed-outcome-dialog.focus-theme-vapor { border-radius: 18px; border-color: rgba(109,245,240,.62); background: rgba(35,18,79,.94); box-shadow: 8px 8px 0 rgba(241,100,172,.2); backdrop-filter: blur(14px); }
+.focus-theme-vapor .focus-evaluation-sheet { gap: 18px; }
+.focus-theme-vapor .focus-evaluation-heading { padding: 18px; border: 1px solid rgba(109,245,240,.55); border-radius: 14px; background: linear-gradient(135deg, rgba(37,18,83,.9), rgba(103,42,124,.7)); box-shadow: 5px 5px 0 rgba(241,100,172,.18); }
+.focus-theme-vapor .focus-evaluation-heading p { color: #fff18d; font: 700 10px/1 ui-monospace, monospace; }
+.focus-theme-vapor .focus-evaluation-heading h1 { color: #fff; font-family: "Arial Rounded MT Bold", "Segoe UI", sans-serif; text-shadow: 2px 2px #ec6aa8; }
+.focus-theme-vapor .focus-evaluation-heading > strong { color: #d5c5ff; }
+.focus-theme-vapor .focus-evaluation-section { padding: 14px; border: 1px solid rgba(109,245,240,.35); border-radius: 12px; background: rgba(31,17,73,.56); }
+.focus-theme-vapor .focus-evaluation-section legend,
+.focus-theme-vapor .focus-evaluation-note > span { color: #b8ffff; font-family: ui-monospace, monospace; }
+.focus-theme-vapor .focus-evaluation-outcomes button { border-radius: 99px; border-color: rgba(109,245,240,.5); color: #e9ffff; background: rgba(49,228,223,.1); }
+.focus-theme-vapor .focus-evaluation-outcomes button.selected { color: #291044; border-color: #fff18d; background: #fff18d; box-shadow: 0 0 15px rgba(255,241,125,.3); }
+.focus-theme-vapor .focus-evaluation-feelings button { border-radius: 12px; }
+.focus-theme-vapor .focus-evaluation-feelings button.selected {
+  color: #291044;
+  border-color: #fff18d;
+  background: linear-gradient(135deg, #fff18d, #ffb9d7);
+  box-shadow: 0 0 0 2px rgba(49,228,223,.24), 0 0 22px rgba(255,241,125,.35);
+  transform: translateY(-3px) rotate(-1deg);
+}
+.focus-theme-vapor .focus-evaluation-feelings button.selected strong,
+.focus-theme-vapor .focus-evaluation-feelings button.selected small { color: inherit; opacity: 1; }
+
+/* Distinct evaluation compositions: each theme keeps the same fields and
+   actions but changes the visual grammar, hierarchy and motion language. */
+.themed-outcome-dialog.focus-theme-flip {
+  border-radius: 1px;
+  background:
+    linear-gradient(90deg, rgba(125,95,52,.08) 0 1px, transparent 1px 100%),
+    repeating-linear-gradient(0deg, rgba(142,113,70,.035) 0 1px, transparent 1px 8px),
+    #f7f0e4;
+}
+.themed-outcome-dialog.focus-theme-flip .themed-outcome-body {
+  padding: 28px 32px 34px 42px;
+  background: linear-gradient(90deg, rgba(141,108,65,.13) 0 2px, transparent 2px);
+}
+.themed-outcome-dialog.focus-theme-flip .focus-evaluation-sheet {
+  gap: 24px;
+}
+.themed-outcome-dialog.focus-theme-flip .focus-evaluation-heading {
+  position: relative;
+  padding: 4px 0 18px;
+  border-bottom: 2px solid #8f6f43;
+}
+.themed-outcome-dialog.focus-theme-flip .focus-evaluation-heading::before {
+  position: absolute;
+  top: -28px;
+  bottom: -20px;
+  left: -20px;
+  width: 1px;
+  background: #b89a6a;
+  content: "";
+}
+.themed-outcome-dialog.focus-theme-flip .focus-evaluation-heading h1 {
+  font-family: "Noto Serif SC", serif;
+  font-size: 29px;
+  letter-spacing: .05em;
+}
+.themed-outcome-dialog.focus-theme-flip .focus-evaluation-section {
+  padding: 16px 0;
+  border-bottom: 1px dashed rgba(122,98,63,.38);
+}
+.themed-outcome-dialog.focus-theme-flip .focus-evaluation-outcomes button {
+  min-height: 46px;
+  border-radius: 1px;
+  box-shadow: 3px 3px 0 rgba(112,87,53,.08);
+}
+.themed-outcome-dialog.focus-theme-flip .focus-evaluation-feelings button {
+  min-height: 72px;
+  padding: 12px 11px;
+  border-radius: 1px;
+  font-family: "Noto Serif SC", serif;
+}
+
+.themed-outcome-dialog.focus-theme-vapor {
+  overflow: hidden;
+  border-radius: 18px;
+  background:
+    linear-gradient(rgba(49,228,223,.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(49,228,223,.08) 1px, transparent 1px),
+    linear-gradient(150deg, #21134d, #6a2e82 58%, #c96594);
+  background-size: 24px 24px, 24px 24px, auto;
+}
+.themed-outcome-dialog.focus-theme-vapor::after {
+  position: absolute;
+  right: -10%;
+  bottom: -24%;
+  left: -10%;
+  height: 42%;
+  border-top: 1px solid rgba(109,245,240,.5);
+  background: repeating-linear-gradient(90deg, transparent 0 38px, rgba(109,245,240,.25) 39px), repeating-linear-gradient(0deg, transparent 0 22px, rgba(109,245,240,.18) 23px);
+  transform: perspective(260px) rotateX(58deg);
+  transform-origin: bottom;
+  content: "";
+  pointer-events: none;
+}
+.themed-outcome-dialog.focus-theme-vapor .themed-outcome-body {
+  position: relative;
+  z-index: 1;
+  padding: 26px 30px 34px;
+}
+.themed-outcome-dialog.focus-theme-vapor .focus-evaluation-sheet {
+  gap: 18px;
+}
+.themed-outcome-dialog.focus-theme-vapor .focus-evaluation-heading {
+  padding: 18px 20px;
+  border: 1px solid rgba(109,245,240,.58);
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(35,17,79,.82), rgba(96,39,114,.62));
+  box-shadow: 7px 7px 0 rgba(241,100,172,.2);
+}
+.themed-outcome-dialog.focus-theme-vapor .focus-evaluation-heading h1 {
+  font-family: "Arial Rounded MT Bold", "Segoe UI", sans-serif;
+  font-weight: 800;
+  text-shadow: 2px 2px #ec6aa8, -1px -1px #31e4df;
+}
+.themed-outcome-dialog.focus-theme-vapor .focus-evaluation-section {
+  padding: 16px;
+  border: 1px solid rgba(109,245,240,.4);
+  border-radius: 14px;
+  background: rgba(31,18,74,.48);
+  backdrop-filter: blur(6px);
+}
+.themed-outcome-dialog.focus-theme-vapor .focus-evaluation-section legend,
+.themed-outcome-dialog.focus-theme-vapor .focus-evaluation-note > span {
+  color: #fff18d;
+  font-family: "Arial Rounded MT Bold", "Segoe UI", sans-serif;
+}
+.themed-outcome-dialog.focus-theme-vapor .focus-evaluation-outcomes button {
+  border-color: rgba(109,245,240,.5);
+  border-radius: 99px;
+  color: #e9ffff;
+  background: rgba(49,228,223,.1);
+}
+.themed-outcome-dialog.focus-theme-vapor .focus-evaluation-outcomes button.selected {
+  color: #291044;
+  background: #fff18d;
+  box-shadow: 0 0 18px rgba(255,241,125,.36);
+}
+
+.themed-outcome-dialog.focus-theme-nixie {
+  border-radius: 14px;
+  background:
+    radial-gradient(circle at 50% 0, rgba(255,106,22,.15), transparent 45%),
+    repeating-linear-gradient(0deg, rgba(255,132,42,.035) 0 1px, transparent 1px 5px),
+    #100804;
+}
+.themed-outcome-dialog.focus-theme-nixie .themed-outcome-body {
+  padding: 24px 28px 32px;
+}
+.themed-outcome-dialog.focus-theme-nixie .focus-evaluation-sheet {
+  gap: 16px;
+}
+.themed-outcome-dialog.focus-theme-nixie .focus-evaluation-heading {
+  padding: 16px;
+  border: 1px solid #603219;
+  border-radius: 10px;
+  background: #170a04;
+  box-shadow: inset 0 0 20px rgba(255,92,17,.08);
+}
+.themed-outcome-dialog.focus-theme-nixie .focus-evaluation-heading h1 {
+  color: #ffd09b;
+  font-family: "Arial Narrow", "Segoe UI", sans-serif;
+  letter-spacing: .1em;
+  text-shadow: 0 0 8px rgba(255,106,22,.35);
+}
+.themed-outcome-dialog.focus-theme-nixie .focus-evaluation-section {
+  padding: 14px;
+  border: 1px solid #4f2a18;
+  border-radius: 10px;
+  background: rgba(27,12,5,.72);
+  box-shadow: inset 0 0 18px rgba(255,81,0,.06);
+}
+.themed-outcome-dialog.focus-theme-nixie .focus-evaluation-outcomes button {
+  min-height: 44px;
+  border-radius: 99px;
+  color: #d99c70;
+  border-color: #6a371d;
+  background: #1c0d06;
+}
+.themed-outcome-dialog.focus-theme-nixie .focus-evaluation-feelings button {
+  min-height: 72px;
+  border-radius: 12px;
+  color: #d99c70;
+  border-color: #6a371d;
+  background: rgba(255,103,24,.06);
+}
+.themed-outcome-dialog.focus-theme-nixie .focus-evaluation-note textarea {
+  min-height: 104px;
+  border: 1px solid #55301b;
+  border-radius: 8px;
+  color: #ffd3a6;
+  background: #120804;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .themed-outcome-dialog.focus-theme-flip .focus-evaluation-heading { animation: evaluation-paper-settle 460ms cubic-bezier(.2,.8,.2,1) both; }
+  .themed-outcome-dialog.focus-theme-vapor .focus-evaluation-section { animation: evaluation-vapor-rise 520ms cubic-bezier(.16,1,.3,1) both; }
+  .themed-outcome-dialog.focus-theme-nixie .focus-evaluation-section { animation: evaluation-nixie-pulse 900ms ease-out both; }
+}
+@keyframes evaluation-paper-settle {
+  from { opacity: 0; transform: translateY(-6px) rotate(-.5deg); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes evaluation-vapor-rise {
+  from { opacity: 0; transform: translateY(9px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes evaluation-nixie-pulse {
+  from { opacity: .55; box-shadow: inset 0 0 0 rgba(255,81,0,0); }
+  to { opacity: 1; box-shadow: inset 0 0 18px rgba(255,81,0,.06); }
+}
+.focus-theme-vapor .focus-evaluation-note textarea { border: 1px solid rgba(109,245,240,.5); border-radius: 10px; color: #fff; background: rgba(23,13,58,.7); }
+.focus-theme-vapor .focus-evaluation-footer button { border-radius: 99px; color: #291044; background: #fff18d; box-shadow: 0 0 18px rgba(255,241,125,.32); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .focus-theme-flip .focus-timepiece { animation: flip-panel-settle 600ms cubic-bezier(.2,.8,.2,1) both; }
+  .focus-theme-nixie .focus-timepiece { animation: nixie-console-pulse 4s ease-in-out infinite; }
+  .focus-theme-vapor .focus-timepiece { animation: vapor-panel-float 5s ease-in-out infinite; }
+}
+@keyframes flip-panel-settle { from { opacity: 0; transform: translateY(12px) rotateX(-6deg); } to { opacity: 1; transform: none; } }
+@keyframes nixie-console-pulse { 0%,100% { box-shadow: 0 0 0 7px rgba(255,112,34,.04), 0 0 34px rgba(255,77,0,.14); } 50% { box-shadow: 0 0 0 7px rgba(255,112,34,.08), 0 0 46px rgba(255,77,0,.26); } }
+@keyframes vapor-panel-float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+
+@media (max-width: 560px) {
+  .focus-theme-flip .focus-execution-context { display: grid; gap: 7px; text-align: left; }
+  .focus-theme-flip .focus-execution-context h1,
+  .focus-theme-nixie .focus-execution-context h1,
+  .focus-theme-vapor .focus-execution-context h1 { font-size: 21px; }
+  .focus-theme-flip .focus-timepiece,
+  .focus-theme-nixie .focus-timepiece,
+  .focus-theme-vapor .focus-timepiece { width: 100%; box-sizing: border-box; }
+  .focus-theme-flip .focus-evaluation-heading { grid-template-columns: 1fr; }
+  .focus-theme-flip .focus-evaluation-heading p { grid-row: auto; writing-mode: horizontal-tb; }
+}
+
+/* Keep the workspace canvas and the task rail in the ink layout. Only the
+   active timer surface below carries the selected theme's material language. */
+.focus-theme-flip .focus-stage,
+.focus-theme-nixie .focus-stage,
+.focus-theme-vapor .focus-stage {
+  color: #2f332f;
+  border-color: rgba(58, 62, 56, .22);
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 50% 18%, rgba(176, 61, 43, .09), transparent 22%),
+    linear-gradient(128deg, rgba(253, 250, 243, .98), rgba(235, 237, 229, .96));
+  box-shadow: 0 28px 70px rgba(48, 45, 38, .12), inset 0 1px rgba(255,255,255,.9);
+  isolation: isolate;
+}
+.focus-theme-flip .focus-stage::before,
+.focus-theme-nixie .focus-stage::before,
+.focus-theme-vapor .focus-stage::before {
+  inset: 0;
+  z-index: -3;
+  border: 0;
+  opacity: .22;
+  background-image: radial-gradient(rgba(49, 46, 40, .22) .55px, transparent .75px);
+  background-size: 5px 5px;
+  transform: none;
+  content: "";
+  mix-blend-mode: multiply;
+}
+.focus-theme-flip .focus-stage-header,
+.focus-theme-nixie .focus-stage-header,
+.focus-theme-vapor .focus-stage-header {
+  color: #4f554f;
+  border-color: transparent;
+  background: transparent;
+}
+.focus-theme-flip .focus-stage-header > span,
+.focus-theme-nixie .focus-stage-header > span,
+.focus-theme-vapor .focus-stage-header > span { color: #6f6d65; font: inherit; letter-spacing: .14em; }
+.focus-theme-flip .focus-stage .back-button,
+.focus-theme-nixie .focus-stage .back-button,
+.focus-theme-vapor .focus-stage .back-button { color: #3d463f; }
+.focus-theme-flip .focus-execution,
+.focus-theme-nixie .focus-execution,
+.focus-theme-vapor .focus-execution {
+  width: min(720px, 94%);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+.focus-theme-flip .focus-execution-context,
+.focus-theme-nixie .focus-execution-context,
+.focus-theme-vapor .focus-execution-context {
+  display: grid;
+  width: auto;
+  place-items: center;
+  gap: 7px;
+  text-align: center;
+  border-bottom: 0;
+}
+.focus-theme-flip .focus-execution-context h1,
+.focus-theme-nixie .focus-execution-context h1,
+.focus-theme-vapor .focus-execution-context h1 { font-size: clamp(19px, 2.3vw, 28px); }
+.focus-theme-flip .focus-arrangement-sheet,
+.focus-theme-nixie .focus-arrangement-sheet,
+.focus-theme-vapor .focus-arrangement-sheet,
+.focus-theme-flip .focus-arrangement-edit,
+.focus-theme-nixie .focus-arrangement-edit,
+.focus-theme-vapor .focus-arrangement-edit {
+  border-color: rgba(82,100,90,.2);
+  border-radius: 5px;
+  color: #354039;
+  background: rgba(243,240,231,.96);
+  box-shadow: 0 14px 40px rgba(50,55,47,.08);
+  backdrop-filter: blur(12px);
+}
+
+/* The formal timer is the only themed surface in the workspace. */
+.focus-theme-flip .focus-timepiece { background: transparent; border-color: transparent; box-shadow: none; }
+.focus-theme-nixie .focus-timepiece { background: transparent; border-color: transparent; box-shadow: none; }
+.focus-theme-vapor .focus-timepiece { background: transparent; border-color: transparent; box-shadow: none; }
+.focus-theme-cyber .focus-timepiece { background: transparent; border-color: transparent; box-shadow: none; }
+.focus-theme-cyber .focus-timepiece::before,
+.focus-theme-cyber .focus-timepiece::after { display: none; }
+.focus-theme-cyber .focus-timepiece-label { color: #35e2df; font-family: "Cascadia Mono", Consolas, monospace; }
+.focus-theme-cyber .focus-timepiece > small { color: #72aca4; }
+.focus-theme-flip .focus-timepiece::before,
+.focus-theme-flip .focus-timepiece::after,
+.focus-theme-nixie .focus-timepiece::before,
+.focus-theme-nixie .focus-timepiece::after,
+.focus-theme-vapor .focus-timepiece::before,
+.focus-theme-vapor .focus-timepiece::after { display: none; }
+
+/* Real split-flap construction: each character is a separate leaf with a
+   centre seam, a top/bottom face and a turn when that character changes. */
+.focus-theme-flip .ink-clepsydra strong { display: flex; align-items: center; gap: .045em; letter-spacing: 0; }
+.focus-theme-flip .ink-clepsydra strong > span {
+  position: relative;
+  display: inline-grid;
+  width: .62em;
+  height: 1.08em;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid #8d7554;
+  border-radius: 2px;
+  color: #f7f0e4;
+  background: linear-gradient(180deg, #4d463a 0 49%, #2f2c27 51% 100%);
+  box-shadow: 0 4px 0 #c7b79e, 0 9px 11px rgba(74,57,36,.16);
+  font: inherit;
+  text-shadow: 0 1px rgba(0,0,0,.26);
+}
+.focus-theme-flip .ink-clepsydra strong > span::before { position: absolute; top: 50%; right: 0; left: 0; height: 1px; background: rgba(0,0,0,.64); content: ""; }
+.focus-theme-flip .ink-clepsydra strong > span::after { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(255,255,255,.1), transparent 42%, rgba(0,0,0,.14)); content: ""; pointer-events: none; }
+.focus-theme-flip .ink-clepsydra strong > span:has(+ span) { }
+.focus-theme-flip .ink-clepsydra strong > span:nth-child(3) { width: .22em; border: 0; color: #8c6737; background: transparent; box-shadow: none; font-family: ui-monospace, monospace; }
+.focus-theme-flip .ink-clepsydra strong > span:nth-child(3)::before,
+.focus-theme-flip .ink-clepsydra strong > span:nth-child(3)::after { display: none; }
+
+/* Nixie tubes: independent glass envelopes, warm cathode glow and metal feet. */
+.focus-theme-nixie .ink-clepsydra strong { display: flex; align-items: center; gap: .06em; letter-spacing: 0; }
+.focus-theme-nixie .ink-clepsydra strong > span {
+  position: relative;
+  display: inline-grid;
+  width: .58em;
+  height: 1.1em;
+  place-items: center;
+  border: 1px solid rgba(255,173,104,.42);
+  border-radius: 45% 45% 22% 22%;
+  color: #ff9a45;
+  background: linear-gradient(90deg, rgba(255,255,255,.03), rgba(255,159,87,.12) 28%, transparent 54%, rgba(255,255,255,.08));
+  box-shadow: inset 0 0 18px rgba(255,112,31,.12), 0 0 8px rgba(255,81,0,.14);
+  font: inherit;
+  text-shadow: 0 0 4px #ffc47e, 0 0 14px #ff6a16, 0 0 26px rgba(255,58,0,.7);
+}
+.focus-theme-nixie .ink-clepsydra strong > span::after { position: absolute; right: 7%; bottom: -7px; left: 7%; height: 7px; border-radius: 0 0 5px 5px; background: linear-gradient(#776b60, #28221c); box-shadow: 0 3px 0 #17130f; content: ""; }
+.focus-theme-nixie .ink-clepsydra strong > span:nth-child(3) { width: .18em; height: 1em; border: 0; color: transparent; background: transparent; box-shadow: none; }
+.focus-theme-nixie .ink-clepsydra strong > span:nth-child(3)::before,
+.focus-theme-nixie .ink-clepsydra strong > span:nth-child(3)::after { position: absolute; right: auto; left: 50%; width: .12em; height: .12em; border-radius: 50%; background: #ff9a45; box-shadow: 0 0 7px #ff7b1d, 0 0 16px #ff4f00; content: ""; }
+.focus-theme-nixie .ink-clepsydra strong > span:nth-child(3)::before { top: 29%; }
+.focus-theme-nixie .ink-clepsydra strong > span:nth-child(3)::after { top: 66%; }
+
+/* Vaporwave digits keep the paper canvas but place a chromatic arcade panel
+   behind the numbers, with a restrained RGB-offset settle animation. */
+.focus-theme-vapor .ink-clepsydra strong { display: flex; align-items: center; gap: .015em; letter-spacing: 0; }
+.focus-theme-vapor .ink-clepsydra strong > span {
+  position: relative;
+  display: inline-grid;
+  min-width: .56em;
+  place-items: center;
+  color: #fff;
+  font: inherit;
+  text-shadow: 4px 3px #ec6aa8, -3px -2px #31e4df;
+}
+.focus-theme-vapor .ink-clepsydra strong > span:nth-child(3) { min-width: .2em; color: #fff18d; text-shadow: 2px 2px #ec6aa8, -1px -1px #31e4df; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .focus-theme-flip .ink-clepsydra strong > span:not(:nth-child(3)) { animation: split-flap-turn 560ms cubic-bezier(.2,.8,.2,1) both; transform-origin: center; }
+  .focus-theme-nixie .ink-clepsydra strong > span:not(:nth-child(3)) { animation: nixie-tube-fire 520ms ease-out both; }
+  .focus-theme-vapor .ink-clepsydra strong > span { animation: vapor-digit-settle 420ms ease-out both; }
+}
+@keyframes split-flap-turn { from { transform: perspective(280px) rotateX(-78deg); filter: brightness(1.45); } 62% { transform: perspective(280px) rotateX(8deg); } to { transform: perspective(280px) rotateX(0); filter: brightness(1); } }
+@keyframes nixie-tube-fire { from { opacity: .25; filter: blur(1.5px); } 45% { opacity: 1; filter: blur(0); } to { opacity: .96; } }
+@keyframes vapor-digit-settle { from { opacity: .25; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .focus-theme-flip .ink-clepsydra strong > span,
+  .focus-theme-nixie .ink-clepsydra strong > span,
+  .focus-theme-vapor .ink-clepsydra strong > span { animation: none !important; }
+}
+
+/* Main-workspace timer faces. These sit inside the ink canvas; the surrounding
+   stage, collapsed state and task rail intentionally remain unchanged. */
+.focus-themed-timer { display: grid; width: min(680px, 100%); justify-items: center; gap: 22px; }
+.focus-themed-timer-progress { position: relative; display: block; width: min(480px, 78%); height: 6px; overflow: visible; background: rgba(56,70,61,.12); }
+.focus-themed-timer-progress > i { position: relative; display: block; height: 100%; transition: width 700ms linear; }
+.focus-themed-timer-progress > i > b { position: absolute; top: 50%; right: -5px; width: 10px; height: 10px; border-radius: 50%; transform: translateY(-50%); }
+.focus-themed-timer-flip { padding: 24px 28px 20px; border: 1px solid rgba(122,98,63,.34); background: rgba(250,247,240,.72); box-shadow: 0 12px 0 rgba(121,96,61,.08), inset 0 1px #fff; }
+.focus-themed-timer-flip .flip-clock { gap: 7px; }
+.focus-themed-timer-flip .flip-digit { width: clamp(48px, 6.5vw, 78px); height: clamp(72px, 9vw, 108px); border-color: #88704f; border-radius: 2px; color: #f3eee4; background: linear-gradient(#4a4439 0 49.3%, #332f29 49.5%); box-shadow: 0 6px 0 #cab99e, 0 12px 18px rgba(71,55,36,.16); font-size: clamp(45px, 6vw, 70px); }
+.focus-themed-timer-flip .flip-colon { color: #9b835e; font-size: clamp(38px, 5vw, 60px); }
+.focus-themed-timer-flip .focus-themed-timer-progress { height: 6px; padding: 1px; border: 1px solid #b49a73; background: #e0d6c5; }
+.focus-themed-timer-flip .focus-themed-timer-progress > i { background: repeating-linear-gradient(90deg, #8c6737 0 12px, #c39a5f 12px 14px); }
+.focus-themed-timer-flip .focus-themed-timer-progress > i > b { background: #76552f; box-shadow: 0 0 0 3px rgba(118,85,47,.12); transform: translateY(-50%) rotate(45deg); }
+.focus-themed-timer-nixie { padding: 22px 28px 20px; border: 1px solid #603219; border-radius: 26px; background: rgba(19,10,5,.88); box-shadow: 0 0 0 7px rgba(255,112,34,.04), 0 0 34px rgba(255,77,0,.14); }
+.focus-themed-timer-nixie .nixie-clock { gap: 8px; }
+.focus-themed-timer-nixie .nixie-tube { width: clamp(42px, 5.3vw, 64px); height: clamp(76px, 9.2vw, 112px); border-color: rgba(255,173,104,.42); border-radius: 45% 45% 22% 22%; }
+.focus-themed-timer-nixie .nixie-tube b { font-size: clamp(54px, 7vw, 84px); }
+.focus-themed-timer-nixie .nixie-colon { height: clamp(58px, 7vw, 84px); }
+.focus-themed-timer-nixie .focus-themed-timer-progress { height: 8px; border: 1px solid #63351d; border-radius: 99px; background: #1c0c05; }
+.focus-themed-timer-nixie .focus-themed-timer-progress > i { border-radius: inherit; background: #ff7b1d; box-shadow: 0 0 12px #ff5a0a; }
+.focus-themed-timer-nixie .focus-themed-timer-progress > i > b { background: #ff9a45; box-shadow: 0 0 0 4px rgba(255,103,24,.16), 0 0 14px #ff5a0a; }
+.focus-themed-timer-vapor { padding: 23px 28px 20px; border: 1px solid rgba(109,245,240,.62); border-radius: 18px; background: linear-gradient(135deg, rgba(35,17,79,.84), rgba(96,39,114,.62)); box-shadow: 8px 8px 0 rgba(241,100,172,.24), inset 0 1px rgba(255,255,255,.16); }
+.focus-themed-timer-vapor .text-theme-clock { color: #fff; font-size: clamp(58px, 7.5vw, 88px); font-weight: 800; letter-spacing: .02em; text-shadow: 4px 4px #ec6aa8, -3px -2px #31e4df; }
+.focus-themed-timer-vapor .focus-themed-timer-progress { height: 7px; border-radius: 99px; background: rgba(31,18,74,.7); }
+.focus-themed-timer-vapor .focus-themed-timer-progress > i { border-radius: inherit; background: linear-gradient(90deg, #31e4df, #fff18d, #ef6eac); box-shadow: 0 0 12px rgba(49,228,223,.6); }
+.focus-themed-timer-vapor .focus-themed-timer-progress > i > b { background: #fff18d; box-shadow: 0 0 0 4px rgba(255,241,125,.18), 0 0 16px rgba(255,241,125,.65); }
+.focus-themed-timer-cyber {
+  padding: 24px 28px 20px;
+  border: 1px solid #3c565c;
+  border-radius: 3px;
+  background: #0a0f12;
+  box-shadow: inset 0 0 0 1px rgba(53,226,223,.08), 0 10px 24px rgba(6,14,17,.18);
+}
+.focus-themed-timer-cyber .text-theme-clock {
+  color: #eaff4f;
+  text-shadow: 0 0 8px rgba(218,255,66,.25);
+}
+.focus-themed-timer-cyber .focus-themed-timer-progress {
+  height: 6px;
+  border: 1px solid #29484c;
+  background: #101c20;
+}
+.focus-themed-timer-cyber .focus-themed-timer-progress > i { background: #35e2df; box-shadow: 0 0 10px rgba(53,226,223,.58); }
+.focus-themed-timer-cyber .focus-themed-timer-progress > i > b { background: #eaff4f; box-shadow: 0 0 0 3px rgba(234,255,79,.12), 0 0 10px rgba(234,255,79,.45); }
+.focus-themed-timer-cyber.resting { border-color: #276457; background: #071613; }
+.focus-themed-timer-cyber.resting .text-theme-clock { color: #55efd1; text-shadow: 0 0 8px rgba(85,239,209,.24); }
+.focus-themed-timer-cyber.resting .focus-themed-timer-progress > i { background: #55efd1; }
+.focus-themed-timer-cyber.resting .focus-themed-timer-progress > i > b { background: #b6ffe4; }
+.focus-themed-timer.empty { opacity: .62; }
+.focus-themed-timer.resting .flip-digit { color: #f5eadf; background: linear-gradient(#745548 0 49.3%, #64473d 49.5%); border-color: #604237; }
+.focus-themed-timer.resting .nixie-tube b { color: #78d3a2; -webkit-text-stroke-color: #78d3a2; text-shadow: 0 0 4px #a8edc1, 0 0 14px #42b77b; }
+.focus-themed-timer.resting .text-theme-clock { color: #b4fff0; text-shadow: 3px 3px #3fb6aa, -2px -1px #d27ca8; }
+
+@media (max-width: 560px) {
+  .focus-themed-timer { width: 100%; box-sizing: border-box; padding-inline: 14px; }
+  .focus-themed-timer-flip .flip-digit { width: clamp(38px, 13vw, 58px); height: clamp(60px, 19vw, 86px); font-size: clamp(36px, 11vw, 54px); }
+  .focus-themed-timer-nixie .nixie-tube { width: clamp(35px, 11vw, 48px); height: clamp(65px, 20vw, 86px); }
+  .focus-themed-timer-nixie .nixie-tube b { font-size: clamp(46px, 14vw, 64px); }
+  .focus-themed-timer-vapor .text-theme-clock { font-size: clamp(46px, 13vw, 68px); }
+}
+
+/* Collapsed focus strip: themed as a single compact instrument, while the
+   surrounding ink page and the right task rail stay on their default canvas. */
+.focus-theme-flip .focus-execution-minimized {
+  border-color: rgba(122,98,63,.28);
+  background: #eee5d6;
+  box-shadow: 5px 5px 0 rgba(121,96,61,.1), inset 0 1px #fff;
+}
+.focus-theme-flip .focus-execution-minimized-copy b { color: #3c352b; font-family: "Noto Serif SC", serif; }
+.focus-theme-flip .focus-execution-quiet { color: #76552f; border-color: #bca886 !important; }
+.focus-theme-nixie .focus-execution-minimized {
+  border-color: #603219;
+  background: #120703;
+  box-shadow: inset 0 0 24px rgba(255,92,17,.13), 0 0 24px rgba(255,81,0,.1);
+}
+.focus-theme-nixie .focus-execution-minimized-copy span { color: #ff9a45; }
+.focus-theme-nixie .focus-execution-minimized-copy strong,
+.focus-theme-nixie .focus-execution-minimized-copy b { color: #ff9a45; text-shadow: 0 0 5px #ff6a16, 0 0 16px rgba(255,58,0,.62); }
+.focus-theme-nixie .focus-execution-quiet { color: #ffc189; border-color: #87431e !important; }
+.focus-theme-vapor .focus-execution-minimized {
+  border-color: rgba(109,245,240,.55);
+  background: linear-gradient(135deg, rgba(35,17,79,.9), rgba(103,42,124,.76));
+  box-shadow: 6px 6px 0 rgba(241,100,172,.2), inset 0 1px rgba(255,255,255,.16);
+}
+.focus-theme-vapor .focus-execution-minimized-copy span { color: #fff18d; }
+.focus-theme-vapor .focus-execution-minimized-copy strong,
+.focus-theme-vapor .focus-execution-minimized-copy b { color: #fff; text-shadow: 3px 2px #ec6aa8, -2px -1px #31e4df; }
+.focus-theme-vapor .focus-execution-quiet { color: #e9ffff; border-color: rgba(109,245,240,.5) !important; }
+.focus-theme-cyber .focus-execution-minimized {
+  border-color: #3c565c;
+  background: #0a0f12;
+  box-shadow: inset 0 0 0 1px rgba(53,226,223,.08), 0 10px 24px rgba(6,14,17,.18);
+}
+.focus-theme-cyber .focus-execution-minimized-copy span { color: #72aca4; }
+.focus-theme-cyber .focus-execution-minimized-copy strong,
+.focus-theme-cyber .focus-execution-minimized-copy b { color: #eaff4f; text-shadow: 0 0 8px rgba(218,255,66,.25); }
+.focus-theme-cyber .focus-execution-minimized.resting .focus-execution-minimized-copy strong,
+.focus-theme-cyber .focus-execution-minimized.resting .focus-execution-minimized-copy b { color: #55efd1; text-shadow: 0 0 8px rgba(85,239,209,.24); }
+.focus-theme-cyber .focus-execution-quiet { color: #72aca4; border-color: #315458 !important; }
+
+/* Collapsed focus strip: reuse the same themed timer faces as the main
+   execution surface, scaled down without flattening them into plain text. */
+.focus-execution-minimized .ink-clepsydra.compact {
+  width: 220px;
+  min-height: 68px;
+  gap: 10px;
+  margin: 0;
+}
+.focus-execution-minimized .ink-clepsydra.compact strong {
+  font-size: 36px;
+  letter-spacing: -.035em;
+}
+.focus-execution-minimized .ink-clepsydra.compact .ink-clepsydra-line {
+  bottom: 1px;
+}
+.focus-execution-minimized .ink-clepsydra.compact .ink-clepsydra-line > i > b {
+  width: 9px;
+  height: 9px;
+  right: -4px;
+  top: 2px;
+}
+.focus-theme-flip .focus-execution-minimized .ink-clepsydra.compact strong {
+  font-size: 36px;
+}
+.focus-theme-nixie .focus-execution-minimized .ink-clepsydra.compact strong {
+  font-size: 38px;
+}
+.focus-theme-vapor .focus-execution-minimized .ink-clepsydra.compact strong {
+  font-size: 38px;
+}
+.focus-execution-minimized .focus-themed-timer.compact {
+  width: 230px;
+  gap: 8px;
+  padding: 9px 12px 8px;
+  box-sizing: border-box;
+}
+.focus-execution-minimized .focus-themed-timer.compact .focus-themed-timer-progress {
+  width: 100%;
+}
+.focus-execution-minimized .focus-themed-timer-flip.compact .flip-clock {
+  gap: 4px;
+}
+.focus-execution-minimized .focus-themed-timer-flip.compact .flip-digit {
+  width: 24px;
+  height: 38px;
+  font-size: 25px;
+}
+.focus-execution-minimized .focus-themed-timer-flip.compact .flip-colon {
+  font-size: 22px;
+}
+.focus-execution-minimized .focus-themed-timer-nixie.compact {
+  padding: 8px 12px 7px;
+}
+.focus-execution-minimized .focus-themed-timer-nixie.compact .nixie-clock {
+  gap: 4px;
+}
+.focus-execution-minimized .focus-themed-timer-nixie.compact .nixie-tube {
+  width: 28px;
+  height: 48px;
+}
+.focus-execution-minimized .focus-themed-timer-nixie.compact .nixie-tube b {
+  font-size: 35px;
+}
+.focus-execution-minimized .focus-themed-timer-nixie.compact .nixie-colon {
+  width: 8px;
+  height: 34px;
+}
+.focus-execution-minimized .focus-themed-timer-nixie.compact .nixie-colon::before,
+.focus-execution-minimized .focus-themed-timer-nixie.compact .nixie-colon::after {
+  left: 2px;
+  width: 5px;
+  height: 5px;
+}
+.focus-execution-minimized .focus-themed-timer-nixie.compact .nixie-colon::before { top: 8px; }
+.focus-execution-minimized .focus-themed-timer-nixie.compact .nixie-colon::after { bottom: 8px; }
+.focus-execution-minimized .focus-themed-timer-vapor.compact {
+  padding: 9px 12px 8px;
+}
+.focus-execution-minimized .focus-themed-timer-vapor.compact .text-theme-clock {
+  font-size: 38px;
+}
+.focus-execution-minimized .focus-themed-timer-cyber.compact {
+  padding: 9px 12px 8px;
+}
+.focus-execution-minimized .focus-themed-timer-cyber.compact .text-theme-clock {
+  font-size: 38px;
+}
+
+/* Mini windows and evaluation dialogs retain their own complete theme
+   treatment; their titlebars, controls and form sections are intentionally
+   not inherited from the ink workspace canvas. */
+.focus-mini.focus-theme-flip .focus-mini-body { align-content: start; padding-top: 56px; }
+.focus-mini.focus-theme-flip .focus-mini-heading { width: 100%; padding: 0 12px 12px; border-bottom: 2px solid #8f6f43; }
+.focus-mini.focus-theme-flip .focus-mini-heading span { color: #a06f36; font-family: ui-monospace, monospace; }
+.focus-mini.focus-theme-flip .focus-mini-heading strong { color: #3c352b; font-family: "Noto Serif SC", serif; }
+.focus-mini.focus-theme-flip .focus-mini-clock { padding: 18px 14px 14px; border: 1px solid #bda986; background: #eee5d6; box-shadow: 4px 4px 0 rgba(121,96,61,.1); }
+.focus-mini.focus-theme-flip .focus-mini-progress::before { background: #ae956e; }
+.focus-mini.focus-theme-flip .focus-mini-progress i::before { background: #76552f; }
+.focus-mini.focus-theme-flip .focus-mini-progress b { border-radius: 0; background: #76552f; transform: rotate(45deg); }
+.focus-mini.focus-theme-flip .focus-mini-controls button { border-radius: 1px; color: #76552f; border-color: #bca886; background: #eee5d6; }
+.focus-mini.focus-theme-flip .focus-mini-controls button.primary { color: #fffaf0; background: #6f5130; }
+.focus-mini.focus-theme-nixie .focus-mini-body { align-content: start; padding-top: 56px; }
+.focus-mini.focus-theme-nixie .focus-mini-heading { width: 100%; padding: 0 12px 12px; border-bottom: 1px solid #603219; }
+.focus-mini.focus-theme-nixie .focus-mini-heading span { color: #ff9a45; font-family: ui-monospace, monospace; }
+.focus-mini.focus-theme-nixie .focus-mini-heading strong { color: #ffd09b; font-family: "Arial Narrow", sans-serif; }
+.focus-mini.focus-theme-nixie .focus-mini-clock { padding: 18px 14px 14px; border: 1px solid #603219; border-radius: 16px; background: #120703; box-shadow: inset 0 0 24px rgba(255,92,17,.13); }
+.focus-mini.focus-theme-nixie .focus-mini-progress::before { background: rgba(255,140,66,.25); }
+.focus-mini.focus-theme-nixie .focus-mini-progress i::before { background: #ff7b1d; box-shadow: 0 0 8px rgba(255,91,0,.45); }
+.focus-mini.focus-theme-nixie .focus-mini-progress b { background: #ff9a45; box-shadow: 0 0 12px rgba(255,86,0,.8); }
+.focus-mini.focus-theme-nixie .focus-mini-controls button { border-radius: 99px; color: #ffc189; border-color: #87431e; background: rgba(255,103,24,.08); }
+.focus-mini.focus-theme-nixie .focus-mini-controls button.primary { color: #190b04; background: #ff9a3d; }
+.focus-mini.focus-theme-vapor .focus-mini-body { align-content: start; padding-top: 56px; }
+.focus-mini.focus-theme-vapor .focus-mini-heading { width: 100%; padding: 0 12px 12px; border-bottom: 1px solid rgba(109,245,240,.4); }
+.focus-mini.focus-theme-vapor .focus-mini-heading span { color: #fff18d; font-family: ui-monospace, monospace; }
+.focus-mini.focus-theme-vapor .focus-mini-heading strong { color: #fff; text-shadow: 2px 2px #ec6aa8; }
+.focus-mini.focus-theme-vapor .focus-mini-clock { padding: 18px 14px 14px; border: 1px solid rgba(109,245,240,.6); border-radius: 14px; background: linear-gradient(135deg, rgba(35,17,79,.84), rgba(96,39,114,.62)); box-shadow: 5px 5px 0 rgba(241,100,172,.2); }
+.focus-mini.focus-theme-vapor .focus-mini-progress::before { background: rgba(109,245,240,.26); }
+.focus-mini.focus-theme-vapor .focus-mini-progress i::before { background: #31e4df; }
+.focus-mini.focus-theme-vapor .focus-mini-progress b { background: #fff18d; box-shadow: 0 0 12px rgba(255,241,125,.55); }
+.focus-mini.focus-theme-vapor .focus-mini-controls button { border-radius: 99px; color: #e9ffff; border-color: rgba(109,245,240,.55); background: rgba(49,228,223,.12); }
+.focus-mini.focus-theme-vapor .focus-mini-controls button.primary { color: #291044; background: #fff18d; }
+
+/* Evaluation surfaces use the same visual systems as their timers, rather
+   than falling back to the generic paper form. */
+.focus-mini-evaluation.focus-theme-flip .focus-mini-evaluation-body,
+.themed-outcome-dialog.focus-theme-flip .themed-outcome-body { background: repeating-linear-gradient(0deg, rgba(142,113,70,.035) 0 1px, transparent 1px 7px); }
+.focus-mini-evaluation.focus-theme-flip .focus-evaluation-timeout,
+.themed-outcome-dialog.focus-theme-flip .focus-evaluation-timeout { color: #9a6f39; font-family: ui-monospace, monospace; }
+.focus-mini-evaluation.focus-theme-flip .focus-evaluation-footer { padding-top: 10px; border-top: 2px solid #8f6f43; }
+.focus-mini-evaluation.focus-theme-flip .focus-evaluation-footer button,
+.themed-outcome-dialog.focus-theme-flip .focus-evaluation-footer button { box-shadow: 4px 4px 0 rgba(112,87,53,.12); }
+.focus-mini-evaluation.focus-theme-nixie .focus-mini-evaluation-body,
+.themed-outcome-dialog.focus-theme-nixie .themed-outcome-body { background: radial-gradient(circle at 50% 0, rgba(255,106,22,.08), transparent 46%), #100804; }
+.focus-mini-evaluation.focus-theme-nixie .focus-evaluation-timeout,
+.themed-outcome-dialog.focus-theme-nixie .focus-evaluation-timeout { color: #e89a62; font-family: ui-monospace, monospace; }
+.focus-mini-evaluation.focus-theme-nixie .focus-evaluation-footer { padding-top: 14px; border-top: 1px solid #603219; }
+.focus-mini-evaluation.focus-theme-nixie .focus-evaluation-footer p,
+.themed-outcome-dialog.focus-theme-nixie .focus-evaluation-footer p { color: #ca8f62; }
+.focus-mini-evaluation.focus-theme-vapor .focus-mini-evaluation-body,
+.themed-outcome-dialog.focus-theme-vapor .themed-outcome-body { background: linear-gradient(135deg, rgba(31,17,73,.9), rgba(103,42,124,.68)); }
+.focus-mini-evaluation.focus-theme-vapor .focus-evaluation-timeout,
+.themed-outcome-dialog.focus-theme-vapor .focus-evaluation-timeout { color: #b8ffff; font-family: ui-monospace, monospace; }
+.focus-mini-evaluation.focus-theme-vapor .focus-evaluation-footer { padding-top: 14px; border-top: 1px solid rgba(109,245,240,.38); }
+.focus-mini-evaluation.focus-theme-vapor .focus-evaluation-footer p,
+.themed-outcome-dialog.focus-theme-vapor .focus-evaluation-footer p { color: #d5c5ff; }

@@ -66,7 +66,7 @@ describe("FocusTimerWorker", () => {
     expect(execute).toHaveBeenCalledTimes(11);
   });
 
-  it("auto-starts an unconfirmed task at the fixed start without recording failure", async () => {
+  it("moves an unconfirmed task into late-start waiting without recording focus", async () => {
     const job: FocusTimerJob = {
       id: "job-1", focusSessionId: "session-1", kind: "confirmation_timeout",
       expectedSessionVersion: 1, dueAt: now, attempts: 1
@@ -75,18 +75,16 @@ describe("FocusTimerWorker", () => {
       .mockResolvedValueOnce({ rows: [job] })
       .mockResolvedValueOnce({ rows: [{ id: "session-1", taskId: "task-1", state: "reminded", version: 1, startedAt: null, activeSinceAt: null }] })
       .mockResolvedValueOnce({ rows: [{ id: "task-1", lifecycleStatus: "open", recordKind: "formal", startAt: new Date("2026-07-29T01:00:00.000Z"), endAt: new Date("2026-07-29T03:00:00.000Z") }] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [{ id: "task-1" }] })
-      .mockResolvedValueOnce({ rows: [{ id: "task-1" }] })
-      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: "session-1" }] })
       .mockResolvedValueOnce({ rows: [] });
     const worker = new FocusTimerWorker({ execute, transaction: async (callback: (db: unknown) => unknown) => callback({ execute }) } as unknown as AppDatabase);
     await expect(worker.processNext(now)).resolves.toBe("completed");
-    expect(execute).toHaveBeenCalledTimes(9);
+    expect(execute).toHaveBeenCalledTimes(5);
+    expect(queryText(execute.mock.calls[3]?.[0])).toContain("state = 'awaiting_late_start'");
+    expect(queryText(execute.mock.calls[3]?.[0])).toContain("active_since_at = NULL");
   });
 
-  it("starts only an explicitly armed session and activates its task", async () => {
+  it("moves a legacy armed session into late-start waiting at the fixed start", async () => {
     const job: FocusTimerJob = {
       id: "job-2", focusSessionId: "session-2", kind: "preparation_complete",
       expectedSessionVersion: 2, dueAt: now, attempts: 1
@@ -95,33 +93,12 @@ describe("FocusTimerWorker", () => {
       .mockResolvedValueOnce({ rows: [job] })
       .mockResolvedValueOnce({ rows: [{ id: "session-2", taskId: "task-2", state: "armed", version: 2, startedAt: null, activeSinceAt: null, focusStructureId: null }] })
       .mockResolvedValueOnce({ rows: [{ id: "task-2", lifecycleStatus: "open", recordKind: "formal", startAt: now, endAt: new Date("2026-07-29T03:00:00.000Z") }] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ id: "session-2" }] })
-      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] });
     const worker = new FocusTimerWorker({ execute, transaction: async (callback: (db: unknown) => unknown) => callback({ execute }) } as unknown as AppDatabase);
     await expect(worker.processNext(now)).resolves.toBe("completed");
-    expect(execute).toHaveBeenCalledTimes(8);
-  });
-
-  it("refuses to start a second running session", async () => {
-    const job: FocusTimerJob = {
-      id: "job-blocked", focusSessionId: "session-blocked", kind: "preparation_complete",
-      expectedSessionVersion: 2, dueAt: now, attempts: 1
-    };
-    const execute = vi.fn()
-      .mockResolvedValueOnce({ rows: [job] })
-      .mockResolvedValueOnce({ rows: [{ id: "session-blocked", taskId: "task-blocked", state: "armed", version: 2, focusStructureId: null }] })
-      .mockResolvedValueOnce({ rows: [{ id: "task-blocked", lifecycleStatus: "open", recordKind: "formal", startAt: now, endAt: new Date("2026-07-29T03:00:00.000Z") }] })
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [{ id: "another-running-session" }] })
-      .mockResolvedValueOnce({ rows: [] });
-    const worker = new FocusTimerWorker({ execute, transaction: async (callback: (db: unknown) => unknown) => callback({ execute }) } as unknown as AppDatabase);
-
-    await expect(worker.processNext(now)).resolves.toBe("retry");
-    expect(execute).toHaveBeenCalledTimes(6);
-    expect(execute.mock.calls.map((call) => queryText(call[0])).join("\n")).not.toContain("SET state = 'running'");
+    expect(execute).toHaveBeenCalledTimes(5);
+    expect(queryText(execute.mock.calls[3]?.[0])).toContain("state = 'awaiting_late_start'");
   });
 
   it("cancels stale jobs without mutating a newer session", async () => {

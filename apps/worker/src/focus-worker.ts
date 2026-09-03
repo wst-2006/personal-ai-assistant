@@ -94,6 +94,7 @@ export class FocusTimerWorker {
         SELECT id, task_id AS "taskId", state, version,
           started_at AS "startedAt", active_since_at AS "activeSinceAt",
           paused_at AS "pausedAt",
+          planned_start_at AS "plannedStartAt",
           planned_end_at AS "plannedEndAt", raw_active_seconds AS "rawActiveSeconds",
           focus_structure_id AS "focusStructureId", current_segment_position AS "currentSegmentPosition"
         FROM focus_sessions WHERE id = ${job.focusSessionId} LIMIT 1
@@ -129,7 +130,8 @@ export class FocusTimerWorker {
         if (task.endAt && new Date(task.endAt).getTime() <= now.getTime()) {
           const stopped = await db.execute(sql`
             UPDATE focus_sessions
-            SET state = 'stopped_no_response', ended_at = ${now}, active_since_at = NULL,
+            SET state = 'ended', ended_at = ${now}, active_since_at = NULL,
+              raw_active_seconds = 0, effective_focus_seconds = 0,
               stopped_reason = '固定结束时间已过，未进入专注', version = version + 1, updated_at = ${now}
             WHERE id = ${session.id} AND version = ${job.expectedSessionVersion} AND state = 'scheduled'
             RETURNING id
@@ -227,89 +229,117 @@ export class FocusTimerWorker {
           await this.cancelJob(db, job.id, "task cannot start focus anymore", now);
           return "cancelled";
         }
-        await db.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended('personal-ai-focus-running', 0))`);
-        const blockingResult = await db.execute(sql`
-          SELECT id FROM focus_sessions
-          WHERE id <> ${session.id} AND state IN ('running', 'paused')
-          LIMIT 1
-        `);
-        if (blockingResult.rows.length > 0) throw new Error("another focus session is already running");
-        const startedResult = await db.execute(sql`
-          UPDATE focus_sessions
-          SET state = 'running', started_at = ${now}, active_since_at = ${now},
-            preparing_ends_at = NULL, confirmation_deadline_at = NULL,
-            version = version + 1, updated_at = ${now}
-          WHERE id = ${session.id} AND version = ${job.expectedSessionVersion}
-            AND state IN ('preparing', 'reminded', 'armed')
-          RETURNING id
-        `);
-        if (startedResult.rows.length === 0) throw new Error("focus session version changed while starting");
-        const activationResult = await db.execute(sql`
-          UPDATE tasks
-          SET lifecycle_status = 'active', version = version + 1, updated_at = ${now}
-          WHERE id = ${task.id} AND lifecycle_status = 'open'
-          RETURNING id
-        `);
-        if (activationResult.rows.length > 0) {
-          await db.execute(sql`
-            INSERT INTO task_lifecycle_events (id, task_id, from_status, to_status, source, reason)
-            VALUES (gen_random_uuid(), ${task.id}, 'open', 'active', 'system', 'focus preparation completed')
-          `);
-        }
-        if (session.focusStructureId) {
+        if (session.state === "armed") {
+          if (!session.focusStructureId) {
+            // Legacy armed sessions may predate persisted structures. Keep them
+            // evaluable and waiting rather than inventing counted focus time.
+            await db.execute(sql`
+              UPDATE focus_sessions
+              SET state = 'awaiting_late_start', started_at = NULL, active_since_at = NULL,
+                confirmation_deadline_at = NULL, version = version + 1, updated_at = ${now}
+              WHERE id = ${session.id} AND version = ${job.expectedSessionVersion} AND state = 'armed'
+            `);
+            await this.completeJob(db, job.id, now);
+            return "completed";
+          }
           const structureResult = await db.execute(sql`
             SELECT total_start_at AS "totalStartAt"
             FROM focus_structures WHERE id = ${session.focusStructureId} LIMIT 1
           `);
           const segmentsResult = await db.execute(sql`
             SELECT position, segment_type AS "segmentType", duration_minutes AS "durationMinutes"
-            FROM focus_structure_segments WHERE focus_structure_id = ${session.focusStructureId}
+            FROM focus_structure_segments
+            WHERE focus_structure_id = ${session.focusStructureId}
             ORDER BY position
           `);
           const structure = structureResult.rows[0] as { totalStartAt: Date } | undefined;
-          const segments = segmentsResult.rows as Array<{ position: number; segmentType: string; durationMinutes: number }>;
-          const position = structure ? locateFocusSegment({
-            structureStartAt: new Date(structure.totalStartAt),
-            segments,
-            now
-          }) : null;
-          if (position) {
-            const positionedResult = await db.execute(sql`
+          const segments = segmentsResult.rows as Array<{ position: number; segmentType: "focus" | "break"; durationMinutes: number }>;
+          if (!structure || !structure.totalStartAt || segments.length === 0) {
+            // Legacy armed sessions may predate persisted structures. Keep them
+            // evaluable and waiting rather than inventing counted focus time.
+            const waitingResult = await db.execute(sql`
               UPDATE focus_sessions
-              SET current_segment_position = ${position.position}, current_segment_started_at = ${position.plannedStartedAt},
-                current_segment_elapsed_seconds = ${position.elapsedSeconds}, updated_at = ${now}
-              WHERE id = ${session.id} AND version = ${job.expectedSessionVersion + 1} AND state = 'running'
+              SET state = 'awaiting_late_start', started_at = NULL, active_since_at = NULL,
+                confirmation_deadline_at = NULL, version = version + 1, updated_at = ${now}
+              WHERE id = ${session.id} AND version = ${job.expectedSessionVersion} AND state = 'armed'
               RETURNING id
             `);
-            if (positionedResult.rows.length === 0) throw new Error("focus session version changed while positioning segment");
-            if (position.position > 0) {
-              await db.execute(sql`
-                UPDATE focus_session_segment_runs
-                SET elapsed_seconds = 0, started_at = NULL, completed_at = NULL,
-                  skipped_at = ${now}, updated_at = ${now}
-                WHERE focus_session_id = ${session.id} AND position < ${position.position}
-              `);
-            }
-            await db.execute(sql`
-              UPDATE focus_session_segment_runs
-              SET elapsed_seconds = 0, started_at = ${now}, completed_at = NULL,
-                skipped_at = NULL, updated_at = ${now}
-              WHERE focus_session_id = ${session.id} AND position = ${position.position}
-            `);
-            const dueAt = focusSegmentEndAt({
-              structureStartAt: new Date(structure!.totalStartAt),
-              segments,
-              position: position.position
-            });
-            if (dueAt && dueAt > now) {
-              await db.execute(sql`
-                INSERT INTO focus_timer_jobs (id, focus_session_id, kind, expected_session_version, due_at, status, attempts, created_at, updated_at)
-                VALUES (gen_random_uuid(), ${session.id}, 'segment_transition', ${job.expectedSessionVersion + 1}, ${dueAt}, 'pending', 0, ${now}, ${now})
-                ON CONFLICT (focus_session_id, kind) WHERE status IN ('pending', 'processing') DO NOTHING
-              `);
-            }
+            await this.completeJob(db, job.id, now);
+            return "completed";
           }
+          // The final rest of the previous task and this task's fixed start
+          // can be due in the same worker tick. Serialize the hand-off so two
+          // sessions can never become running at once.
+          await db.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended('personal-ai-focus-running', 0))`);
+          const blockingResult = await db.execute(sql`
+            SELECT id FROM focus_sessions
+            WHERE id <> ${session.id} AND state IN ('running', 'paused')
+            LIMIT 1
+          `);
+          if (blockingResult.rows.length > 0) throw new Error("another focus session is already running");
+          const startAt = task.startAt ? new Date(task.startAt) : now;
+          const position = structure && segments.length > 0
+            ? locateFocusSegment({ structureStartAt: structure.totalStartAt, segments, now: startAt })
+            : null;
+          if (!position || segments[position.position]?.segmentType !== "focus") {
+            await this.cancelJob(db, job.id, "no focus segment remains at the scheduled start", now);
+            return "cancelled";
+          }
+          const startedResult = await db.execute(sql`
+            UPDATE focus_sessions
+            SET state = 'running', started_at = ${startAt}, active_since_at = ${startAt},
+              preparing_ends_at = NULL, confirmation_deadline_at = NULL,
+              current_segment_position = ${position.position},
+              current_segment_started_at = ${position.plannedStartedAt},
+              current_segment_elapsed_seconds = ${position.elapsedSeconds},
+              version = version + 1, updated_at = ${now}
+            WHERE id = ${session.id} AND version = ${job.expectedSessionVersion} AND state = 'armed'
+            RETURNING version
+          `);
+          if (startedResult.rows.length === 0) throw new Error("focus session version changed while starting armed task");
+          await db.execute(sql`
+            UPDATE tasks
+            SET lifecycle_status = 'active', version = version + 1, updated_at = ${now}
+            WHERE id = ${session.taskId} AND lifecycle_status = 'open'
+          `);
+          await db.execute(sql`
+            UPDATE focus_session_segment_runs
+            SET started_at = ${position.plannedStartedAt}, updated_at = ${now}
+            WHERE focus_session_id = ${session.id} AND position = ${position.position}
+          `);
+          const nextDueAt = focusSegmentEndAt({
+            structureStartAt: structure!.totalStartAt,
+            segments,
+            position: position.position
+          });
+          if (!nextDueAt) throw new Error("armed task segment boundary is missing");
+          await db.execute(sql`
+            INSERT INTO focus_timer_jobs (
+              id, focus_session_id, kind, expected_session_version, due_at,
+              status, attempts, created_at, updated_at
+            ) VALUES (
+              gen_random_uuid(), ${session.id}, 'segment_transition', ${job.expectedSessionVersion + 1}, ${nextDueAt},
+              'pending', 0, ${now}, ${now}
+            )
+            ON CONFLICT (focus_session_id, kind) WHERE status IN ('pending', 'processing') DO UPDATE
+            SET expected_session_version = EXCLUDED.expected_session_version,
+                due_at = EXCLUDED.due_at, status = 'pending', attempts = 0, updated_at = EXCLUDED.updated_at
+          `);
+          await this.completeJob(db, job.id, now);
+          return "completed";
         }
+        // Reaching the fixed start time only ends preparation. It must never
+        // create active focus time without an explicit user confirmation.
+        const waitingResult = await db.execute(sql`
+          UPDATE focus_sessions
+          SET state = 'awaiting_late_start', started_at = NULL, active_since_at = NULL,
+            preparing_ends_at = NULL, confirmation_deadline_at = NULL,
+            version = version + 1, updated_at = ${now}
+          WHERE id = ${session.id} AND version = ${job.expectedSessionVersion}
+            AND state IN ('preparing', 'reminded', 'armed')
+          RETURNING id
+        `);
+        if (waitingResult.rows.length === 0) throw new Error("focus session version changed while entering late-start wait");
         await this.completeJob(db, job.id, now);
         return "completed";
       }
@@ -488,6 +518,7 @@ type WorkerFocusSession = {
   activeSinceAt: Date | null;
   pausedAt: Date | null;
   plannedEndAt: Date | null;
+  plannedStartAt: Date | null;
   rawActiveSeconds: number;
   focusStructureId: string | null;
   currentSegmentPosition: number | null;

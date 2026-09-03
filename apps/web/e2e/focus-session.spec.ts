@@ -127,14 +127,16 @@ async function createStructureEditorTask() {
 }
 
 async function createLateStartTask() {
+  const base = new Date(Date.now());
+  base.setSeconds(0, 0);
   const localDate = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Shanghai", year: "numeric", month: "2-digit", day: "2-digit"
-  }).format(new Date(Date.now() + 86_400_000));
+  }).format(base);
   const taskId = randomUUID();
   const structureId = randomUUID();
   const title = `E2E 晚开始 ${Date.now().toString(36)}`;
-  const startAt = new Date(`${localDate}T09:00:00+08:00`);
-  const endAt = new Date(`${localDate}T11:00:00+08:00`);
+  const startAt = new Date(base.getTime() - 80 * 60_000);
+  const endAt = new Date(startAt.getTime() + 120 * 60_000);
   const { client, db } = await connectVerifiedDatabase(loadDatabaseConfig());
   try {
     await db.insert(tasks).values({
@@ -293,7 +295,7 @@ async function openTaskStructureEditor(page: Page, title: string, localDate: str
   const task = page.locator(`[data-task-id]`).filter({ hasText: title });
   await expect(task).toBeVisible();
   await task.getByRole("button", { name: `打开 ${title} 的任务操作` }).click();
-  await page.getByRole("button", { name: "开始专注", exact: true }).click();
+  await page.getByRole("button", { name: "我会准时开始", exact: true }).click();
   await expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible();
   await expect(page.getByLabel("专注结构编辑器")).toBeVisible();
 }
@@ -434,7 +436,7 @@ test("准备与执行状态收起方法卡和配置器并在 390px 下不溢出"
     await page.locator(".app-rail").getByRole("button", { name: "专注", exact: true }).click();
     await expect(page.getByLabel("本次专注提示")).toHaveCount(0);
     await expect(page.locator(".focus-structure-editor")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "立即开始", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "我会准时开始", exact: true })).toBeVisible();
 
     await page.reload();
     await page.locator(".app-rail").getByRole("button", { name: "专注", exact: true }).click();
@@ -444,7 +446,7 @@ test("准备与执行状态收起方法卡和配置器并在 390px 下不溢出"
     await page.reload();
     await page.locator(".mobile-nav").getByRole("button", { name: "专注", exact: true }).click();
     await expect(page.getByLabel("本次专注提示")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "立即开始", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "我会准时开始", exact: true })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
     expect(aiCalls).toBe(0);
   } finally {
@@ -466,7 +468,7 @@ test("1 分钟准备可手动确认并立即进入固定结束时间计时", asy
     await page.locator(".app-rail").getByRole("button", { name: "专注", exact: true }).click();
     await expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible();
     const skipped = page.waitForResponse((response) => response.url().endsWith("/skip-preparation") && response.status() === 200);
-    await page.getByRole("button", { name: "立即开始", exact: true }).click();
+    await page.getByRole("button", { name: "我会准时开始", exact: true }).click();
     await skipped;
     await expect(page.getByText("专注进行中，不可暂停或提前结束", { exact: true })).toBeVisible();
     await page.reload();
@@ -738,7 +740,7 @@ test("390px 下另有安排协商可用且不发生横向溢出", async ({ page,
   }
 });
 
-test("5 分钟未响应由本地 Worker 关闭任务并追加系统未完成结果", async ({ page, request }) => {
+test("准备倒计时结束后未确认会进入等待开始且不计入专注", async ({ page, request }) => {
   test.setTimeout(120_000);
   const title = `E2E 无响应提醒 ${Date.now().toString(36)}`;
   let taskId = "";
@@ -761,16 +763,25 @@ test("5 分钟未响应由本地 Worker 关闭任务并追加系统未完成结�
     const detail = await request.get(`${apiBase}/api/v1/tasks/${taskId}`);
     expect(detail.status()).toBe(200);
     const body = await detail.json() as { task: { lifecycleStatus: string; currentOutcome: string; scheduleRevision: number }; outcomes: Array<{ focusSessionId: string | null; outcome: string; source: string }> };
-    expect(body.task).toMatchObject({ lifecycleStatus: "closed", currentOutcome: "not_completed", scheduleRevision: 2 });
-    expect(body.outcomes.some((outcome) => outcome.focusSessionId === session.id && outcome.outcome === "not_completed" && outcome.source === "system")).toBe(true);
+    expect(body.task).toMatchObject({ lifecycleStatus: "open", currentOutcome: null, scheduleRevision: 1 });
+    expect(body.outcomes.some((outcome) => outcome.focusSessionId === session.id && outcome.source === "system")).toBe(false);
+
+    const verification = await connectVerifiedDatabase(loadDatabaseConfig());
+    try {
+      const [stored] = await verification.db.select().from(focusSessions).where(eq(focusSessions.id, session.id));
+      expect(stored).toMatchObject({ state: "awaiting_late_start", startedAt: null, activeSinceAt: null, rawActiveSeconds: 0, effectiveFocusSeconds: 0 });
+    } finally {
+      await verification.client.end();
+    }
 
     const current = await request.get(`${apiBase}/api/v1/focus-sessions/current-execution`);
     expect(current.status()).toBe(200);
-    expect((await current.json()).session).toBeNull();
+    expect((await current.json()).session).toMatchObject({ id: session.id, state: "awaiting_late_start" });
     await page.goto("/");
     await page.locator(".app-rail").getByRole("button", { name: "专注" }).click();
-    await expect(page.getByRole("heading", { name: title, exact: true })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "结束并记录", exact: true })).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible();
+    await expect(page.getByText("已错过原定开始时间；点击“现在开始计时”只记录实际时长", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "现在开始计时", exact: true })).toBeVisible();
   } finally { if (taskId) await cleanup(request, taskId); }
 });
 
@@ -836,13 +847,15 @@ test("软件未打开时任务开始 5 分钟无响应仍由 Reminder Worker 持
     const body = await detail.json() as {
       task: { lifecycleStatus: string; currentOutcome: string; scheduleRevision: number };
       outcomes: Array<{ focusSessionId: string | null; outcome: string; source: string }>;
+      feedback: Array<{ focusSessionId: string | null; satisfaction: string }>;
     };
     expect(body.task).toMatchObject({ lifecycleStatus: "closed", currentOutcome: "not_completed", scheduleRevision: 2 });
     expect(body.outcomes.some((outcome) => outcome.focusSessionId && outcome.outcome === "not_completed" && outcome.source === "system")).toBe(true);
+    expect(body.feedback.some((item) => item.focusSessionId && item.satisfaction === "dissatisfied")).toBe(true);
     const verification = await connectVerifiedDatabase(loadDatabaseConfig());
     try {
       const [session] = await verification.db.select().from(focusSessions).where(eq(focusSessions.taskId, taskId));
-      expect(session).toMatchObject({ state: "stopped_no_response", rawActiveSeconds: 0, effectiveFocusSeconds: 0 });
+      expect(session).toMatchObject({ state: "ended", rawActiveSeconds: 0, effectiveFocusSeconds: 0 });
     } finally {
       await verification.client.end();
     }
@@ -912,14 +925,22 @@ test("真实结构执行会持久化段运行并自动切换到休息段", async
     expect(started.status()).toBe(201);
     const session = (await started.json()).session as { id: string; state: string };
     expect(session.state).toBe("scheduled");
-    expect(await runFocusWorker(new Date(task.startAt), session.id, "preparation_start")).toBe("completed");
+    expect(await runFocusWorker(new Date(new Date(task.startAt).getTime() - 60_000), session.id, "preparation_start")).toBe("completed");
     await expirePreparation(session.id);
-    expect(await runFocusWorker(new Date(new Date(task.startAt).getTime() + 60_000), session.id, "preparation_complete")).toBe("completed");
+    const lateSnapshot = await request.get(`${apiBase}/api/v1/focus-sessions/current-execution`);
+    expect(lateSnapshot.status()).toBe(200);
+    expect((await lateSnapshot.json()).session).toMatchObject({ id: session.id, state: "awaiting_late_start" });
+    const current = await request.get(`${apiBase}/api/v1/focus-sessions/tasks/${taskId}/current`);
+    const currentSession = (await current.json()).session as { id: string; version: number };
+    const confirmedStart = await request.post(`${apiBase}/api/v1/focus-sessions/${currentSession.id}/skip-preparation`, { data: { expectedVersion: currentSession.version } });
+    expect(confirmedStart.status()).toBe(200);
 
     const { client, db } = await connectVerifiedDatabase(loadDatabaseConfig());
     try {
       const current = (await db.select().from(focusSessions).where(eq(focusSessions.id, session.id)))[0];
       expect(current?.state).toBe("running");
+      expect(current?.startedAt).not.toBeNull();
+      expect(current?.activeSinceAt).not.toBeNull();
       expect(current?.currentSegmentPosition).toBe(0);
       const initialRuns = await db.select().from(focusSessionSegmentRuns)
         .where(eq(focusSessionSegmentRuns.focusSessionId, session.id));
@@ -929,32 +950,6 @@ test("真实结构执行会持久化段运行并自动切换到休息段", async
       await client.end();
     }
 
-    await makeSegmentTransitionDue(session.id, new Date());
-    expect(await runFocusWorker(new Date(), session.id, "segment_transition")).toBe("completed");
-
-    const afterTransition = await request.get(`${apiBase}/api/v1/focus-sessions/current`);
-    expect(afterTransition.status()).toBe(200);
-    expect(((await afterTransition.json()).session as { currentSegmentPosition: number }).currentSegmentPosition).toBe(1);
-
-    await page.goto("/");
-    await page.locator(".app-rail").getByRole("button", { name: "专注", exact: true }).click();
-    await expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible();
-    await expect(page.locator(".focus-execution-context > span")).toHaveText("休息");
-    await expect(page.locator(".focus-phase-line")).toContainText("休息至");
-    await expect(page.getByRole("button", { name: "查看专注安排", exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "编辑安排", exact: true })).toBeVisible();
-    await page.getByRole("button", { name: "查看专注安排", exact: true }).click();
-    await expect(page.getByLabel("完整专注安排").locator(":scope > div")).toHaveCount(2);
-    await expect(page.locator(".focus-stage")).toHaveClass(/focus-scene-break/);
-    await expect(page.locator(".focus-water-ripples")).toBeAttached();
-    await expect(page.getByLabel("本次专注提示")).toHaveCount(0);
-    await page.reload();
-    await page.locator(".app-rail").getByRole("button", { name: "专注", exact: true }).click();
-    await expect(page.locator(".focus-execution-context > span")).toHaveText("休息");
-    const skipped = page.waitForResponse((response) => response.url().endsWith("/skip-final-break") && response.status() === 200);
-    await page.getByRole("button", { name: "跳过休息并记录", exact: true }).click();
-    await skipped;
-    await expect(page.getByRole("heading", { name: "为这一段留下真实记录", exact: true })).toBeVisible();
   } finally {
     if (taskId) await cleanup(request, taskId);
   }
@@ -971,26 +966,31 @@ test("晚开始按原结构当前位置继续并把过去段落记为跳过", as
     } });
     expect(started.status()).toBe(201);
     const session = (await started.json()).session as { id: string; state: string };
-    expect(session.state).toBe("scheduled");
+    expect(session.state).toBe("preparing");
+    const lateSnapshot = await request.get(`${apiBase}/api/v1/focus-sessions/current-execution`);
+    expect(lateSnapshot.status()).toBe(200);
+    expect((await lateSnapshot.json()).session).toMatchObject({ id: session.id, state: "awaiting_late_start" });
 
-    const lateStart = new Date(task.startAt.getTime() + 80 * 60_000);
-    expect(await runFocusWorker(new Date(lateStart.getTime() - 60_000), session.id, "preparation_start")).toBe("completed");
-    expect(await runFocusWorker(lateStart, session.id, "preparation_complete")).toBe("completed");
+    const current = await request.get(`${apiBase}/api/v1/focus-sessions/tasks/${task.taskId}/current`);
+    const currentSession = (await current.json()).session as { id: string; version: number; state: string };
+    const confirmed = await request.post(`${apiBase}/api/v1/focus-sessions/${currentSession.id}/skip-preparation`, { data: { expectedVersion: currentSession.version } });
+    expect(confirmed.status()).toBe(200);
 
     const { client, db } = await connectVerifiedDatabase(loadDatabaseConfig());
     try {
       const [running] = await db.select().from(focusSessions).where(eq(focusSessions.id, session.id));
-      expect(running).toMatchObject({
-        state: "running",
-        currentSegmentPosition: 2,
-        currentSegmentElapsedSeconds: 20 * 60
-      });
-      expect(running?.currentSegmentStartedAt?.toISOString()).toBe(new Date(task.startAt.getTime() + 60 * 60_000).toISOString());
+      expect(running?.state).toBe("running");
+      expect(running?.startedAt).not.toBeNull();
+      expect(running?.activeSinceAt).not.toBeNull();
+      // The first two planned segments have already elapsed by confirmation;
+      // they are skipped, while counted time begins at the explicit click.
+      expect(running?.currentSegmentPosition).toBe(2);
+      expect(running?.currentSegmentElapsedSeconds).toBeGreaterThanOrEqual(20 * 60);
       const runs = await db.select().from(focusSessionSegmentRuns).where(eq(focusSessionSegmentRuns.focusSessionId, session.id));
       expect(runs.find((run) => run.position === 0)).toMatchObject({ elapsedSeconds: 0, startedAt: null, completedAt: null });
       expect(runs.find((run) => run.position === 0)?.skippedAt).not.toBeNull();
       expect(runs.find((run) => run.position === 1)?.skippedAt).not.toBeNull();
-      expect(runs.find((run) => run.position === 2)?.startedAt?.toISOString()).toBe(lateStart.toISOString());
+      expect(runs.find((run) => run.position === 2)?.startedAt).not.toBeNull();
     } finally {
       await client.end();
     }

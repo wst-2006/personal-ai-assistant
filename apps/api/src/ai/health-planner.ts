@@ -25,7 +25,7 @@ const HEALTH_PLAN_OUTPUT_CONTRACT = [
   "每个日对象的 nutritionDirection、proteinRangeGrams、nutritionTargets、hydrationGuidance、mealExamples、proteinRotationSources、foodReference、fruitOptions、plateGuidance、seasonalVegetables、seasonalGuidance、seasonalPoem 全部必须出现。",
   "所有 minimum 必须小于或等于 maximum；蛋白质 1-300g，碳水/脂肪/纤维 0-1000g，饮水 0-10L，运动时长 minimum 0-240 分钟、maximum 0-300 分钟。",
   "macroRatioPercent 的 protein、carbohydrate、fat 可为整数或小数，均在 0-100，三项合计必须在 95-105。",
-  "mealExamples 的 breakfast/lunch/dinner 各 1-6 条，snack 0-5 条；proteinRotationSources 1-5 条；三类 foodReference 各 1-10 条；fruitOptions 2-6 条。",
+  "mealExamples 的 breakfast/lunch/dinner 各 1-6 条，snack 0-5 条；proteinRotationSources 1-5 条；foodReference 的 proteinOptions、fiberOptions、carbOptions、fatOptions 各 1-10 条；fruitOptions 2-6 条。",
   "不得返回 movement、exercise、training、workout 或任何训练计划字段；运动安排由用户自己管理。",
   "不得省略字段，不得把数组写成字符串，不得把数字或布尔值写成解释性文字。"
 ].join("\n");
@@ -57,6 +57,7 @@ const FIELD_LABELS: Record<string, string> = {
   proteinOptions: "蛋白替代",
   fiberOptions: "纤维替代",
   carbOptions: "碳水替代",
+  fatOptions: "脂肪替代",
   plateGuidance: "餐盘提示",
   seasonalVegetables: "时令蔬菜",
   seasonalGuidance: "时令提示",
@@ -134,7 +135,8 @@ function normalizeFoodReference(value: unknown): unknown {
   const normalized = {
     proteinOptions: firstPresent(value, ["proteinOptions", "proteinFoods", "proteinSources", "proteins"]),
     fiberOptions: firstPresent(value, ["fiberOptions", "fiberFoods", "vegetableOptions", "vegetables"]),
-    carbOptions: firstPresent(value, ["carbOptions", "carbFoods", "stapleOptions", "stapleFoods", "carbohydrateOptions"])
+    carbOptions: firstPresent(value, ["carbOptions", "carbFoods", "stapleOptions", "stapleFoods", "carbohydrateOptions"]),
+    fatOptions: firstPresent(value, ["fatOptions", "fatFoods", "oilOptions", "oilFoods"])
   };
   return Object.fromEntries(Object.entries(normalized)
     .filter(([, item]) => item !== undefined)
@@ -329,6 +331,7 @@ function issueReason(issue: ZodIssue): string {
   if (issue.message.includes("minimum cannot exceed maximum")) return "下限不能大于上限";
   if (issue.message.includes("Macro ratio percentages")) return "三项比例合计必须接近 100%";
   if (issue.message.includes("protein conversion")) return "必须给出鸡蛋、牛肉和鸡胸肉的具体换算";
+  if (issue.message.includes("food conversion")) return "必须给出熟米饭、白菜和食用油的具体换算";
   if (issue.message.includes("paper cup hydration conversion")) return "必须给出饮水量对应的纸杯数量";
   if (issue.message.includes("fruit options with portions")) return "必须给出至少两种带份量的水果选择";
   if (issue.message.includes("is required for newly generated")) return "缺少必填字段";
@@ -400,8 +403,8 @@ export class DeepSeekHealthPlanner implements HealthPlanner {
               "只根据用户主动保存的资料、城市、节气、已有日程与本次特殊说明生成内容；不得推断人格、体质、疾病或心理状态。",
               "返回 JSON：{overview:string,supplements:string[],days:[7 个日对象]}。",
               HEALTH_PLAN_OUTPUT_CONTRACT,
-              "字段名必须严格遵守软件契约：nutritionTargets 使用 carbohydrateGrams、fatGrams、fiberGrams、hydrationLiters、macroRatioPercent；hydrationGuidance 和 plateGuidance 必须是字符串数组；foodReference 必须使用 proteinOptions、fiberOptions、carbOptions；fruitOptions 必须是水果字符串数组；seasonalPoem 有内容时必须同时返回 title、author、excerpt、relevance。不要使用 calories、proteinFoods、stapleFoods、vegetables 或其他同义字段，也不要返回 movement、exercise、training、workout。",
-              "饮食是可执行的参考而非硬性处方：给保守范围、三餐与可选加餐的真实食材示例、当天蛋白来源轮换和替代食材。proteinOptions 必须分别包含带数字的鸡蛋、牛肉、鸡胸肉换算，例如目标蛋白质约等于多少个鸡蛋、多少克牛肉、多少克鸡胸肉；hydrationGuidance 必须包含带数字的常见纸杯换算，例如 2.5L 水约等于多少个纸杯，并注明只是估算，不要求精确照做。",
+              "字段名必须严格遵守软件契约：nutritionTargets 使用 carbohydrateGrams、fatGrams、fiberGrams、hydrationLiters、macroRatioPercent；hydrationGuidance 和 plateGuidance 必须是字符串数组；foodReference 必须使用 proteinOptions、fiberOptions、carbOptions、fatOptions；fruitOptions 必须是水果字符串数组；seasonalPoem 有内容时必须同时返回 title、author、excerpt、relevance。不要使用 calories、proteinFoods、stapleFoods、vegetables 或其他同义字段，也不要返回 movement、exercise、training、workout。",
+              "饮食是可执行的参考而非硬性处方：给保守范围、三餐与可选加餐的真实食材示例、当天蛋白来源轮换和带数量的食物换算。proteinOptions 必须分别包含目标蛋白质约等于多少个鸡蛋、多少克牛肉、多少克鸡胸肉；carbOptions 必须包含约等于几碗熟米饭；fiberOptions 必须包含约等于多少克白菜；fatOptions 必须包含约等于多少汤匙食用油。hydrationGuidance 必须包含带数字的常见纸杯换算，例如 2L 水约等于 8 个纸杯。所有换算都注明只是便于理解的估算，不要求精确照做。",
               "fruitOptions 每天必须给出至少两种具体水果和建议份量，例如 1 个苹果、200 克草莓；水果独立于正餐和蔬菜展示。优先建议从水果和日常食物获取自然营养，补充剂只用于饮食难以覆盖或用户明确考虑的部分。不得要求打卡，不得把示例写成必须执行。缺少精确资料时必须在 overview 或 nutritionDirection 说明假设。",
               "蛋白质、碳水、脂肪、纤维和饮水使用每日参考范围；hydrationGuidance 给出可选择的分时饮水参考、运动前后调整和避免一次性大量饮水的提示，不计算用户实际饮水量。三大营养素比例总和约为 100。mealExamples 只写正餐与可选加餐的组合，不生成训练计划，不计算用户实际已摄入量，不伪装成完成进度。",
               "用户自己管理训练。不得生成、概括或调整训练计划、动作清单、运动任务、训练时长、强度、重量、配速或排期；也不要在 overview、nutritionDirection、mealExamples、supplements 中夹带这些内容。",

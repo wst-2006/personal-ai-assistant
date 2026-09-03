@@ -659,7 +659,7 @@ export class TaskService {
   ): Promise<{ task: StoredTask; outcome: StoredTaskOutcome; feedback: StoredTaskFeedback }> {
     return this.store.runSerializable(async (transaction) => {
       const current = await this.requireCurrentVersion(transaction, id, input.expectedVersion);
-      if (current.lifecycleStatus !== "closed" || current.localDate !== localDateAtTimeZone(new Date(), "Asia/Shanghai")) {
+      if (current.lifecycleStatus !== "closed") {
         throw new InvalidTaskTransitionError(current.lifecycleStatus, "correct today's outcome for");
       }
       const previous = await transaction.getOutcome(input.expectedOutcomeId, id);
@@ -669,10 +669,18 @@ export class TaskService {
         id: randomUUID(), taskId: id, focusSessionId: previous.focusSessionId,
         outcome: input.outcome, progressPercent: input.progressPercent, source: input.source, note: input.note
       });
-      const feedback = await transaction.insertFeedback({
-        id: randomUUID(), taskId: id, focusSessionId: previous.focusSessionId,
-        satisfaction: input.satisfaction, note: input.note
-      });
+      const previousFeedback = await transaction.getFeedbackByFocusSession(id, previous.focusSessionId);
+      const feedback = previousFeedback
+        ? await transaction.updateFeedback(previousFeedback.id, id, {
+          satisfaction: input.satisfaction,
+          note: input.note ?? null,
+          createdAt: now
+        })
+        : await transaction.insertFeedback({
+          id: randomUUID(), taskId: id, focusSessionId: previous.focusSessionId,
+          satisfaction: input.satisfaction, note: null
+        });
+      if (!feedback) throw new TaskVersionConflictError(current);
       const updated = await transaction.updateTask(id, input.expectedVersion, {
         currentOutcome: input.outcome,
         version: current.version + 1,
@@ -777,7 +785,7 @@ export class TaskService {
       throw new InvalidTaskTransitionError(current.lifecycleStatus, "edit");
     }
     if (current.lifecycleStatus === "active" || current.lifecycleStatus === "awaiting_outcome") {
-      const allowed = new Set(["expectedVersion", "title", "notes", "conflictDecision", "expectedConflictFingerprint"]);
+      const allowed = new Set(["expectedVersion", "title", "conflictDecision", "expectedConflictFingerprint"]);
       const hasDisallowed = Object.entries(patch).some(([key, value]) => value !== undefined && !allowed.has(key));
       if (hasDisallowed) throw new InvalidTaskTransitionError(current.lifecycleStatus, "edit scheduling or task structure for");
     }

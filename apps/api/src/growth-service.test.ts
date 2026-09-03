@@ -27,6 +27,19 @@ function uniqueFutureDate(): string {
 }
 
 describe("GrowthService", () => {
+  it("uses the selected date's natural week and calendar month", async () => {
+    const service = new GrowthService(connection.db);
+    const week = await service.getSummary("2099-05-13", 7);
+    expect(week.range).toEqual({ start: "2099-05-11", end: "2099-05-17" });
+    expect(week.selectedDate).toBe("2099-05-13");
+    expect(week.days).toHaveLength(7);
+
+    const month = await service.getSummary("2099-05-13", 30);
+    expect(month.range).toEqual({ start: "2099-05-01", end: "2099-05-31" });
+    expect(month.selectedDate).toBe("2099-05-13");
+    expect(month.days).toHaveLength(31);
+  });
+
   it("reports 55 focus minutes for an ended 55 + 5 structured session before evaluation", async () => {
     const localDate = "2099-10-14";
     const taskId = randomUUID();
@@ -122,6 +135,7 @@ describe("GrowthService", () => {
       expect(summary.radar.find((metric) => metric.key === "energyState")).toMatchObject({ value: 80, sampleDays: 1, source: "user" });
       expect(summary.garden.quality).toBe(70);
       expect(summary.garden.growthPercent).toBe(25);
+      expect(summary.periodGrowthPercent).toBe(25);
       expect(summary.completedTasks).toBe(1);
       expect(summary.garden).toMatchObject({
         points: 52,

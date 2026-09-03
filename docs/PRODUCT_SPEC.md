@@ -80,14 +80,23 @@ creates search-backed daily briefs when explicitly requested.
   the current day's task or pending-evaluation list.
 - Every eligible exact task enters a one-minute desktop preparation surface at
   `startAt - 1 minute`. Preparation, a persisted schedule, and reminder delivery
-  never count as execution by themselves. The task starts automatically at its
-  fixed `startAt`; choosing `Start task` earlier starts it immediately and keeps
-  the original fixed `endAt` as the cap.
+  never count as execution by themselves. If there is no confirmation at the
+  fixed `startAt`, the session moves to `awaiting_late_start` without recording
+  focus; choosing `Start task` starts it immediately and keeps the original
+  fixed `endAt` as the cap. If the user never confirms before `endAt`, the task
+  closes automatically as `not_completed` with `dissatisfied`, records zero
+  focus seconds, and opens neither rest nor evaluation. If the user previously
+  confirmed `Start task` but the app was unavailable at the fixed start, the
+  task instead remains `awaiting_outcome` for normal evaluation, still with
+  zero recorded focus seconds.
 - After the user confirms `Start task` during preparation, the preparation
   window hides immediately; it does not remain as a second timer. At the fixed
-  `startAt`, the running focus window is created or restored automatically.
+  `startAt`, the normal focus window is created or restored in late-start
+  waiting; it shows the remaining fixed interval and the explicit `Start task`
+  action.
 - A start action during preparation starts the task immediately. If no action is
-  taken, the worker starts the session automatically at `startAt`. Legacy
+  taken, the worker moves the session to late-start waiting at `startAt` without
+  recording focus. Legacy
   `armed`/`awaiting_late_start` rows remain readable and can be started from the
   current time; the fixed task end is never extended.
 - A new focus session may be created only for an `open`, formal task with
@@ -118,12 +127,15 @@ creates search-backed daily briefs when explicitly requested.
   into the timeline; scheduled tasks and factual backfills remain read-only in
   this placement interaction.
 - Review reports the number of planned formal tasks as an item count, not as a
-  sum of scheduled minutes. Growth uses the current day's closed/planned task
+  sum of scheduled minutes. Growth uses the selected day's closed/planned task
   ratio for its bamboo scene: shoots below 33%, shoots with short bamboo from
   33% up to 66%, and the full bamboo grove from 66% upward. The shoots stage is
-  still; the latter two retain restrained pointer-wind motion. The visible
-  current-day task count and growth percentage use that same ratio; focus
-  minutes never masquerade as the bamboo's task-completion percentage.
+  still; the latter two retain restrained pointer-wind motion. The metric strip
+  follows the selected day, natural Monday-Sunday week, or calendar month:
+  focus minutes and completed/planned formal tasks are aggregated for that
+  range, while growth is the average daily score across dates with records.
+  Dates without records do not dilute that average, and focus minutes never
+  masquerade as the bamboo's task-completion percentage.
 - Focus configuration and focus execution are separate surfaces. Before start,
   a valid structure draft can be confirmed in one action; the client performs
   candidate creation and confirmation without forcing a separate temporary-save
@@ -149,7 +161,8 @@ creates search-backed daily briefs when explicitly requested.
   the timer composition. Objective outcome/progress and subjective satisfaction
   remain separate inputs; optional process notes are never converted into a
   diary. The evaluation uses the focus theme currently selected in
-  Personalization. Its automatic surface closes after 90 seconds without input
+Personalization. Its automatic surface closes after 60 seconds without input;
+each evaluation interaction restarts that 60-second inactivity timer
   and leaves the session available as an explicitly named pending evaluation;
   this timeout does not delay, recalculate or discard focus duration already
   recorded when the final rest ended. Saving returns to the main application and hides the evaluation window.

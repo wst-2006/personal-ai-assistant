@@ -103,7 +103,7 @@ describe("TaskService lifecycle and revisions", () => {
     expect(task.currentOutcome).toBe("complete");
   });
 
-  it("corrects only today's evaluation without reopening the task or changing its schedule revision", async () => {
+  it("allows evaluation correction on any date while preserving history and replacing current feedback", async () => {
     const store = new MemoryTaskStore();
     const service = new TaskService(store);
     let task = (await service.create(taskInputSchema.parse({
@@ -135,12 +135,14 @@ describe("TaskService lifecycle and revisions", () => {
     expect(corrected.task).toMatchObject({ lifecycleStatus: "closed", currentOutcome: "complete", version: task.version + 1, scheduleRevision });
     const detail = await service.get(task.id);
     expect(detail.outcomes).toHaveLength(2);
-    expect(detail.feedback).toHaveLength(2);
+    expect(detail.feedback).toHaveLength(1);
     expect(detail.outcomes.map((item) => item.note)).toContain("first");
     expect(detail.outcomes.map((item) => item.note)).toContain("corrected");
+    expect(detail.feedback[0]?.satisfaction).toBe("satisfied");
+    expect(detail.feedback[0]?.note).toBe("corrected");
   });
 
-  it("rejects evaluation correction for a previous day", async () => {
+  it("allows evaluation correction for a previous day", async () => {
     const service = new TaskService(new MemoryTaskStore());
     let task = (await service.create(unscheduled("Past evaluation"))).task;
     const recorded = await service.recordOutcome(task.id, {
@@ -152,14 +154,15 @@ describe("TaskService lifecycle and revisions", () => {
     });
     task = recorded.task;
 
-    await expect(service.correctOutcome(task.id, {
+    const corrected = await service.correctOutcome(task.id, {
       expectedVersion: task.version,
       expectedOutcomeId: recorded.outcome.id,
       outcome: "partial",
       progressPercent: 80,
       source: "app",
       satisfaction: "neutral"
-    })).rejects.toBeInstanceOf(InvalidTaskTransitionError);
+    });
+    expect(corrected.task.currentOutcome).toBe("partial");
   });
 
   it("rejects invalid transitions and stale versions", async () => {

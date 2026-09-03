@@ -46,7 +46,7 @@ test("完整健康资料表单保存所有用户主动维护的字段", async ({
   await expect(page.getByText("基础资料", { exact: true })).toBeVisible();
   await expect(page.getByText("活动偏好", { exact: true })).toBeVisible();
   await expect(page.getByText("饮食与补充剂", { exact: true })).toBeVisible();
-  await page.getByLabel("当前城市（可留空）").fill("呼和浩特");
+  await page.getByLabel("当前城市（可留空）").fill("示例城市");
   await page.getByLabel("年龄").fill("21");
   await page.getByLabel("身高（cm）").fill("176");
   await page.getByLabel("当前体重（kg）").fill("66");
@@ -60,7 +60,7 @@ test("完整健康资料表单保存所有用户主动维护的字段", async ({
   expect(saved).toMatchObject({
     expectedVersion: 1,
     profile: {
-      city: "呼和浩特",
+      city: "示例城市",
       basics: { sex: "male", age: 21, heightCm: 176, weightKg: 66, bodyFatPercent: 16, waistCm: 71.5 },
       stageWeightGoal: { minimumKg: 66, maximumKg: 67 },
       activity: { sessionsPerWeek: 4, usualDurationMinutes: { minimum: 60, maximum: 120 }, preferredActivities: ["力量训练", "骑行"], avoidHighRisk: false },

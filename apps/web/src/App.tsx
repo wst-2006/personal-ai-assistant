@@ -743,7 +743,7 @@ export function App() {
           {conversationMessages.length === 0 && !conversationLoading ? <p className="conversation-empty">从这里开始的一句话，会被保存在今天的本机对话里。</p> : conversationMessages.map((message) => <article key={message.id} className={`conversation-message ${message.role}`}><span>{message.role === "user" ? "我" : "AI"}</span><p>{message.content}</p></article>)}
           {conversationMessages.at(-1)?.role === "user" && <button className="text-button conversation-retry" type="button" disabled={conversationSending} onClick={() => void retryConversationReply()}>{conversationSending ? <LoaderCircle className="spin" /> : <RefreshCw />}{conversationSending ? "正在重试" : "重试 AI 回复"}</button>}
         </section>
-        <textarea aria-label="AI 输入内容" value={aiInput} onChange={(event) => { setAiInput(event.target.value); setAiParseError(null); }} placeholder="例如：明天上午九点用六十分钟学习线性代数" rows={7} maxLength={4000} />
+        <textarea aria-label="AI 输入内容" value={aiInput} onChange={(event) => { setAiInput(event.target.value); setAiParseError(null); }} placeholder="例如：明天上午安排 60 分钟阅读" rows={7} maxLength={4000} />
         {aiParseError && <div className="ai-parse-recovery" role="alert"><RefreshCw /><div><strong>这次没有生成候选</strong><p>{aiParseError}</p></div></div>}
         <div className="drawer-actions">
           <button className="primary-button full-width" type="button" disabled={conversationLoading || conversationSending || !conversation || !aiInput.trim()} onClick={() => void sendConversationMessage()}>{conversationSending ? <LoaderCircle className="spin" /> : <Send />}{conversationSending ? "正在发送" : "发送"}</button>

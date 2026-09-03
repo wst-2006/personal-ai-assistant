@@ -62,7 +62,13 @@ describe("Feishu long connection", () => {
   it("sends a visible text fallback when Feishu rejects the card update", async () => {
     const channel = new FakeChannel();
     channel.updateCard.mockRejectedValueOnce(new Error("permission denied"));
-    const actions = { handle: vi.fn().mockResolvedValue({ type: "success", message: "已记录另有安排" }) };
+    const actions = {
+      handle: vi.fn().mockResolvedValue({
+        type: "success",
+        message: "已记录另有安排",
+        card: { header: { title: "已退回未排期任务" } }
+      })
+    };
     const service = new FeishuLongConnectionService(config, actions as unknown as FeishuCardActionService, () => channel, silentLogger);
 
     await service.start();

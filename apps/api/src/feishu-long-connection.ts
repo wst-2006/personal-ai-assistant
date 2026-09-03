@@ -76,7 +76,12 @@ export class FeishuLongConnectionService {
       try {
         const result = await this.actions.handle(event.operatorOpenId, event.value);
         if (result.card) {
-          await channel.updateCard(event.messageId, result.card);
+          try {
+            await channel.updateCard(event.messageId, result.card);
+          } catch (updateError) {
+            this.logger.warn(`Feishu terminal card update failed; sending text fallback: ${errorMessage(updateError)}`);
+            await channel.sendText(event.chatId, result.message);
+          }
           return;
         }
         if (result.terminal === false) {

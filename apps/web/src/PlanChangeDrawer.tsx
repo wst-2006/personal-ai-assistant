@@ -130,7 +130,7 @@ export function PlanChangeDrawer({
         aria-label="变更说明"
         value={message}
         onChange={(event) => setMessage(event.target.value)}
-        placeholder="例如：临时要处理一件事，今天下午两点后才有时间。"
+        placeholder="例如：临时有一件事，晚些时候才方便处理。"
         rows={5}
         maxLength={4000}
       />

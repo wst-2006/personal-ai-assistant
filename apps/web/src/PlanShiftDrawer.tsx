@@ -63,7 +63,7 @@ export function PlanShiftDrawer({ initialText, onDone }: { initialText?: string;
 
   async function buildPreview() {
     const offsetMinutes = parsePlanShiftOffset(text);
-    if (!offsetMinutes) { setError("请写清楚顺延多久，例如“计划：把今天所有任务往后延半个小时”。"); return; }
+    if (!offsetMinutes) { setError("请写清楚顺延多久，例如“计划：把今天的任务整体顺延 30 分钟”。"); return; }
     setLoading(true); setError(null);
     try {
       const response = await fetch(`${API}/api/v1/tasks/bulk-shift/preview`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ localDate: date || null, offsetMinutes }) });
@@ -99,7 +99,7 @@ export function PlanShiftDrawer({ initialText, onDone }: { initialText?: string;
   return <section className="plan-shift-drawer" aria-labelledby="plan-shift-title">
     <div className="plan-change-intro"><span className="plan-change-icon"><CalendarClock /></span><div><p className="section-kicker">计划调整</p><h2 id="plan-shift-title">批量顺延，但先让你确认。</h2></div></div>
     <p className="plan-change-task">以“计划：”或“计划 ”开头的内容会进入这里，不会被当成新任务。只移动仍可编辑的精确排期。</p>
-    <label className="plan-change-message"><span>调整说明</span><textarea aria-label="计划调整说明" value={text} onChange={(event) => { const nextText = event.target.value; setText(nextText); if (!dateWasEdited) setDate(inferPlanInstructionDate(nextText, shanghaiDate()) ?? ""); setPreview(null); }} rows={3} maxLength={4000} placeholder="计划：把今天所有任务往后延半个小时" /></label>
+    <label className="plan-change-message"><span>调整说明</span><textarea aria-label="计划调整说明" value={text} onChange={(event) => { const nextText = event.target.value; setText(nextText); if (!dateWasEdited) setDate(inferPlanInstructionDate(nextText, shanghaiDate()) ?? ""); setPreview(null); }} rows={3} maxLength={4000} placeholder="计划：把今天的任务整体顺延 30 分钟" /></label>
     <label className="plan-shift-date"><span>作用日期（留空表示全部日期）</span><input type="date" value={date} onChange={(event) => { setDateWasEdited(true); setDate(event.target.value); setPreview(null); }} /></label>
     <button className="primary-button full-width" type="button" disabled={loading || !text.trim()} onClick={() => void buildPreview()}>{loading ? <LoaderCircle className="spin" /> : <RefreshCw />}{loading ? "正在读取排期" : "生成调整预览"}</button>
     {error && <p className="plan-change-error" role="alert"><X />{error}</p>}

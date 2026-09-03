@@ -119,9 +119,12 @@ export class FeishuIntakeService {
       const session = await this.focusService.startAwaitingCurrent();
       if (!session) return { kind: "text", text: "当前没有仍处于有效时段、可确认开始的任务。" };
       const messageId = await this.startedReminderMessageId(session.taskId);
-      const responseText = "任务已经开始。系统将从现在起记录实际专注时间，固定截止时间不变。";
+      const task = await this.taskService.get(session.taskId);
+      const responseText = session.state === "armed"
+        ? "任务已经开始准备；我会在原定时间准时开始。"
+        : "任务已经开始。系统将从现在起记录实际专注时间，固定截止时间不变。";
       return messageId
-        ? { kind: "card_update", messageId, card: startedTaskCard(responseText), text: responseText }
+        ? { kind: "card_update", messageId, card: startedTaskCard(responseText, session.state, task.task), text: responseText }
         : { kind: "text", text: responseText };
     }
 
@@ -152,7 +155,7 @@ export class FeishuIntakeService {
       const stored = await this.saveParsed(received.id, candidate, state);
       if (!stored) return { kind: "none" };
       if (state === "awaiting_duration") {
-        return { kind: "text", text: "已经记下开始时间。准备做多久？例如：30 分钟、1 小时或 1 个半小时。" };
+        return { kind: "text", text: "已经记下开始时间。准备做多久？例如：30 分钟、1 小时或 90 分钟。" };
       }
       if (state === "needs_desktop") {
         return { kind: "text", text: "这条内容已整理为待完善候选；请在桌面软件中补全日期或排期后再创建，当前没有自动写入任务。" };
@@ -589,12 +592,34 @@ function isFocusStartMessage(value: string): boolean {
   ].some((pattern) => pattern.test(text));
 }
 
-function startedTaskCard(message: string) {
+function startedTaskCard(
+  message: string,
+  state?: string,
+  task?: Awaited<ReturnType<TaskService["get"]>>["task"]
+) {
+  const schedule = task && task.startAt && task.endAt ? `\n${taskScheduleText(task)}` : "";
   return {
     config: { wide_screen_mode: true },
-    header: { template: "green", title: { tag: "plain_text", content: "任务已经开始" } },
-    elements: [{ tag: "div", text: { tag: "lark_md", content: message } }]
+    header: { template: state === "armed" ? "orange" : "green", title: { tag: "plain_text", content: state === "armed" ? "已确认准时开始" : "任务已经开始" } },
+    elements: [{ tag: "div", text: { tag: "lark_md", content: `${task ? `**${task.title}**` : ""}${schedule}\n${message}` } }]
   };
+}
+
+function taskScheduleText(task: Awaited<ReturnType<TaskService["get"]>>["task"]): string {
+  if (!task.startAt || !task.endAt) return "时间：未设置";
+  const dateFormatter = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: task.timeZone ?? "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  });
+  const timeFormatter = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: task.timeZone ?? "Asia/Shanghai",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  });
+  return `日期：${dateFormatter.format(task.startAt)}\n开始：${timeFormatter.format(task.startAt)}\n结束：${timeFormatter.format(task.endAt)}`;
 }
 
 function confirmedMessage(candidate: StoredFeishuIntakeCandidate): FeishuIntakeActionResult {

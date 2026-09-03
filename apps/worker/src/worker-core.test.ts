@@ -14,6 +14,14 @@ const enabledSettings = {
   feishuT15Enabled: true,
 };
 
+function queryText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.map(queryText).join(" ");
+  if (!value || typeof value !== "object") return "";
+  const record = value as { value?: unknown; queryChunks?: unknown };
+  return `${queryText(record.value)} ${queryText(record.queryChunks)}`;
+}
+
 describe("ReminderWorker", () => {
   it("normalizes PostgreSQL string timestamps before delivery", async () => {
     const stringJob = { ...job, scheduledAt: job.scheduledAt.toISOString() };
@@ -156,6 +164,8 @@ describe("ReminderWorker", () => {
       .mockResolvedValueOnce({ rows: [{ id: "task-1" }] })
       .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ remoteMessageId: "om_initial" }] })
       .mockResolvedValueOnce({ rows: [] });
     const database = {
@@ -171,7 +181,10 @@ describe("ReminderWorker", () => {
       timing: "in_progress",
       remoteMessageId: "om_initial"
     });
-    expect(execute).toHaveBeenCalledTimes(12);
+    const queries = execute.mock.calls.map(([query]) => queryText(query));
+    expect(queries.some((query) => query.includes("lifecycle_status = 'closed'"))).toBe(true);
+    expect(queries.some((query) => query.includes("'dissatisfied'"))).toBe(true);
+    expect(execute).toHaveBeenCalledTimes(14);
   });
 
   it("cancels T-15 delivery while keeping the T-1 confirmation path available", async () => {

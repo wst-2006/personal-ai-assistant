@@ -116,6 +116,32 @@ describe("focus command idempotency", () => {
       .rejects.toBeInstanceOf(FocusCommandConflictError);
   });
 
+  it("does not start an existing prepared session when creation is repeated", async () => {
+    const taskId = randomUUID();
+    taskIds.push(taskId);
+    const [task] = await connection.db.insert(tasks).values({
+      id: taskId,
+      title: "Repeated prepare must remain waiting",
+      lifecycleStatus: "open",
+      scheduleKind: "exact",
+      localDate: "2099-08-10",
+      startAt: new Date("2099-08-10T01:00:00.000Z"),
+      endAt: new Date("2099-08-10T02:00:00.000Z"),
+      timeZone: "Asia/Shanghai",
+      version: 1,
+      scheduleRevision: 1
+    }).returning();
+    if (!task) throw new Error("test task was not created");
+
+    const first = await service.create(task.id, task.version, "prepare", randomUUID());
+    const repeated = await service.create(task.id, task.version, "prepare", randomUUID());
+
+    expect(repeated.id).toBe(first.id);
+    expect(repeated.state).toBe("scheduled");
+    expect(repeated.startedAt).toBeNull();
+    expect(repeated.activeSinceAt).toBeNull();
+  });
+
   it("keeps actual focus time when an ended session is evaluated as not completed", async () => {
     const taskId = randomUUID();
     const sessionId = randomUUID();

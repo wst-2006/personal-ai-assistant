@@ -77,12 +77,13 @@ function parsePayload(value: unknown): { taskId: string; title: string; startAt:
 
 function buildReminderCard(payload: ReturnType<typeof parsePayload>, context: ReminderDeliveryContext) {
   const time = new Intl.DateTimeFormat("zh-CN", { timeZone: payload.timeZone, hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(payload.startAt));
+  const schedule = taskScheduleText(payload);
   if (payload.cardState === "started") {
     return {
       config: { wide_screen_mode: true },
       header: { template: "green", title: { tag: "plain_text", content: "任务已经开始" } },
       elements: [
-        { tag: "div", text: { tag: "lark_md", content: `**${payload.title}**\n已在桌面软件或飞书完成一次开始确认；原卡片按钮已经失效。` } }
+        { tag: "div", text: { tag: "lark_md", content: `**${payload.title}**\n${schedule}\n已在桌面软件或飞书完成一次开始确认；原卡片按钮已经失效。` } }
       ]
     };
   }
@@ -99,22 +100,22 @@ function buildReminderCard(payload: ReturnType<typeof parsePayload>, context: Re
   ];
   const actions = stage === "ready"
     ? [
-        { tag: "button", text: { tag: "plain_text", content: "开始任务" }, type: "primary", value: { action: "start", taskId: payload.taskId, scheduleRevision: payload.scheduleRevision, commandId: commandId(payload, "start") } },
+        { tag: "button", text: { tag: "plain_text", content: "我会准时开始" }, type: "primary", value: { action: "start", taskId: payload.taskId, scheduleRevision: payload.scheduleRevision, commandId: commandId(payload, "start") } },
         ...sharedActions
       ]
     : stage === "late"
       ? [
-          { tag: "button", text: { tag: "plain_text", content: "开始任务" }, disabled: true },
+          { tag: "button", text: { tag: "plain_text", content: "准时确认已失效" }, disabled: true },
           ...sharedActions
         ]
       : stage === "upcoming" ? sharedActions : [];
   const copy = stage === "missed"
-    ? `**${payload.title}**\n固定时段内未进入专注，已记录为未完成。`
+    ? `**${payload.title}**\n${schedule}\n固定时段内未进入专注，已记录为未完成。`
     : stage === "late"
-      ? `**${payload.title}**\n开始按钮已经过期。若仍在原任务时段内，请直接告诉 AI“我开始了这个任务”，系统只从实际开始时刻记录。`
+      ? `**${payload.title}**\n${schedule}\n开始按钮已经过期。若仍在原任务时段内，请直接告诉 AI“我开始了这个任务”，系统只从实际开始时刻记录。`
       : stage === "ready"
-        ? `**${payload.title}**\n还有 1 分钟开始。到点会自动进入专注，也可以现在开始。`
-        : `**${payload.title}**\n将在 ${time} 开始。开始按钮会在前 1 分钟出现在这张卡片上。`;
+        ? `**${payload.title}**\n${schedule}\n还有 1 分钟开始。点击“我会准时开始”后，到原定时间自动进入专注计时。`
+        : `**${payload.title}**\n${schedule}\n开始按钮会在前 1 分钟出现在这张卡片上。`;
   return {
     config: { wide_screen_mode: true },
     header: { template: stage === "missed" ? "red" : stage === "late" ? "grey" : stage === "ready" ? "orange" : "green", title: { tag: "plain_text", content: `${time} · ${stage === "missed" ? "任务未开始" : stage === "late" ? "等待迟到开始" : stage === "ready" ? "准备开始" : "即将开始"}` } },
@@ -123,6 +124,23 @@ function buildReminderCard(payload: ReturnType<typeof parsePayload>, context: Re
       ...(actions.length > 0 ? [{ tag: "action", actions }] : [])
     ]
   };
+}
+
+function taskScheduleText(payload: { startAt: string; endAt: string; timeZone: string }): string {
+  const dateParts = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: payload.timeZone,
+    year: "numeric",
+    month: "numeric",
+    day: "numeric"
+  }).formatToParts(new Date(payload.startAt));
+  const date = `${dateParts.find((part) => part.type === "year")?.value ?? ""}年${dateParts.find((part) => part.type === "month")?.value ?? ""}月${dateParts.find((part) => part.type === "day")?.value ?? ""}日`;
+  const timeFormatter = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: payload.timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  });
+  return `日期：${date}\n开始：${timeFormatter.format(new Date(payload.startAt))}\n结束：${timeFormatter.format(new Date(payload.endAt))}`;
 }
 
 function commandId(payload: ReturnType<typeof parsePayload>, action: "start" | "other_arrangement" | "cancel_request"): string {

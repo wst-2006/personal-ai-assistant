@@ -50,6 +50,8 @@ describe("Feishu reminder delivery", () => {
     expect(body.receive_id).toBe("ou_x");
     expect(body.content).toContain("另有安排");
     expect(body.content).toContain("取消任务");
+    expect(body.content).toContain("开始：10:00");
+    expect(body.content).toContain("结束：11:00");
     expect(body.content).not.toContain("开始任务");
     expect(body.content).not.toContain("打开任务");
   });

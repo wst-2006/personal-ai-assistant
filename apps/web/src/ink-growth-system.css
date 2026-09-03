@@ -705,6 +705,7 @@ select:focus {
 .focus-picker .focus-task-slip span { writing-mode: vertical-rl; color: var(--canvas-blue-gray); font-size: 9px; }
 .focus-picker .focus-task-slip strong { align-self: end; font-family: var(--font-display); font-size: 15px; white-space: normal; }
 .focus-picker .focus-task-slip small { grid-column: 2; }
+.focus-picker .focus-task-slip .focus-task-slip-schedule { color: var(--canvas-ink); line-height: 1.45; white-space: normal; }
 
 html[data-focus-immersive="true"] .app-rail,
 html[data-focus-immersive="true"] .topbar {
@@ -724,11 +725,39 @@ html[data-focus-immersive="true"] .topbar:hover { opacity: .82; }
 .focus-execution-minimized-copy span { color: var(--canvas-vermilion); font-size: 11px; letter-spacing: .12em; }
 .focus-execution-minimized-copy strong { overflow: hidden; color: var(--canvas-ink); font: 500 18px/1.4 var(--font-display); text-overflow: ellipsis; white-space: nowrap; }
 .focus-execution-minimized-copy b { color: var(--canvas-ink); font: 400 42px/1 var(--font-data); font-variant-numeric: tabular-nums; }
+.focus-execution-minimized[role="button"] { cursor: pointer; }
+.focus-execution-minimized[role="button"]:focus-visible { outline: 2px solid var(--canvas-vermilion); outline-offset: 4px; }
+.focus-workspace-quote {
+  display: grid;
+  width: min(500px, 86%);
+  gap: 4px;
+  margin: 4px auto 0;
+  color: var(--canvas-vermilion);
+  text-align: center;
+  font-family: var(--font-display);
+  line-height: 1.45;
+}
+.focus-workspace-quote q {
+  overflow: hidden;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.focus-workspace-quote cite {
+  color: var(--canvas-blue-gray);
+  font-size: 10px;
+  font-style: normal;
+}
+.focus-timepiece-execution[role="button"] { cursor: pointer; }
+.focus-timepiece-execution[role="button"]:focus-visible { outline: 2px solid var(--canvas-vermilion); outline-offset: 5px; }
 .focus-secondary-editor { width: min(720px, 94%); margin: 26px auto 0; padding-top: 20px; border-top: 1px solid rgba(82,100,90,.2); }
 .focus-secondary-editor-heading { display: flex; align-items: baseline; gap: 10px; margin-bottom: 3px; text-align: left; }
 .focus-secondary-editor-heading .section-kicker { margin: 0; color: var(--canvas-vermilion); }
 .focus-secondary-editor-heading strong { color: var(--canvas-ink); font: 500 16px/1.35 var(--font-display); }
 .focus-secondary-editor-heading small { color: var(--canvas-blue-gray); font-size: 11px; }
+.focus-secondary-actions { display: flex; justify-content: flex-end; margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(82,100,90,.14); }
+.focus-secondary-actions .focus-execution-primary { min-height: 36px; }
+.focus-secondary-editor-note { margin: 0; color: var(--canvas-blue-gray); font-size: 11px; line-height: 1.6; }
 .focus-execution { display: grid; width: min(720px, 94%); place-items: center; text-align: center; }
 .focus-execution-context { display: grid; place-items: center; gap: 7px; }
 .focus-execution-context > span { color: var(--canvas-blue-gray); font-family: var(--font-ui); font-size: 11px; letter-spacing: .18em; }
@@ -1160,7 +1189,7 @@ html[data-focus-immersive="true"] .topbar:hover { opacity: .82; }
 .health-prescription > section { min-height: 0; }
 .health-prescription h3 { margin: 0 0 13px; color: var(--canvas-pine); font-family: var(--font-display); font-size: 14px; font-weight: 500; letter-spacing: .06em; }
 .health-target-scales { display: grid; gap: 13px; margin: 24px 0 32px; padding: 20px 0; border-top: 1px solid rgba(37,39,34,.12); border-bottom: 1px solid rgba(37,39,34,.12); }
-.health-target-row { display: grid; grid-template-columns: 74px 102px minmax(80px,1fr) 68px; align-items: center; gap: 10px; }
+.health-target-row { display: grid; grid-template-columns: 64px 88px minmax(70px,.8fr) minmax(120px,1.6fr); align-items: center; gap: 12px; }
 .health-target-row > span { color: var(--canvas-ink); font-size: 11px; }
 .health-target-row > strong { color: var(--canvas-blue-gray); font-family: var(--font-data); font-size: 11px; font-weight: 500; }
 .health-target-row > i { position: relative; display: block; height: 9px; }
@@ -1171,7 +1200,7 @@ html[data-focus-immersive="true"] .topbar:hover { opacity: .82; }
 .health-target-row[data-tone="fat"] > i > b { border-color: #69737a; background: #69737a; }
 .health-target-row[data-tone="fiber"] > i > b { border-color: #82948a; background: #82948a; }
 .health-target-row[data-tone="water"] > i > b { border-color: #7b9296; background: #7b9296; }
-.health-target-row > small { color: var(--canvas-blue-gray); font-size: 8px; }
+.health-target-row > small { color: var(--canvas-ink); font-size: 9px; line-height: 1.55; overflow-wrap: anywhere; }
 .health-macro-ratio { margin: -11px 0 30px; }
 .health-macro-ratio > header { display: flex; align-items: baseline; justify-content: space-between; gap: 18px; }
 .health-macro-ratio > header h3 { margin: 0; }
@@ -1398,8 +1427,8 @@ html[data-focus-immersive="true"] .topbar:hover { opacity: .82; }
   .health-context-card > button { grid-column: 1 / -1; width: 100%; }
   .health-generation, .health-plan-header, .health-sleep-card > header { align-items: stretch; flex-direction: column; }
   .health-generation-actions, .health-sleep-actions { width: 100%; flex: none; }
-  .health-target-row { grid-template-columns: 65px 94px minmax(70px,1fr); }
-  .health-target-row > small { display: none; }
+  .health-target-row { grid-template-columns: 60px 86px minmax(70px,1fr); align-items: start; row-gap: 5px; }
+  .health-target-row > small { display: block; grid-row: 2; grid-column: 2 / -1; }
   .health-protein-rotation > div { grid-template-columns: repeat(4,minmax(0,1fr)); }
   .health-manual-grid, .health-manual-grid-three { grid-template-columns: 1fr; }
   .health-manual-macros { grid-template-columns: 1fr; }
@@ -1949,12 +1978,16 @@ html[data-focus-immersive="true"] .topbar:hover { opacity: .82; }
 .review-section-heading { display: flex; align-items: end; justify-content: space-between; gap: 20px; }
 .review-section-heading h2 { margin: 5px 0 0; color: var(--canvas-pine); font-family: var(--font-display); font-size: clamp(24px, 3vw, 36px); font-weight: 500; }
 .review-section-heading > span { color: var(--canvas-blue-gray); font-size: 11px; }
-.review-task-summary-list { display: grid; gap: 12px; }
-.review-task-summary-list { max-height: 342px; overflow-y: auto; overscroll-behavior-y: auto; scrollbar-width: thin; }
-.review-task-summary-list.expanded { max-height: 600px; }
-.review-task-summary-toggle { display: inline-flex; align-items: center; gap: 6px; margin-top: 12px; padding: 6px 0; border: 0; color: var(--canvas-pine); background: transparent; font-family: var(--font-ui); font-size: 11px; cursor: pointer; }
-.review-task-summary-toggle svg { width: 14px; transition: transform 180ms ease; }
-.review-task-summary-toggle svg.open { transform: rotate(180deg); }
+.review-task-summary-list {
+  display: grid;
+  max-height: 520px;
+  gap: 12px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 8px;
+  scrollbar-color: rgba(82,100,90,.32) transparent;
+  scrollbar-width: thin;
+}
 .review-task-summary-list article { display: grid; grid-template-columns: minmax(180px,.7fr) minmax(0,1.3fr); gap: 20px; padding: 16px 0; border-bottom: 1px solid rgba(37,39,34,.1); }
 .review-task-summary-list article > div { display: grid; align-content: start; gap: 6px; }
 .review-task-summary-list strong { color: var(--canvas-pine); font-family: var(--font-display); font-size: 17px; font-weight: 500; }
@@ -2138,6 +2171,97 @@ html[data-focus-immersive="true"] .topbar:hover { opacity: .82; }
 .review-weather-meta { grid-column: 2; align-self: center; padding-bottom: 0; }
 .review-weather-meta p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* Review weather frame: always reserve the same handscroll band. The artwork
+   uses a centered crop of the long scroll rather than stretching the full
+   painting into a tiny strip; the foreground gradient keeps all facts legible
+   in the pale left field. */
+.review-weather-result {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: auto auto;
+  min-height: 154px;
+  box-sizing: border-box;
+  overflow: hidden;
+  gap: 8px;
+  padding: 18px 42% 18px 18px;
+  border-top: 1px solid rgba(37,39,34,.08);
+  border-bottom: 1px solid rgba(37,39,34,.1);
+  background-image:
+    linear-gradient(90deg, rgba(249,247,240,.98) 0%, rgba(249,247,240,.9) 42%, rgba(249,247,240,.48) 72%, rgba(249,247,240,.08) 100%),
+    url('/art/qingming-riverside.jpg');
+  background-position: center, center;
+  background-size: cover, auto 100%;
+  background-repeat: no-repeat;
+}
+.review-weather-result.empty { display: block; }
+.review-weather-result.has-data .review-weather-meta,
+.review-weather-result.has-data .review-weather-main {
+  position: relative;
+  z-index: 1;
+  min-width: 0;
+  grid-column: 1;
+}
+.review-weather-result.has-data .review-weather-meta {
+  display: grid;
+  justify-items: start;
+  align-content: start;
+  gap: 3px;
+  order: 1;
+  grid-row: 1;
+  padding: 0;
+  text-align: left;
+}
+.review-weather-result.has-data .review-weather-main {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  order: 2;
+  grid-row: 2;
+}
+.review-weather-result.has-data .review-weather-main > svg {
+  width: 30px;
+  height: 30px;
+}
+.review-weather-result.has-data .review-weather-main > div {
+  display: grid;
+  grid-template-columns: auto;
+  gap: 3px;
+  min-width: 0;
+}
+.review-weather-result.has-data .review-weather-main strong {
+  font-size: 38px;
+}
+.review-weather-result.has-data .review-weather-main span {
+  font-size: 13px;
+}
+.review-weather-result.has-data .review-weather-meta time {
+  font-size: 10px;
+}
+.review-weather-result.has-data .review-weather-meta p {
+  max-width: 100%;
+  color: var(--canvas-pine);
+  font-family: var(--font-display);
+  font-size: 14px;
+  line-height: 1.35;
+}
+.review-weather-result.has-data .review-weather-meta small {
+  color: var(--canvas-blue-gray);
+  font-size: 10px;
+}
+
+@media (max-width: 700px) {
+  .review-weather-result {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto;
+    min-height: 144px;
+    padding: 16px 34% 16px 16px;
+    background-position: center, center;
+    background-size: cover, auto 100%;
+  }
+}
+
 .growth-score-detail { position: absolute; z-index: 4; right: 2%; bottom: 12px; width: min(520px, 48%); color: var(--canvas-blue-gray); font-size: 10px; }
 .growth-score-detail summary { cursor: pointer; color: var(--canvas-pine); font-family: var(--font-display); }
 .growth-score-detail p { margin: 7px 0 0; line-height: 1.7; }
@@ -2227,3 +2351,97 @@ html[data-focus-immersive="true"] .topbar:hover { opacity: .82; }
   min-height: 0 !important;
 }
 .health-meal-sheet-bottom dl { margin-bottom: 0; }
+
+/* Diary month cells are keyed to effective focus time, not review tone. */
+.diary-month-grid .diary-day.focus-none {
+  color: var(--canvas-ink);
+  background: transparent;
+}
+.diary-month-grid .diary-day.focus-none i { background: transparent; box-shadow: none; }
+.diary-month-grid .diary-day.focus-short {
+  color: #607267;
+  background: #dfe4dc;
+}
+.diary-month-grid .diary-day.focus-medium {
+  color: #806b46;
+  background: #eee5d5;
+}
+.diary-month-grid .diary-day.focus-long {
+  color: #934f45;
+  border-bottom: 4px solid #a75c50;
+  background: #f0e2dc;
+}
+.diary-month-grid .diary-day.focus-short:hover,
+.diary-month-grid .diary-day.focus-medium:hover,
+.diary-month-grid .diary-day.focus-long:hover { filter: brightness(.985); }
+
+/* Final review weather frame overrides: keep the same centered crop and
+   left-aligned facts at both desktop and narrow widths. */
+.review-weather-result {
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: auto auto;
+  min-height: 154px;
+  gap: 8px;
+  padding: 18px 42% 18px 18px;
+  border-top: 1px solid rgba(37,39,34,.08);
+  border-bottom: 1px solid rgba(37,39,34,.1);
+  background-image:
+    linear-gradient(90deg, rgba(249,247,240,.98) 0%, rgba(249,247,240,.9) 42%, rgba(249,247,240,.48) 72%, rgba(249,247,240,.08) 100%),
+    url('/art/qingming-riverside.jpg');
+  background-position: center, center;
+  background-size: cover, auto 100%;
+  background-repeat: no-repeat;
+}
+.review-weather-result.empty { display: block; }
+.review-weather-result.has-data .review-weather-meta,
+.review-weather-result.has-data .review-weather-main {
+  grid-column: 1;
+  min-width: 0;
+}
+.review-weather-result.has-data .review-weather-meta {
+  grid-row: 1;
+  display: grid;
+  justify-items: start;
+  align-content: start;
+  gap: 3px;
+  padding: 0;
+  text-align: left;
+}
+.review-weather-result.has-data .review-weather-main {
+  grid-row: 2;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+}
+.review-weather-result.has-data .review-weather-main > svg { width: 30px; height: 30px; }
+.review-weather-result.has-data .review-weather-main > div {
+  display: grid;
+  grid-template-columns: auto;
+  gap: 3px;
+  min-width: 0;
+}
+.review-weather-result.has-data .review-weather-main strong { font-size: 38px; }
+.review-weather-result.has-data .review-weather-main span { font-size: 13px; }
+.review-weather-result.has-data .review-weather-meta time { font-size: 10px; }
+.review-weather-result.has-data .review-weather-meta p {
+  max-width: 100%;
+  color: var(--canvas-pine);
+  font-family: var(--font-display);
+  font-size: 14px;
+  line-height: 1.35;
+}
+.review-weather-result.has-data .review-weather-meta small {
+  color: var(--canvas-blue-gray);
+  font-size: 10px;
+}
+
+@media (max-width: 700px) {
+  .review-weather-result {
+    min-height: 144px;
+    padding: 16px 34% 16px 16px;
+    background-position: center, center;
+    background-size: cover, auto 100%;
+  }
+}

@@ -201,7 +201,7 @@ export function SettingsWorkspace({ onProfileSaved }: SettingsWorkspaceProps) {
         <header><div><p className="section-kicker">个人信息</p><h2>只保存你主动填写的背景</h2></div><ShieldCheck /></header>
         <p className="user-profile-note"><ShieldCheck />不会根据任务、对话或使用行为推断性格，也不会自动修改这份资料。</p>
         <div className="profile-text-grid">
-          <label><span>个人背景</span><textarea aria-label="个人背景" rows={8} maxLength={20_000} value={draft.personalContext} onChange={(event) => setDraft((current) => ({ ...current, personalContext: event.target.value }))} placeholder="当前目标、学习背景、在意的边界或希望 AI 了解的长期情况。" /></label>
+          <label><span>个人背景</span><textarea aria-label="个人背景" rows={8} maxLength={20_000} value={draft.personalContext} onChange={(event) => setDraft((current) => ({ ...current, personalContext: event.target.value }))} placeholder="填写希望长期保留的背景信息（可留空）。" /></label>
           <label><span>AI 协作指引</span><textarea aria-label="AI 协作指引" rows={8} maxLength={4_000} value={draft.aiGuidance} onChange={(event) => setDraft((current) => ({ ...current, aiGuidance: event.target.value }))} placeholder="例如：先给结构，再给可选方案；不要替我做决定。" /></label>
         </div>
         <div className="profile-inline-settings">

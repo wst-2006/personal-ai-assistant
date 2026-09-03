@@ -200,6 +200,20 @@ export class MemoryTaskStore implements TaskStore, TaskStoreTransaction {
     return feedback;
   }
 
+  async getFeedbackByFocusSession(taskId: string, focusSessionId: string | null): Promise<StoredTaskFeedback | null> {
+    return this.feedback
+      .filter((item) => item.taskId === taskId && item.focusSessionId === focusSessionId)
+      .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())[0] ?? null;
+  }
+
+  async updateFeedback(id: string, taskId: string, changes: Pick<TaskFeedbackRecord, "satisfaction" | "note"> & { createdAt?: Date }): Promise<StoredTaskFeedback | null> {
+    const index = this.feedback.findIndex((item) => item.id === id && item.taskId === taskId);
+    if (index < 0) return null;
+    const updated = { ...this.feedback[index]!, ...changes };
+    this.feedback[index] = updated;
+    return updated;
+  }
+
   async listFeedback(taskId: string): Promise<StoredTaskFeedback[]> {
     return this.feedback
       .filter((item) => item.taskId === taskId)

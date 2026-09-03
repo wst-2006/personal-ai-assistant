@@ -236,7 +236,7 @@ describe("AI task parsing", () => {
     const parser: TaskParser = {
       async parse() {
         return {
-          title: "学习线性代数", entryType: "task", date: "2026-07-28",
+          title: "整理阅读笔记", entryType: "task", date: "2026-07-28",
           startAt: "2026-07-28T09:00:00+08:00", endAt: "2026-07-28T10:00:00+08:00",
           schedulePrecision: "exact", notes: null,
           missingFields: ["notes"]
@@ -249,13 +249,13 @@ describe("AI task parsing", () => {
       method: "POST",
       url: "/api/v1/ai/tasks/parse",
       payload: {
-        text: "明天上午九点用45分钟学习线性代数，难度中等",
+        text: "明天上午九点用45分钟整理阅读笔记，难度中等",
         referenceDate: "2026-07-27",
         timeZone: "Asia/Shanghai"
       }
     });
     expect(response.statusCode).toBe(200);
-    expect(response.json().candidate.title).toBe("学习线性代数");
+    expect(response.json().candidate.title).toBe("整理阅读笔记");
     expect(aiStore.tasks).toHaveLength(0);
     await aiApp.close();
   });
@@ -272,7 +272,7 @@ describe("AI task parsing", () => {
       method: "POST",
       url: "/api/v1/ai/tasks/parse",
       payload: {
-        text: "明天上午九点学习线性代数",
+        text: "明天上午九点整理阅读笔记",
         referenceDate: "2026-08-07",
         timeZone: "Asia/Shanghai"
       }

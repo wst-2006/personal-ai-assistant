@@ -182,6 +182,7 @@ html:has(.focus-mini) #root {
 .focus-mini-controls button.danger:hover { color: #fff8f4; background: #9e483d; }
 .focus-mini-controls button:disabled { opacity: .5; }
 .focus-mini-controls svg { width: 12px; height: 12px; }
+.focus-mini-confirmed-state { display: inline-flex; align-items: center; min-height: 30px; color: rgba(82, 100, 90, .78); font-size: 11px; }
 
 .focus-mini-confirm-hint {
   position: static;
@@ -216,8 +217,27 @@ html:has(.focus-mini) #root {
 .focus-mini-action-feedback strong { font: 600 19px/1.4 "Noto Serif SC", "Songti SC", serif; }
 .focus-mini-action-feedback small { color: currentColor; font-size: 10px; opacity: .68; }
 
-.focus-mini.focus-mini-evaluation { display: block; overflow: auto; padding: 32px 0 0; }
-.focus-mini-evaluation-body { position: relative; z-index: 1; min-height: calc(100% - 32px); padding: 22px 25px 24px; box-sizing: border-box; }
+.focus-mini.focus-mini-evaluation {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+.focus-mini.focus-mini-evaluation .focus-mini-titlebar {
+  position: sticky;
+  top: 0;
+  flex: 0 0 32px;
+}
+.focus-mini-evaluation-body {
+  position: relative;
+  z-index: 1;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 22px 25px 24px;
+  box-sizing: border-box;
+  overscroll-behavior: contain;
+}
 .focus-evaluation-timeout { margin: 0 0 14px; color: #7d877f; font: 600 10px/1.45 system-ui, sans-serif; text-align: center; }
 
 .focus-evaluation-sheet { display: grid; gap: 20px; width: 100%; color: #252722; }

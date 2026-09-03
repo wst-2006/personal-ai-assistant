@@ -8,12 +8,14 @@ type TrendPoint = { startDate: string; endDate: string; focusMinutes: number };
 type PointsBreakdown = { execution: number; focus: number; satisfaction: number; review: number };
 type Summary = {
   range: { start: string; end: string };
+  selectedDate: string;
   days: Array<{ localDate: string; focusMinutes: number; closedTasks: number; completedTasks: number; plannedTasks: number; tone: Tone; points: number; pointsBreakdown: PointsBreakdown }>;
   focusTrend: { granularity: TrendGranularity; points: TrendPoint[] };
   focusMinutes: number;
   plannedTasks: number;
   closedTasks: number;
   completedTasks: number;
+  periodGrowthPercent: number;
   satisfaction: { satisfied: number; neutral: number; dissatisfied: number };
   radar: Array<{ key: string; label: string; value: number | null; source: "system" | "user"; sampleDays: number }>;
   currentRadar: Array<{ key: string; label: string; value: number | null; source: "system" | "user" }>;
@@ -619,16 +621,14 @@ function FeelingTraces({ satisfaction }: { satisfaction: Summary["satisfaction"]
   </div>;
 }
 
-function GrowthLandscape({ summary }: { summary: Summary }) {
+function GrowthLandscape({ summary, windowDays }: { summary: Summary; windowDays: WindowDays }) {
   const [focusQuoteIndex, setFocusQuoteIndex] = useState(() => Math.floor(Math.random() * FOCUS_QUOTES.length));
   const feelingTotal = summary.satisfaction.satisfied + summary.satisfaction.neutral + summary.satisfaction.dissatisfied;
   const feelingBalance = feelingTotal === 0
     ? 0
     : (summary.satisfaction.satisfied - summary.satisfaction.dissatisfied) / feelingTotal;
-  const selectedDay = summary.days.find((day) => day.localDate === summary.range.end) ?? summary.days.at(-1);
-  const selectedCompletedTasks = selectedDay?.completedTasks ?? 0;
-  const selectedPlannedTasks = selectedDay?.plannedTasks ?? 0;
   const growthPercent = summary.garden.growthPercent;
+  const periodGrowthPercent = windowDays === 1 ? growthPercent : summary.periodGrowthPercent;
   const bambooStage = growthBambooStage(growthPercent);
   const focusQuote = FOCUS_QUOTES[focusQuoteIndex]!;
 
@@ -645,7 +645,7 @@ function GrowthLandscape({ summary }: { summary: Summary }) {
   return <section
     className="growth-landscape"
     data-tone={feelingBalance > .18 ? "bright" : feelingBalance < -.18 ? "strained" : feelingTotal ? "steady" : "quiet"}
-    aria-label={`成长图景：${summary.garden.treeKind}，${summary.range.end} 成长评分 ${growthPercent}/100`}
+    aria-label={`成长图景：${summary.garden.treeKind}，${summary.selectedDate} 成长评分 ${growthPercent}/100`}
   >
     <svg className="growth-landscape-ink" viewBox="0 0 1200 460" preserveAspectRatio="none" aria-hidden="true">
       <path className="growth-mountain-back" d="M-30 365C105 330 169 216 291 257C398 293 426 348 546 286C661 226 735 141 848 208C955 271 1011 328 1230 218V460H-30Z" />
@@ -663,8 +663,8 @@ function GrowthLandscape({ summary }: { summary: Summary }) {
     <GrowthBamboo stage={bambooStage} bambooCount={summary.garden.bambooCount} />
     <dl className="growth-scene-metrics" id="growth-scene-details">
       <div><dt>有效专注</dt><dd>{summary.focusMinutes}<small>分钟</small></dd></div>
-      <div><dt>所选日任务完成</dt><dd>{selectedCompletedTasks}<small>/{selectedPlannedTasks} 项</small></dd></div>
-      <div><dt>所选日成长评分</dt><dd>{growthPercent}<small>/100</small></dd></div>
+      <div><dt>{windowDays === 1 ? "所选日任务完成" : windowDays === 7 ? "本周任务完成" : "本月任务完成"}</dt><dd>{summary.completedTasks}<small>/{summary.plannedTasks} 项</small></dd></div>
+      <div><dt>{windowDays === 1 ? "所选日成长评分" : windowDays === 7 ? "本周成长评分" : "本月成长评分"}</dt><dd>{periodGrowthPercent}<small>/100</small></dd></div>
     </dl>
     <details className="growth-score-detail">
       <summary>查看今日评分</summary>
@@ -735,8 +735,8 @@ export function GrowthWorkspace() {
       </div>
     </div>
     {!summary && !error ? <div className="growth-loading"><Leaf /><p>正在汇集{rangeDescription}的真实记录。</p></div> : summary ? <>
-      <div className="growth-selected-date"><span>{dateTitle(summary.range.end)}</span><small>{rangeDescription}数据 · 可切换历史日期</small></div>
-      <GrowthLandscape summary={summary} />
+      <div className="growth-selected-date"><span>{dateTitle(summary.selectedDate)}</span><small>{rangeDescription}数据 · 可切换历史日期</small></div>
+      <GrowthLandscape summary={summary} windowDays={windowDays} />
       <details className="growth-ledger">
         <summary><span>查看精确数据与积分账簿</span></summary>
         <section className="growth-score-ledger" aria-label="成长积分构成">

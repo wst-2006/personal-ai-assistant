@@ -69,11 +69,12 @@ backward compatibility.
 
 The normal explicit-confirmation path is:
 
-`scheduled -> preparing -> running -> ended -> evaluated`
+`scheduled -> preparing -> awaiting_late_start -> running -> ended -> evaluated`
 
 The preparation companion offers three actions. `Start task` immediately enters
-`running`; if untouched, `preparing -> running` occurs automatically at the
-fixed start time. The fixed task end remains the cap.
+`running` and records the click time. If untouched, the fixed start time only
+ends preparation and moves the session to `awaiting_late_start`; it never starts
+focus automatically. The fixed task end remains the cap.
 
 The preparation decisions `other_arrangement` and `cancel_task` are each one
 local transactional command over both the focus session and its task. The first
@@ -85,9 +86,10 @@ expose a stopped session paired with an unchanged task.
 
 The local Worker enters `preparing` at `startAt - 1 minute`. `Start task` during
 that minute performs `preparing -> running` and records the click time. If no
-start action exists at `startAt`, the timer worker performs `preparing -> running`
-automatically. Legacy `armed` and `awaiting_late_start` sessions can still be
-started from the current time; repeated starts for `running` are idempotent.
+start action exists at `startAt`, the timer worker performs
+`preparing -> awaiting_late_start` without recording active time. Legacy
+`armed` and `awaiting_late_start` sessions can still be started from the current
+time; repeated starts for `running` are idempotent.
 
 Only one session may be in `running` or recovery-only `paused` at a time. The
 API and Worker take the same transaction lock before `armed -> running`, first
@@ -95,11 +97,17 @@ finalize any earlier session whose fixed end has arrived, and reject or retry
 the new start if another session is still genuinely running. An `ended`
 session waiting for evaluation does not block the next scheduled task.
 
-Preparation and legacy `awaiting_late_start` are not execution. Once the fixed
-start or an early `Start task` action occurs, the session activates the task and
-records focus until the fixed end. If no session can be started before the fixed
-end, the worker records one objective `not_completed` outcome and never creates
-an evaluation or subjective-feedback record.
+Preparation and `awaiting_late_start` are not execution. An explicit `Start
+task` action activates the task and records focus from the click until the fixed
+end. If the fixed end arrives without any start confirmation, the session
+becomes `ended`, the worker records one system `not_completed` outcome and one
+`dissatisfied` feedback row, and performs `open -> closed` with zero focus
+seconds. That path opens neither the rest surface nor pending evaluation. The
+closed task remains editable from the task list; a later correction changes
+only outcome and satisfaction and never invents focus time. If the user had
+already confirmed the scheduled start (`armed`) but the app was unavailable to
+enter `running`, the session still ends with zero focus seconds while the task
+performs `open -> awaiting_outcome` for the normal evaluation flow.
 
 Plan-change advice is not a task state. A structured schedule candidate may
 target only an `open` task and remains transient. It carries the task version
@@ -144,9 +152,11 @@ in `ended` and allows the tray to restore it. Evaluation records outcome,
 progress and satisfaction but does not clear or recalculate the already
 recorded focus duration.
 
-The automatic evaluation surface has a 90-second presentation timeout measured
-from the persisted `endedAt` boundary. Timeout or explicit close leaves the
-session in `ended`; it only marks that automatic surface dismissed locally.
+The automatic evaluation surface has a 60-second inactivity timeout. Each
+intentional evaluation interaction (outcome, progress, satisfaction, note
+editing, focus, or scrolling within the evaluation) restarts that 60-second
+presentation timer. Timeout, explicit close, or minimize leaves the session in
+`ended`; it only marks that automatic surface dismissed locally.
 The task remains discoverable in the pending-evaluation list and can be opened
 again by task title. The already persisted `effectiveFocusSeconds` is never
 conditional on evaluation submission, close, or timeout.
@@ -172,8 +182,8 @@ block a new task from running.
 
 Every eligible exact task has four revision-bound durable transitions: T-15
 creates one Feishu reminder card, T-1 updates the same card with `Start task`
-and opens desktop preparation, T0 auto-starts an untouched preparation session,
-and fixed-end finalizes a never-started task as missed. The original Feishu message ID is persisted so `started`,
+and opens desktop preparation, T0 moves an untouched preparation session into
+late-start waiting, and fixed-end finalizes a never-started task as missed. The original Feishu message ID is persisted so `started`,
 `returned_to_unscheduled`, `cancelled`, and `missed` replace the original
 controls instead of leaving stale buttons.
 

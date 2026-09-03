@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import type { AppDatabase } from "@personal-ai/db/client";
-import { recordFocusNoResponseOutcome } from "@personal-ai/db/focus-no-response";
+import { recordArmedFocusAwaitingOutcome, recordFocusNoResponseOutcome } from "@personal-ai/db/focus-no-response";
 import { focusSessionOperations, focusSessionSegmentRuns, focusSessions, focusStructureSegments, focusStructures, focusTimerJobs, taskFeedback, taskLifecycleEvents, taskOutcomes, tasks } from "@personal-ai/db/schema";
 import {
   calculateSegmentElapsedSeconds,
@@ -15,6 +15,7 @@ import { cancelTaskFollowUp, focusIntegrationSettings, queueTaskStartCardUpdate,
 
 const recoverableStates: FocusSessionState[] = ["scheduled", "reminded", "preparing", "armed", "awaiting_late_start", "running", "paused"];
 const currentStates: FocusSessionState[] = [...recoverableStates, "ended"];
+const IDLE_EVALUATION_PRESENTATION_MS = 60_000;
 type FocusCommandOperation = "create" | "begin" | "skip_preparation" | "respond_start" | "other_arrangement" | "end" | "skip_final_break" | "evaluate";
 
 export type StoredFocusSession = typeof focusSessions.$inferSelect;
@@ -81,11 +82,22 @@ export class FocusService {
       const now = new Date();
       await this.materializeOverdueRunningSessions(transaction as AppDatabase, now);
       const [session] = await transaction.select().from(focusSessions)
-        .where(inArray(focusSessions.state, currentStates))
+        .where(or(
+          inArray(focusSessions.state, recoverableStates),
+          and(
+            eq(focusSessions.state, "ended"),
+            sql`EXISTS (
+              SELECT 1 FROM tasks AS evaluation_task
+              WHERE evaluation_task.id = ${focusSessions.taskId}
+                AND evaluation_task.lifecycle_status = 'awaiting_outcome'
+                AND evaluation_task.deleted_at IS NULL
+            )`
+          )
+        ))
         .orderBy(
           desc(sql`CASE WHEN ${focusSessions.state} = 'ended' THEN 0 ELSE 1 END`),
           desc(focusSessions.updatedAt)
-      ).limit(1);
+        ).limit(1);
       if (!session) return null;
       const scheduled = await this.materializeScheduled(transaction as AppDatabase, session, now);
       const prepared = await this.materializePreparation(transaction as AppDatabase, scheduled, now);
@@ -118,11 +130,17 @@ export class FocusService {
   }
 
   async pendingEvaluation(): Promise<StoredFocusSession | null> {
-    const presentationCutoff = new Date(Date.now() - 90_000);
+    const presentationCutoff = new Date(Date.now() - IDLE_EVALUATION_PRESENTATION_MS);
     const [session] = await this.db.select().from(focusSessions)
       .where(and(
         eq(focusSessions.state, "ended"),
         gt(focusSessions.endedAt, presentationCutoff),
+        sql`EXISTS (
+          SELECT 1 FROM tasks AS evaluation_task
+          WHERE evaluation_task.id = ${focusSessions.taskId}
+            AND evaluation_task.lifecycle_status = 'awaiting_outcome'
+            AND evaluation_task.deleted_at IS NULL
+        )`,
       ))
       .orderBy(desc(focusSessions.endedAt), desc(focusSessions.updatedAt))
       .limit(1);
@@ -138,7 +156,7 @@ export class FocusService {
         .limit(1);
       if (!running) return null;
       const [session] = await transaction.select().from(focusSessions)
-        .where(inArray(focusSessions.state, ["preparing", "armed", "awaiting_late_start"]))
+        .where(eq(focusSessions.state, "preparing"))
         .orderBy(asc(focusSessions.plannedStartAt), desc(focusSessions.updatedAt))
         .limit(1);
       if (!session) return null;
@@ -290,15 +308,21 @@ export class FocusService {
         .where(and(eq(focusSessions.taskId, task.id), inArray(focusSessions.state, recoverableStates)))
         .orderBy(desc(focusSessions.createdAt)).limit(1);
       if (existing) {
-        if (mode === "remind") return existing;
-        const confirmed = await this.confirmStart(transaction as AppDatabase, existing, task, now);
-        await this.recordCommand(transaction as AppDatabase, commandId, "create", expectedTaskVersion, confirmed);
-        return confirmed;
+        // Creating or re-opening a prepared session must be idempotent. A
+        // separate begin/skip-preparation command is the only path that may
+        // turn it into counted focus time.
+        await this.recordCommand(transaction as AppDatabase, commandId, "create", expectedTaskVersion, existing);
+        return existing;
       }
 
-      // Starting is intentionally available before the preparation window:
-      // the user's click means "start now" and the fixed end remains the cap.
-      const state: FocusSessionState = mode === "remind" ? "reminded" : "preparing";
+      // A prepared session waits until T-1 before showing the one-minute
+      // preparation window. If the task is already inside that window, enter
+      // preparation immediately; a reminder-created session remains reminded.
+      const state: FocusSessionState = mode === "remind"
+        ? "reminded"
+        : task.startAt.getTime() - now.getTime() <= 60_000
+          ? "preparing"
+          : "scheduled";
       // Keep the structure attached even for a reminder-created session so an
       // unattended start can schedule segment transitions at T0.
       const execution = await this.activeStructure(transaction as AppDatabase, task.id, task.scheduleRevision);
@@ -341,9 +365,20 @@ export class FocusService {
         createdAt: now,
         updatedAt: now
       });
-      const result = mode === "prepare"
-        ? await this.confirmStart(transaction as AppDatabase, created, task, now)
-        : created;
+      if (state === "scheduled") await transaction.insert(focusTimerJobs).values({
+        id: randomUUID(),
+        focusSessionId: created.id,
+        kind: "preparation_start",
+        expectedSessionVersion: created.version,
+        dueAt: new Date(task.startAt.getTime() - 60_000),
+        status: "pending",
+        attempts: 0,
+        createdAt: now,
+        updatedAt: now
+      });
+      // Creating a prepared session only arms the fixed schedule. Formal
+      // focus time begins later, after an explicit user confirmation.
+      const result = created;
       await this.recordCommand(transaction as AppDatabase, commandId, "create", expectedTaskVersion, result);
       return result;
     });
@@ -824,6 +859,10 @@ export class FocusService {
   ): Promise<StoredFocusSession> {
     if (current.state === "running") return current;
     if (!task.startAt || !task.endAt || task.endAt <= now) return this.stopExpiredSession(db, current, now);
+    // A preparation confirmation means "I will start on time". It must not
+    // turn into counted focus while the task is still in the future. The
+    // worker owns the fixed-start transition for an armed session.
+    if (current.state === "armed" && task.startAt > now) return current;
     let prepared = current;
     let execution = current.focusStructureId ? await this.structureById(db, current.focusStructureId) : null;
     if (!execution) {
@@ -844,6 +883,55 @@ export class FocusService {
       prepared = attached;
     }
     await this.cancelSessionTimerJobs(db, prepared.id, now);
+    if (["scheduled", "reminded", "preparing"].includes(prepared.state)) {
+      // If the request races the T0 worker, do not interpret a stale
+      // preparation click as an immediate start. It becomes the explicit
+      // late-start state and can only be started from the current clock.
+      if (task.startAt <= now) {
+        const [waiting] = await db.update(focusSessions).set({
+          state: "awaiting_late_start",
+          startedAt: null,
+          activeSinceAt: null,
+          preparingEndsAt: null,
+          confirmationDeadlineAt: null,
+          version: prepared.version + 1,
+          updatedAt: now,
+        }).where(and(
+          eq(focusSessions.id, prepared.id),
+          eq(focusSessions.version, prepared.version),
+          inArray(focusSessions.state, ["scheduled", "reminded", "preparing"]),
+        )).returning();
+        return waiting ?? this.requireCurrent(db, prepared.id);
+      }
+      const [armed] = await db.update(focusSessions).set({
+        state: "armed",
+        startedAt: null,
+        activeSinceAt: null,
+        preparingEndsAt: null,
+        confirmationDeadlineAt: task.startAt,
+        version: prepared.version + 1,
+        updatedAt: now,
+      }).where(and(
+        eq(focusSessions.id, prepared.id),
+        eq(focusSessions.version, prepared.version),
+      )).returning();
+      if (!armed) throw new FocusVersionConflictError(await this.requireCurrent(db, prepared.id));
+      await db.insert(focusTimerJobs).values({
+        id: randomUUID(),
+        focusSessionId: armed.id,
+        kind: "confirmation_timeout",
+        expectedSessionVersion: armed.version,
+        dueAt: task.startAt,
+        status: "pending",
+        attempts: 0,
+        createdAt: now,
+        updatedAt: now,
+      }).onConflictDoNothing();
+      return armed;
+    }
+    // A late-start confirmation is intentionally the only path that starts
+    // from the current clock. An armed session that missed its worker tick is
+    // also safe to recover here without fabricating earlier focus time.
     return this.startRunning(db, prepared, task, now);
   }
 
@@ -1001,7 +1089,11 @@ export class FocusService {
   private async stopExpiredSession(db: AppDatabase, current: StoredFocusSession, now: Date): Promise<StoredFocusSession> {
     await this.cancelSessionTimerJobs(db, current.id, now);
     const [stopped] = await db.update(focusSessions).set({
-      state: "stopped_no_response",
+      // Persist a terminal session with zero executed focus time. The task
+      // consequence below depends on whether the user had armed the start.
+      state: "ended",
+      rawActiveSeconds: 0,
+      effectiveFocusSeconds: 0,
       activeSinceAt: null,
       endedAt: now,
       stoppedReason: "固定结束时间已过，未进入专注",
@@ -1009,12 +1101,14 @@ export class FocusService {
       updatedAt: now
     }).where(and(eq(focusSessions.id, current.id), eq(focusSessions.version, current.version))).returning();
     if (!stopped) throw new FocusVersionConflictError(await this.requireCurrent(db, current.id));
-    await recordFocusNoResponseOutcome(db, {
+    const input = {
       taskId: current.taskId,
       focusSessionId: current.id,
       now,
       reason: "固定结束时间已过，未进入专注"
-    });
+    };
+    if (current.state === "armed") await recordArmedFocusAwaitingOutcome(db, input);
+    else await recordFocusNoResponseOutcome(db, input);
     return stopped;
   }
 
@@ -1058,17 +1152,29 @@ export class FocusService {
       const autoStartAt = current.confirmationDeadlineAt ?? current.plannedStartAt;
       if (autoStartAt && autoStartAt > now) return current;
     }
-    if (!["preparing", "armed", "reminded"].includes(current.state)) return current;
-    if (current.state !== "reminded" && (!current.preparingEndsAt || current.preparingEndsAt > now)) return current;
+    // An armed task is waiting for the worker's fixed-start job. Do not turn it
+    // into late-start waiting during an API poll, otherwise the scheduled
+    // start can race with the worker and the formal timer will never appear.
+    if (!["preparing", "reminded"].includes(current.state)) return current;
+    if (current.state === "preparing" && (!current.preparingEndsAt || current.preparingEndsAt > now)) return current;
     const [task] = await db.select().from(tasks).where(and(eq(tasks.id, current.taskId), isNull(tasks.deletedAt))).limit(1);
     if (!task || task.lifecycleStatus !== "open") return current;
     if (task.endAt && task.endAt <= now) return this.stopExpiredSession(db, current, now);
-    if (current.state === "armed") {
-      await this.cancelSessionTimerJobs(db, current.id, now);
-      return this.startRunning(db, current, task, now);
-    }
     await this.cancelSessionTimerJobs(db, current.id, now);
-    return this.startRunning(db, current, task, now);
+    const [waiting] = await db.update(focusSessions).set({
+      state: "awaiting_late_start",
+      startedAt: null,
+      activeSinceAt: null,
+      preparingEndsAt: null,
+      confirmationDeadlineAt: null,
+      version: current.version + 1,
+      updatedAt: now,
+    }).where(and(
+      eq(focusSessions.id, current.id),
+      eq(focusSessions.version, current.version),
+      inArray(focusSessions.state, ["preparing", "reminded"]),
+    )).returning();
+    return waiting ?? this.requireCurrent(db, current.id);
   }
 
   private async materializeFixedEnd(db: AppDatabase, current: StoredFocusSession, now: Date): Promise<StoredFocusSession> {

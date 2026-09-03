@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from "react";
 import type { FocusTheme } from "@personal-ai/domain/user-profile";
 
 type FocusThemeClockProps = {
@@ -5,6 +6,8 @@ type FocusThemeClockProps = {
   value: string;
   compact?: boolean;
 };
+
+const flipAnimationDurationMs = 520;
 
 const lcdSegmentOrder = ["a", "b", "c", "d", "e", "f", "g"] as const;
 type LcdSegment = typeof lcdSegmentOrder[number];
@@ -65,11 +68,47 @@ function LcdClock({ value, compact }: Pick<FocusThemeClockProps, "value" | "comp
   </svg>;
 }
 
+function FlipDigit({ value }: { value: string }) {
+  const [current, setCurrent] = useState(value);
+  const [previous, setPrevious] = useState(value);
+  const [flipping, setFlipping] = useState(false);
+  const currentRef = useRef(value);
+  const timerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (value === currentRef.current) return;
+    const oldValue = currentRef.current;
+    currentRef.current = value;
+    setPrevious(oldValue);
+    setCurrent(value);
+    setFlipping(true);
+    if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    timerRef.current = window.setTimeout(() => {
+      setFlipping(false);
+      timerRef.current = null;
+    }, flipAnimationDurationMs);
+    return () => {
+      if (timerRef.current !== null) window.clearTimeout(timerRef.current);
+    };
+  }, [value]);
+
+  return <i className={`flip-digit ${flipping ? "is-flipping" : ""}`} aria-hidden="true">
+    <span className="flip-digit-half flip-digit-half-top"><b>{flipping ? previous : current}</b></span>
+    <span className="flip-digit-half flip-digit-half-bottom"><b>{current}</b></span>
+    {flipping && <>
+      <span className="flip-digit-flap" aria-hidden="true">
+        <span className="flip-digit-flap-face flip-digit-flap-front"><b>{previous}</b></span>
+        <span className="flip-digit-flap-face flip-digit-flap-back"><b>{current}</b></span>
+      </span>
+    </>}
+  </i>;
+}
+
 function FlipClock({ value, compact }: Pick<FocusThemeClockProps, "value" | "compact">) {
   return <span className={`theme-clock flip-clock ${compact ? "compact" : ""}`} aria-label={value}>
     {value.split("").map((character, index) => character === ":"
       ? <i className="flip-colon" aria-hidden="true" key={`colon-${index}`}>:</i>
-      : <i className="flip-digit" aria-hidden="true" key={`${character}-${index}`}><b>{character}</b></i>)}
+      : <FlipDigit value={character} key={`digit-${index}`} />)}
   </span>;
 }
 

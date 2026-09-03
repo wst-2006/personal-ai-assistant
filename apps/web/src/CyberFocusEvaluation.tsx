@@ -18,6 +18,7 @@ type CyberFocusEvaluationProps = {
   onSatisfactionChange: (value: FocusSatisfaction) => void;
   onNoteChange: (value: string) => void;
   onSubmit: () => void;
+  showNote?: boolean;
 };
 
 const outcomeOptions: Array<{ value: FocusOutcome; label: string }> = [
@@ -122,7 +123,7 @@ export function CyberFocusEvaluation(props: CyberFocusEvaluationProps) {
       ><span>{props.satisfaction === option.value ? ">" : " "}</span>[{index + 1}] {option.label}</button>)}
     </div>
 
-    <label className="cyber-note-input">
+    {props.showNote !== false ? <label className="cyber-note-input">
       <span className="cyber-prompt">PS C:\Focus\review&gt; note --optional</span>
       <textarea
         ref={noteRef}
@@ -139,7 +140,7 @@ export function CyberFocusEvaluation(props: CyberFocusEvaluationProps) {
         maxLength={4000}
         placeholder="输入原因；可留空。Ctrl + Enter 保存"
       />
-    </label>
+    </label> : null}
 
     <p className={`cyber-evaluation-status ${props.error ? "error" : ""}`} role={props.error ? "alert" : "status"}>
       {props.error ?? `OUTCOME=${props.outcome.toUpperCase()}  PROGRESS=${props.outcome === "partial" ? props.progress : progressForOutcome(props.outcome)}%`}

@@ -27,6 +27,7 @@ import { loadUserProfile, type UserProfile } from "./user-profile-client";
 
 const evaluationSurface = new URLSearchParams(window.location.search).get("focus-evaluation") === "1";
 const preparationSurface = new URLSearchParams(window.location.search).get("focus-preparation") === "1";
+const IDLE_EVALUATION_TIMEOUT_MS = 60_000;
 
 function safeTimeZone(value: unknown): string {
   if (typeof value !== "string" || !value.trim()) return "Asia/Shanghai";
@@ -58,11 +59,14 @@ export function FocusMiniWindow() {
   const [satisfaction, setSatisfaction] = useState<FocusSatisfaction>("satisfied");
   const [note, setNote] = useState("");
   const [evaluationDeadlineMs, setEvaluationDeadlineMs] = useState<number | null>(null);
-  const [evaluationInteracted, setEvaluationInteracted] = useState(false);
+  const evaluationTimerRef = useRef<number | null>(null);
+  const evaluationTimerVersionRef = useRef(0);
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
   const actionFeedbackTimer = useRef<number | null>(null);
+  const visibleEvaluationSnapshotRef = useRef<FocusSessionSnapshot | null>(null);
 
   const refresh = useCallback(async () => {
+    if (evaluationSurface && visibleEvaluationSnapshotRef.current?.session.state === "ended") return;
     try {
       const next = await loadFocusSnapshot(
         undefined,
@@ -70,7 +74,11 @@ export function FocusMiniWindow() {
       );
       const dismissed = next?.session.state === "ended"
         && window.localStorage.getItem(`personal-ai.focus-evaluation-dismissed.${next.session.id}`) === "1";
-      setSnapshot(dismissed ? null : next);
+      const nextSnapshot = dismissed
+        ? null
+        : next ?? (evaluationSurface ? visibleEvaluationSnapshotRef.current : null);
+      setSnapshot(nextSnapshot);
+      visibleEvaluationSnapshotRef.current = nextSnapshot?.session.state === "ended" ? nextSnapshot : null;
       if (dismissed && evaluationSurface) {
         void invokeDesktop("focus_evaluation_hide").catch(() => undefined);
       }
@@ -106,10 +114,26 @@ export function FocusMiniWindow() {
 
   const endedSessionId = snapshot?.session.state === "ended" ? snapshot.session.id : null;
 
+  function scheduleEvaluationTimeout(sessionId: string, deadlineMs: number) {
+    evaluationTimerVersionRef.current += 1;
+    const version = evaluationTimerVersionRef.current;
+    if (evaluationTimerRef.current) window.clearTimeout(evaluationTimerRef.current);
+    evaluationTimerRef.current = window.setTimeout(() => {
+      if (evaluationTimerVersionRef.current !== version) return;
+      window.localStorage.setItem(`personal-ai.focus-evaluation-dismissed.${sessionId}`, "1");
+      visibleEvaluationSnapshotRef.current = null;
+      setSnapshot(null);
+      setEvaluationDeadlineMs(null);
+      evaluationTimerRef.current = null;
+      void invokeDesktop(surfaceCommand("hide")).catch(() => undefined);
+    }, Math.max(0, deadlineMs - Date.now()));
+  }
+
   useEffect(() => {
     if (!endedSessionId) {
+      if (evaluationTimerRef.current) window.clearTimeout(evaluationTimerRef.current);
+      evaluationTimerRef.current = null;
       setEvaluationDeadlineMs(null);
-      setEvaluationInteracted(false);
       return;
     }
     setEvaluationSaved(false);
@@ -118,27 +142,20 @@ export function FocusMiniWindow() {
     setProgress("100");
     setSatisfaction("satisfied");
     setNote("");
-    const endedAt = snapshot?.session.endedAt ? new Date(snapshot.session.endedAt).getTime() : Date.now();
-    setEvaluationDeadlineMs(endedAt + 90_000);
-    setEvaluationInteracted(false);
+    const deadline = Date.now() + IDLE_EVALUATION_TIMEOUT_MS;
+    setEvaluationDeadlineMs(deadline);
+    scheduleEvaluationTimeout(endedSessionId, deadline);
+    return () => {
+      if (evaluationTimerRef.current) window.clearTimeout(evaluationTimerRef.current);
+      evaluationTimerRef.current = null;
+    };
   }, [endedSessionId, snapshot?.session.endedAt]);
-
-  useEffect(() => {
-    if (!endedSessionId || !evaluationDeadlineMs || evaluationInteracted) return;
-    const delay = Math.max(0, evaluationDeadlineMs - Date.now());
-    const timer = window.setTimeout(() => {
-      window.localStorage.setItem(`personal-ai.focus-evaluation-dismissed.${endedSessionId}`, "1");
-      setSnapshot(null);
-      setEvaluationDeadlineMs(null);
-      void invokeDesktop(surfaceCommand("hide")).catch(() => undefined);
-    }, delay);
-    return () => window.clearTimeout(timer);
-  }, [endedSessionId, evaluationDeadlineMs, evaluationInteracted]);
 
   const remaining = snapshot ? focusRemainingSeconds(snapshot, nowMs) : 0;
   const phaseProgress = snapshot ? focusPhaseProgress(snapshot, nowMs) : 0;
   const theme = useMemo<FocusTheme>(() => profile?.focusTheme ?? "ink", [profile?.focusTheme]);
   const resting = snapshot?.phase === "break";
+  const startActionLabel = snapshot?.session.state === "awaiting_late_start" ? "现在开始计时" : "我会准时开始";
   const phaseLabel = snapshot?.phase === "break"
       ? "休息"
       : snapshot?.phase === "preparation"
@@ -207,8 +224,21 @@ export function FocusMiniWindow() {
   }
 
   function markEvaluationInteraction() {
-    setEvaluationInteracted(true);
+    const deadline = Date.now() + IDLE_EVALUATION_TIMEOUT_MS;
+    setEvaluationDeadlineMs(deadline);
+    if (endedSessionId) scheduleEvaluationTimeout(endedSessionId, deadline);
     setEvaluationError(null);
+  }
+
+  function dismissEvaluation() {
+    if (snapshot?.session.state === "ended") {
+      window.localStorage.setItem(`personal-ai.focus-evaluation-dismissed.${snapshot.session.id}`, "1");
+    }
+    visibleEvaluationSnapshotRef.current = null;
+    if (evaluationTimerRef.current) window.clearTimeout(evaluationTimerRef.current);
+    evaluationTimerRef.current = null;
+    setSnapshot(null);
+    setEvaluationDeadlineMs(null);
   }
 
   async function updateSetting(command: string, enabled: boolean) {
@@ -227,7 +257,7 @@ export function FocusMiniWindow() {
 
   async function saveEvaluation() {
     if (!snapshot || snapshot.session.state !== "ended" || busy) return;
-    setEvaluationInteracted(true);
+    markEvaluationInteraction();
     if (!validFocusEvaluation(outcome, progress)) {
       setEvaluationError("请填写与完成情况一致的客观进度。");
       return;
@@ -243,6 +273,7 @@ export function FocusMiniWindow() {
       });
       window.localStorage.removeItem(`personal-ai.focus-evaluation-dismissed.${snapshot.session.id}`);
       setEvaluationSaved(true);
+      visibleEvaluationSnapshotRef.current = null;
       setSnapshot(null);
       await invokeDesktop("focus_mini_open_main").catch(() => undefined);
       await invokeDesktop(surfaceCommand("hide")).catch(() => undefined);
@@ -261,11 +292,11 @@ export function FocusMiniWindow() {
   const ended = snapshot?.session.state === "ended";
   const evaluationSecondsLeft = evaluationDeadlineMs
     ? Math.max(0, Math.ceil((evaluationDeadlineMs - nowMs) / 1_000))
-    : 90;
+    : 60;
 
   const finalBreak = snapshot?.phase === "break"
     && snapshot.currentSegment?.position === (snapshot.segments.at(-1)?.position ?? -1);
-  const quote = snapshot?.session.state === "running" ? focusQuote(snapshot.session.id, resting) : null;
+  const quote = snapshot && !ended ? focusQuote(snapshot.session.id, resting) : null;
 
   return <main className={`focus-mini focus-theme-${theme} focus-phase-${snapshot?.phase ?? "idle"} ${ended ? "focus-mini-evaluation" : ""}`}>
     <div className="focus-mini-grain" aria-hidden="true" />
@@ -288,13 +319,13 @@ export function FocusMiniWindow() {
             onClick={() => void updateSetting("focus_mini_set_locked", !settings?.locked)}
           >{settings?.locked ? <Lock /> : <Unlock />}</button>
         </> : null}
-        <button type="button" aria-label={evaluationSurface ? "最小化评价窗口" : preparationSurface ? "最小化准备窗口" : "最小化专注窗口"} title="最小化" onClick={() => void invokeDesktop(surfaceCommand("minimize"))}><Minus /></button>
-        <button type="button" aria-label={evaluationSurface ? "关闭评价窗口" : preparationSurface ? "关闭准备窗口" : "关闭专注窗口"} title={evaluationSurface ? "关闭评价窗口，保留待评价" : "关闭窗口，计时状态不变"} onClick={() => { if (evaluationSurface && snapshot) window.localStorage.setItem(`personal-ai.focus-evaluation-dismissed.${snapshot.session.id}`, "1"); void invokeDesktop(surfaceCommand("hide")); }}><X /></button>
+        <button type="button" aria-label={evaluationSurface ? "最小化评价窗口" : preparationSurface ? "最小化准备窗口" : "最小化专注窗口"} title="最小化" onClick={() => { if (ended) { dismissEvaluation(); void invokeDesktop(surfaceCommand("hide")); return; } void invokeDesktop(surfaceCommand("minimize")); }}><Minus /></button>
+        <button type="button" aria-label={evaluationSurface ? "关闭评价窗口" : preparationSurface ? "关闭准备窗口" : "关闭专注窗口"} title={ended ? "关闭评价窗口，保留待评价" : "关闭窗口，计时状态不变"} onClick={() => { if (ended) dismissEvaluation(); void invokeDesktop(surfaceCommand("hide")); }}><X /></button>
       </div>
     </header>
     {actionFeedback ? <div className="focus-mini-action-feedback" role="status"><strong>{actionFeedback}</strong><small>窗口即将自动关闭</small></div> : ended && snapshot ? (
-      <div className="focus-mini-evaluation-body">
-        {!evaluationInteracted ? <p className="focus-evaluation-timeout" role="status">尚未操作，{evaluationSecondsLeft} 秒后自动关闭并保留为待评价</p> : null}
+      <div className="focus-mini-evaluation-body" onFocusCapture={markEvaluationInteraction} onScrollCapture={markEvaluationInteraction}>
+        <p className="focus-evaluation-timeout" role="status">无操作，{evaluationSecondsLeft} 秒后自动关闭并保留为待评价</p>
         {theme === "cyber" ? <CyberFocusEvaluation
           taskTitle={snapshot.task.title}
           outcome={outcome}
@@ -340,17 +371,19 @@ export function FocusMiniWindow() {
         <cite>{quote.source}</cite>
       </div> : null}
       <div className="focus-mini-controls" aria-label="专注悬浮窗操作">
-        {snapshot.session.state === "reminded" || snapshot.session.state === "scheduled" || snapshot.session.state === "preparing" || snapshot.session.state === "armed" || snapshot.session.state === "awaiting_late_start"
+        {snapshot.session.state === "reminded" || snapshot.session.state === "scheduled" || snapshot.session.state === "preparing" || snapshot.session.state === "awaiting_late_start"
           ? <>
-            <button className="primary" type="button" disabled={busy} title="开始任务" onClick={() => void act("skip-preparation")}><Play />开始任务</button>
+            <button className="primary" type="button" disabled={busy} title={startActionLabel} onClick={() => void act("skip-preparation")}><Play />{startActionLabel}</button>
             <button type="button" disabled={busy} title="停止本次准备并退回未排期" onClick={() => void decidePreparation("other-arrangement")}><CalendarClock />另有安排</button>
             <button className="danger" type="button" disabled={busy} title="直接取消这项任务" onClick={() => void decidePreparation("cancel-task")}><XCircle />取消任务</button>
           </>
+          : snapshot.session.state === "armed"
+            ? <span className="focus-mini-confirmed-state">已确认准时开始，等待原定时间自动计时</span>
           : null}
         {finalBreak ? <button type="button" disabled={busy} title="跳过最后休息并进入评价" onClick={() => void act("skip-final-break")}><SkipForward />跳过休息</button> : null}
       </div>
       {!preparationSurface && (snapshot.session.state === "reminded" || snapshot.session.state === "scheduled" || snapshot.session.state === "preparing" || snapshot.session.state === "armed" || snapshot.session.state === "awaiting_late_start")
-        ? <p className="focus-mini-confirm-hint">到点会自动开始，也可以现在开始</p>
+        ? <p className="focus-mini-confirm-hint">{snapshot.session.state === "armed" ? "已确认会在原定时间开始；到点自动进入专注计时" : snapshot.session.state === "awaiting_late_start" ? "已错过原定开始时间；现在开始只记录实际专注时长" : "点击“我会准时开始”后，到原定时间自动进入专注计时"}</p>
         : null}
       {!preparationSurface && !["preparing", "armed", "awaiting_late_start"].includes(snapshot.session.state)
         ? <button className={`focus-mini-auto ${settings?.autoShow ? "active" : ""}`} type="button" onClick={() => void updateSetting("focus_mini_set_auto_show", !settings?.autoShow)}>开始时自动出现</button>

@@ -33,6 +33,38 @@ function datesEndingAt(end: string, count: number) {
   }).reverse();
 }
 
+function datesBetween(start: string, end: string) {
+  const cursor = new Date(`${start}T00:00:00.000Z`);
+  const endDate = new Date(`${end}T00:00:00.000Z`);
+  const dates: string[] = [];
+  while (cursor <= endDate) {
+    dates.push(cursor.toISOString().slice(0, 10));
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return dates;
+}
+
+function growthRange(endLocalDate: string, dayCount: GrowthWindowDays) {
+  if (dayCount === 7) {
+    const anchor = new Date(`${endLocalDate}T00:00:00.000Z`);
+    const day = anchor.getUTCDay();
+    const mondayOffset = day === 0 ? 6 : day - 1;
+    anchor.setUTCDate(anchor.getUTCDate() - mondayOffset);
+    const start = anchor.toISOString().slice(0, 10);
+    anchor.setUTCDate(anchor.getUTCDate() + 6);
+    const end = anchor.toISOString().slice(0, 10);
+    return { start, end, dates: datesBetween(start, end) };
+  }
+  if (dayCount === 30) {
+    const [year, month] = endLocalDate.slice(0, 7).split("-").map(Number);
+    const start = `${endLocalDate.slice(0, 7)}-01`;
+    const end = new Date(Date.UTC(year!, month!, 0)).toISOString().slice(0, 10);
+    return { start, end, dates: datesBetween(start, end) };
+  }
+  const dates = datesEndingAt(endLocalDate, dayCount);
+  return { start: dates[0]!, end: dates.at(-1)!, dates };
+}
+
 function average(values: number[]) {
   return values.length ? Math.round(values.reduce((sum, value) => sum + value, 0) / values.length) : null;
 }
@@ -69,6 +101,16 @@ function taskCountGrowthCap(plannedTasks: number) {
   return 100;
 }
 
+function dailyGrowthScore(day: Day) {
+  const growthCap = taskCountGrowthCap(day.plannedTasks);
+  const baseGrowthScore = Math.round(day.executionPercent * 0.7 + day.satisfactionPercent * 0.3);
+  return {
+    growthCap,
+    baseGrowthScore,
+    growthPercent: Math.min(growthCap, Math.round(baseGrowthScore * growthCap / 100))
+  };
+}
+
 export function bambooCountForPlannedTasks(plannedTasks: number) {
   if (plannedTasks <= 0) return 0;
   if (plannedTasks <= 2) return 1;
@@ -103,16 +145,16 @@ export class GrowthService {
   constructor(private readonly db: AppDatabase) {}
 
   async getSummary(endLocalDate: string, dayCount: GrowthWindowDays = 7) {
-    const dates = datesEndingAt(endLocalDate, dayCount);
-    const start = dates[0]!;
-    const taskRows = await this.db.select().from(tasks).where(and(eq(tasks.recordKind, "formal"), isNull(tasks.deletedAt), gte(tasks.localDate, start), lte(tasks.localDate, endLocalDate)));
+    const range = growthRange(endLocalDate, dayCount);
+    const { start, end, dates } = range;
+    const taskRows = await this.db.select().from(tasks).where(and(eq(tasks.recordKind, "formal"), isNull(tasks.deletedAt), gte(tasks.localDate, start), lte(tasks.localDate, end)));
     const taskIds = taskRows.map((task) => task.id);
     const [sessions, feedback, outcomes, reviews, diaryRows] = await Promise.all([
       taskIds.length ? this.db.select().from(focusSessions).where(inArray(focusSessions.taskId, taskIds)) : Promise.resolve([]),
       taskIds.length ? this.db.select().from(taskFeedback).where(inArray(taskFeedback.taskId, taskIds)) : Promise.resolve([]),
       taskIds.length ? this.db.select().from(taskOutcomes).where(inArray(taskOutcomes.taskId, taskIds)) : Promise.resolve([]),
-      this.db.select().from(reviewSessions).where(and(gte(reviewSessions.localDate, start), lte(reviewSessions.localDate, endLocalDate))),
-      this.db.select().from(cyberDiaries).where(and(gte(cyberDiaries.localDate, start), lte(cyberDiaries.localDate, endLocalDate)))
+      this.db.select().from(reviewSessions).where(and(gte(reviewSessions.localDate, start), lte(reviewSessions.localDate, end))),
+      this.db.select().from(cyberDiaries).where(and(gte(cyberDiaries.localDate, start), lte(cyberDiaries.localDate, end)))
     ]);
     const reviewIds = reviews.map((review) => review.id);
     const sessionIds = sessions.map((session) => session.id);
@@ -190,11 +232,17 @@ export class GrowthService {
     const closedTasks = days.reduce((sum, day) => sum + day.closedTasks, 0);
     const completedTasks = days.reduce((sum, day) => sum + day.completedTasks, 0);
     const currentDay = days.find((day) => day.localDate === endLocalDate) ?? days.at(-1);
-    const growthCap = taskCountGrowthCap(currentDay?.plannedTasks ?? 0);
+    const activeDays = days.filter((day) => day.hasData);
+    const currentDayScore = currentDay ? dailyGrowthScore(currentDay) : { growthCap: 0, baseGrowthScore: 0, growthPercent: 0 };
+    const periodGrowthScore = dayCount === 1
+      ? currentDayScore
+      : {
+          growthCap: average(activeDays.map((day) => dailyGrowthScore(day).growthCap)) ?? 0,
+          baseGrowthScore: average(activeDays.map((day) => dailyGrowthScore(day).baseGrowthScore)) ?? 0,
+          growthPercent: average(activeDays.map((day) => dailyGrowthScore(day).growthPercent)) ?? 0
+        };
     const executionPercent = currentDay?.executionPercent ?? 0;
     const currentSatisfactionPercent = currentDay?.satisfactionPercent ?? 0;
-    const baseGrowthScore = Math.round(executionPercent * 0.7 + currentSatisfactionPercent * 0.3);
-    const growthPercent = Math.min(growthCap, Math.round(baseGrowthScore * growthCap / 100));
     const currentBambooCount = bambooCountForPlannedTasks(currentDay?.plannedTasks ?? 0);
     const satisfied = latestFeedback.filter((item) => item.satisfaction === "satisfied").length;
     const neutral = latestFeedback.filter((item) => item.satisfaction === "neutral").length;
@@ -206,7 +254,7 @@ export class GrowthService {
     }
     const latestOutcomes = [...latestOutcomeByTask.values()];
     const quality = latestOutcomes.length ? Math.round(latestOutcomes.reduce((sum, outcome) => sum + outcome.progressPercent, 0) / latestOutcomes.length) : 0;
-    const treeKind = growthPercent >= 80 ? "竹林" : growthPercent >= 50 ? "新竹" : growthPercent > 0 ? "竹笋" : "空庭";
+    const treeKind = currentDayScore.growthPercent >= 80 ? "竹林" : currentDayScore.growthPercent >= 50 ? "新竹" : currentDayScore.growthPercent > 0 ? "竹笋" : "空庭";
     const firstRadar = days[0]?.radar ?? [];
     const radar = radarOrder.map((key) => {
       const definition = firstRadar.find((metric) => metric.key === key)!;
@@ -217,16 +265,17 @@ export class GrowthService {
       });
       return { key, label: definition.label, source: definition.source, value: average(values), sampleDays: values.length };
     });
-    const activeDays = days.filter((day) => day.hasData);
     const pointsBreakdown = averageBreakdown(days);
     return {
-      range: { start, end: endLocalDate },
+      range: { start, end },
+      selectedDate: endLocalDate,
       days: days.map(({ radar: _radar, executionPercent: _executionPercent, satisfactionPercent: _satisfactionPercent, hasData: _hasData, ...day }) => day),
       focusTrend: buildFocusTrend(days, dayCount),
       focusMinutes,
       plannedTasks,
       closedTasks,
       completedTasks,
+      periodGrowthPercent: periodGrowthScore.growthPercent,
       reviewedDays: reviewedDateSet.size,
       satisfaction: { satisfied, neutral, dissatisfied },
       radar,
@@ -236,9 +285,9 @@ export class GrowthService {
         points: average(activeDays.map((day) => day.points)) ?? 0,
         pointsBreakdown,
         scoredDays: activeDays.length,
-        growthPercent,
-        growthCap,
-        baseGrowthScore,
+        growthPercent: currentDayScore.growthPercent,
+        growthCap: currentDayScore.growthCap,
+        baseGrowthScore: currentDayScore.baseGrowthScore,
         executionPercent,
         satisfactionPercent: currentSatisfactionPercent,
         bambooCount: currentBambooCount,

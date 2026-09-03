@@ -30,7 +30,7 @@ type DayReference = {
     hydrationGuidance?: string[];
     mealExamples?: { breakfast: string[]; lunch: string[]; dinner: string[]; snack: string[] };
     proteinRotationSources?: string[];
-    foodReference?: { proteinOptions: string[]; fiberOptions: string[]; carbOptions: string[] };
+    foodReference?: { proteinOptions: string[]; fiberOptions: string[]; carbOptions: string[]; fatOptions?: string[] };
     fruitOptions?: string[];
     plateGuidance: string[];
     seasonalVegetables: string[];
@@ -158,16 +158,38 @@ function rangeText(range: { minimum: number; maximum: number } | undefined, suff
   return range ? `${range.minimum}–${range.maximum}${suffix}` : "当前参考未提供";
 }
 
+function approximateSpan(minimum: number, maximum: number, divisor: number, digits = 0) {
+  const factor = 10 ** digits;
+  const format = (value: number) => String(Math.round(value * factor) / factor);
+  return `${format(minimum / divisor)}–${format(maximum / divisor)}`;
+}
+
+function concreteFoodReference(
+  tone: string,
+  range: { minimum: number; maximum: number } | undefined,
+  options: string[] | undefined,
+) {
+  const concrete = options?.filter((item) => /\d/u.test(item));
+  if (concrete?.length) return concrete.slice(0, 3).join("；");
+  if (!range) return "当前参考未提供具体换算";
+  if (tone === "protein") return `约 ${approximateSpan(range.minimum, range.maximum, 6)} 个鸡蛋，或 ${approximateSpan(range.minimum, range.maximum, 0.26)} 克牛肉，或 ${approximateSpan(range.minimum, range.maximum, 0.31)} 克鸡胸肉`;
+  if (tone === "carb") return `约 ${approximateSpan(range.minimum, range.maximum, 42, 1)} 碗熟米饭（按每碗约 150g 估算）`;
+  if (tone === "fat") return `约 ${approximateSpan(range.minimum, range.maximum, 13.5, 1)} 汤匙食用油（仅作换算）`;
+  if (tone === "fiber") return `约 ${approximateSpan(range.minimum, range.maximum, 0.025)} 克白菜（仅作换算，通常由多种食物共同获得）`;
+  if (tone === "water") return `约 ${approximateSpan(range.minimum, range.maximum, 0.25)} 个 250ml 纸杯`;
+  return "当前参考未提供具体换算";
+}
+
 const REFERENCE_SCALE_LIMITS:Record<string,{minimum:number;maximum:number}> = {
   protein:{minimum:0,maximum:200}, carb:{minimum:0,maximum:500}, fat:{minimum:0,maximum:150}, fiber:{minimum:0,maximum:60}, water:{minimum:0,maximum:5}
 };
-function referenceScale(label: string, range: { minimum: number; maximum: number } | undefined, tone: string, suffix = "g") {
+function referenceScale(label: string, range: { minimum: number; maximum: number } | undefined, tone: string, reference: string, suffix = "g") {
   const limits=REFERENCE_SCALE_LIMITS[tone]??{minimum:0,maximum:100};
   const span=Math.max(1,limits.maximum-limits.minimum);
   const start=range?Math.max(0,Math.min(100,(range.minimum-limits.minimum)/span*100)):0;
   const end=range?Math.max(start,Math.min(100,(range.maximum-limits.minimum)/span*100)):0;
   const midpoint=(start+end)/2;
-  return <div className="health-target-row" data-tone={tone} data-has-range={range?"true":"false"} style={{"--range-start":`${start}%`,"--range-width":`${end-start}%`,"--range-mid":`${midpoint}%`} as CSSProperties}><span>{label}</span><strong>{rangeText(range, suffix)}</strong><i aria-hidden="true"><b /></i></div>;
+  return <div className="health-target-row" data-tone={tone} data-has-range={range?"true":"false"} style={{"--range-start":`${start}%`,"--range-width":`${end-start}%`,"--range-mid":`${midpoint}%`} as CSSProperties}><span>{label}</span><strong>{rangeText(range, suffix)}</strong><i aria-hidden="true"><b /></i><small>{reference}</small></div>;
 }
 
 function listOrMissing(items: string[] | undefined, className?: string) {
@@ -258,7 +280,7 @@ function manualDraftFromPlan(plan: HealthPlan): ManualPlanDraft {
       } : undefined,
       proteinRotationSources: day.content.proteinRotationSources ? [...day.content.proteinRotationSources] : undefined,
       foodReference: day.content.foodReference ? {
-        proteinOptions: [...day.content.foodReference.proteinOptions], fiberOptions: [...day.content.foodReference.fiberOptions], carbOptions: [...day.content.foodReference.carbOptions]
+        proteinOptions: [...day.content.foodReference.proteinOptions], fiberOptions: [...day.content.foodReference.fiberOptions], carbOptions: [...day.content.foodReference.carbOptions], fatOptions: day.content.foodReference.fatOptions ? [...day.content.foodReference.fatOptions] : undefined
       } : undefined,
       fruitOptions: day.content.fruitOptions ? [...day.content.fruitOptions] : undefined,
       plateGuidance: [...day.content.plateGuidance],
@@ -354,6 +376,7 @@ export function HealthWorkspace({ onAskHealth }:{
   const candidateSectionRef = useRef<HTMLElement | null>(null);
   const generationAttemptRef = useRef(0);
   const reloadRequestRef = useRef(0);
+  const replyRecoveryAttemptedRef = useRef(new Set<string>());
   const visiblePlan = candidate ?? active;
   const selectedReference = visiblePlan?.days[selectedDay] ?? null;
   const sleepDate = selectedReference?.localDate ?? shanghaiDate();
@@ -371,6 +394,17 @@ export function HealthWorkspace({ onAskHealth }:{
   });
 
   useEffect(() => { void reload(); }, [weekStart]);
+  useEffect(() => {
+    const resumeCollaboration = () => {
+      if (!document.hidden) void reload();
+    };
+    window.addEventListener("focus", resumeCollaboration);
+    document.addEventListener("visibilitychange", resumeCollaboration);
+    return () => {
+      window.removeEventListener("focus", resumeCollaboration);
+      document.removeEventListener("visibilitychange", resumeCollaboration);
+    };
+  }, [weekStart]);
   useEffect(() => { setCollaborationExpanded(false); }, [weekStart]);
   useEffect(() => {
     try {
@@ -435,16 +469,24 @@ export function HealthWorkspace({ onAskHealth }:{
       setCollaboration(collaborationResult);
       if (!collaborationResult) setCollaborationError("本周健康交流暂时无法读取；现有健康参考仍可查看，数据库迁移完成后可在这里继续交流。");
       else if (collaborationResult.messages.at(-1)?.role === "user") {
-        const pendingReply = healthReplyTasks.get(collaborationResult.conversation.id)
-          ?? (collaborationResult.replyInFlight ? ensureHealthReply(collaborationResult.conversation.id) : null);
+        const lastMessage = collaborationResult.messages.at(-1)!;
+        const conversationId = collaborationResult.conversation.id;
+        const recoveryKey = `${conversationId}:${lastMessage.id}`;
+        const pendingReply = healthReplyTasks.get(conversationId)
+          ?? (!replyRecoveryAttemptedRef.current.has(recoveryKey)
+            ? ensureHealthReply(conversationId)
+            : null);
+        if (pendingReply) replyRecoveryAttemptedRef.current.add(recoveryKey);
         setHealthAiStage(pendingReply ? "replying" : "reply_failed");
         if (pendingReply) {
           void pendingReply.then((result) => {
             if (requestId !== reloadRequestRef.current) return;
             setCollaboration(result);
+            setCollaborationError(null);
             setHealthAiStage("ready");
           }).catch((requestError) => {
             if (requestId !== reloadRequestRef.current) return;
+            replyRecoveryAttemptedRef.current.delete(recoveryKey);
             const serverMessage = requestError instanceof Error ? (requestError as ApiError).body?.message : undefined;
             setHealthAiStage("reply_failed");
             setCollaborationError(serverMessage ?? "你的健康说明已经保存，但 AI 暂时没有返回；直接点击“重试回应”即可。");
@@ -465,6 +507,7 @@ export function HealthWorkspace({ onAskHealth }:{
     try {
       const result = await request<HealthConversationState>(`/api/v1/health/weeks/${weekStart}/collaboration`);
       setCollaboration(result);
+      setCollaborationError(null);
       return result;
     } catch {
       setCollaborationError("本周健康交流暂时无法读取；已经确认的健康参考不会受影响。");
@@ -784,7 +827,8 @@ export function HealthWorkspace({ onAskHealth }:{
           foodReference: day.foodReference ? {
             proteinOptions: listText(day.foodReference.proteinOptions.join("\n")),
             fiberOptions: listText(day.foodReference.fiberOptions.join("\n")),
-            carbOptions: listText(day.foodReference.carbOptions.join("\n"))
+            carbOptions: listText(day.foodReference.carbOptions.join("\n")),
+            fatOptions: day.foodReference.fatOptions?.length ? listText(day.foodReference.fatOptions.join("\n")) : undefined
           } : undefined,
           fruitOptions: listText(day.fruitOptions?.join("\n") ?? ""),
           plateGuidance: listText(day.plateGuidance.join("\n")),
@@ -839,7 +883,7 @@ export function HealthWorkspace({ onAskHealth }:{
       </section>
       {editingProfile && profile && <form className="health-profile-form" onSubmit={saveProfile}>
         <h3 className="wide">基础资料</h3>
-        <label><span>当前城市（可留空）</span><input name="city" defaultValue={profile.profile.city ?? ""} maxLength={120} placeholder="例如：呼和浩特" /></label>
+        <label><span>当前城市（可留空）</span><input name="city" defaultValue={profile.profile.city ?? ""} maxLength={120} placeholder="例如：输入城市名称" /></label>
         <label><span>性别</span><select name="sex" defaultValue={profile.profile.basics.sex}><option value="male">男</option><option value="female">女</option><option value="other">其他</option></select></label>
         <label><span>年龄</span><input name="age" type="number" min="16" max="120" step="1" defaultValue={profile.profile.basics.age} required /></label>
         <label><span>身高（cm）</span><input name="heightCm" type="number" min="120" max="230" step="1" defaultValue={profile.profile.basics.heightCm} required /></label>
@@ -883,7 +927,7 @@ export function HealthWorkspace({ onAskHealth }:{
           </div>}
           <form className="health-collaboration-composer" onSubmit={sendHealthMessage}>
             <label htmlFor="health-collaboration-input">告诉 AI 这一周真实需要考虑的情况</label>
-            <textarea id="health-collaboration-input" aria-label="本周健康想法" rows={5} maxLength={4000} value={collaborationDraft} onChange={(event) => setCollaborationDraft(event.target.value)} placeholder="例如：开学前希望早睡早起；每周三次力量、三次有氧；最近在喝中药，需要保守考虑饮水与补充剂安排……" />
+            <textarea id="health-collaboration-input" aria-label="本周健康想法" rows={5} maxLength={4000} value={collaborationDraft} onChange={(event) => setCollaborationDraft(event.target.value)} placeholder="例如：这周想把作息和饮食安排得更规律，并说明需要注意的限制……" />
             <footer>
               <small>{profile ? "输入草稿会保留；发送后原文会保存到本周健康交流。" : "请先保存健康资料。"}</small>
               {replyPending ? <button className="primary-button" type="button" disabled={busy} onClick={() => void retryHealthReply()}>{healthAiStage === "replying" ? <LoaderCircle className="spin" /> : <RefreshCcw />}重试回应</button> : <button className="primary-button" type="submit" disabled={busy || !profile || !collaboration || !collaborationDraft.trim()}>{healthAiStage === "saving_message" || healthAiStage === "replying" ? <LoaderCircle className="spin" /> : <Send />}{healthAiStage === "saving_message" ? "正在保存" : healthAiStage === "replying" ? "等待回应" : "发送给 AI"}</button>}
@@ -933,11 +977,12 @@ export function HealthWorkspace({ onAskHealth }:{
               <label><span>加餐示例（可留空）</span><textarea value={manualDraft.days[selectedDay]!.mealExamples!.snack.join("\n")} onChange={(event) => updateManualDay({ mealExamples: { ...manualDraft.days[selectedDay]!.mealExamples!, snack: draftLines(event.target.value) } })} rows={3} /></label>
             </div>}
             <label><span>当天蛋白轮换来源（逗号或换行分隔）</span><textarea value={manualDraft.days[selectedDay]!.proteinRotationSources?.join("，") ?? ""} onChange={(event) => updateManualDay({ proteinRotationSources: event.target.value.trim() ? draftLines(event.target.value.replace(/[，,]/g, "\n")) : undefined })} rows={2} /></label>
-            <label className="health-checkbox health-manual-toggle"><input type="checkbox" checked={Boolean(manualDraft.days[selectedDay]!.foodReference)} onChange={(event) => updateManualDay({ foodReference: event.target.checked ? { proteinOptions: [""], fiberOptions: [""], carbOptions: [""] } : undefined })} /><span>填写可替换的蛋白、纤维和碳水来源</span></label>
+            <label className="health-checkbox health-manual-toggle"><input type="checkbox" checked={Boolean(manualDraft.days[selectedDay]!.foodReference)} onChange={(event) => updateManualDay({ foodReference: event.target.checked ? { proteinOptions: [""], fiberOptions: [""], carbOptions: [""], fatOptions: [""] } : undefined })} /><span>填写营养目标的食物换算</span></label>
             {manualDraft.days[selectedDay]!.foodReference && <div className="health-manual-grid health-manual-grid-three">
               <label><span>蛋白来源</span><textarea value={manualDraft.days[selectedDay]!.foodReference!.proteinOptions.join("\n")} onChange={(event) => updateManualDay({ foodReference: { ...manualDraft.days[selectedDay]!.foodReference!, proteinOptions: draftLines(event.target.value) } })} rows={3} required /></label>
               <label><span>纤维来源</span><textarea value={manualDraft.days[selectedDay]!.foodReference!.fiberOptions.join("\n")} onChange={(event) => updateManualDay({ foodReference: { ...manualDraft.days[selectedDay]!.foodReference!, fiberOptions: draftLines(event.target.value) } })} rows={3} required /></label>
               <label><span>碳水来源</span><textarea value={manualDraft.days[selectedDay]!.foodReference!.carbOptions.join("\n")} onChange={(event) => updateManualDay({ foodReference: { ...manualDraft.days[selectedDay]!.foodReference!, carbOptions: draftLines(event.target.value) } })} rows={3} required /></label>
+              <label><span>脂肪来源</span><textarea value={manualDraft.days[selectedDay]!.foodReference!.fatOptions?.join("\n") ?? ""} onChange={(event) => updateManualDay({ foodReference: { ...manualDraft.days[selectedDay]!.foodReference!, fatOptions: draftLines(event.target.value) } })} rows={3} /></label>
             </div>}
           <label className="wide"><span>水果推荐（每行一种，并写明份量）</span><textarea value={manualDraft.days[selectedDay]!.fruitOptions?.join("\n") ?? ""} onChange={(event) => updateManualDay({ fruitOptions: draftLines(event.target.value) })} rows={3} required /></label>
           </fieldset>
@@ -982,11 +1027,11 @@ export function HealthWorkspace({ onAskHealth }:{
               <header><Leaf /><div><p>今日饮食</p><strong>今天可以怎样吃</strong></div></header>
               <p>{selectedReference.content.nutritionDirection}</p>
               <div className="health-target-scales">
-                {referenceScale("蛋白质", selectedReference.content.proteinRangeGrams, "protein")}
-                {referenceScale("碳水", selectedReference.content.nutritionTargets?.carbohydrateGrams, "carb")}
-                {referenceScale("脂肪", selectedReference.content.nutritionTargets?.fatGrams, "fat")}
-                {referenceScale("膳食纤维", selectedReference.content.nutritionTargets?.fiberGrams, "fiber")}
-                {referenceScale("饮水", selectedReference.content.nutritionTargets?.hydrationLiters, "water", "L")}
+                {referenceScale("蛋白质", selectedReference.content.proteinRangeGrams, "protein", concreteFoodReference("protein", selectedReference.content.proteinRangeGrams, selectedReference.content.foodReference?.proteinOptions))}
+                {referenceScale("碳水", selectedReference.content.nutritionTargets?.carbohydrateGrams, "carb", concreteFoodReference("carb", selectedReference.content.nutritionTargets?.carbohydrateGrams, selectedReference.content.foodReference?.carbOptions))}
+                {referenceScale("脂肪", selectedReference.content.nutritionTargets?.fatGrams, "fat", concreteFoodReference("fat", selectedReference.content.nutritionTargets?.fatGrams, selectedReference.content.foodReference?.fatOptions))}
+                {referenceScale("膳食纤维", selectedReference.content.nutritionTargets?.fiberGrams, "fiber", concreteFoodReference("fiber", selectedReference.content.nutritionTargets?.fiberGrams, selectedReference.content.foodReference?.fiberOptions))}
+                {referenceScale("饮水", selectedReference.content.nutritionTargets?.hydrationLiters, "water", concreteFoodReference("water", selectedReference.content.nutritionTargets?.hydrationLiters, selectedReference.content.hydrationGuidance), "L")}
               </div>
               {selectedReference.content.nutritionTargets ? <div className="health-macro-ratio" aria-label="三大营养素参考比例">
                 <header><h3>三大营养素比例</h3><small>只表示建议结构，不代表今日实际摄入</small></header>
@@ -995,7 +1040,6 @@ export function HealthWorkspace({ onAskHealth }:{
               </div> : null}
               <section className="health-hydration-guidance"><h3>今日饮水参考</h3>{listOrMissing(selectedReference.content.hydrationGuidance)}</section>
               <section className="health-protein-rotation"><h3>本周蛋白轮换</h3><div>{visiblePlan.days.map((day)=><span key={day.id} className={day.id===selectedReference.id?"current":""}><b>{weekday[day.dayIndex]}</b><small>{day.content.proteinRotationSources?.join(" / ") || "未提供"}</small></span>)}</div></section>
-              <section className="health-food-reference"><h3>替代食材参考</h3>{selectedReference.content.foodReference ? <div><p><b>蛋白</b>{selectedReference.content.foodReference.proteinOptions.join("、")}</p><p><b>纤维</b>{selectedReference.content.foodReference.fiberOptions.join("、")}</p><p><b>碳水</b>{selectedReference.content.foodReference.carbOptions.join("、")}</p></div> : <p className="health-field-missing">当前参考未提供替代食材；重新生成候选后可补齐。</p>}</section>
             </section>
             <section className="health-side-column">
               <section className="health-fruit-reference"><h3>水果推荐</h3>{listOrMissing(selectedReference.content.fruitOptions)}</section>

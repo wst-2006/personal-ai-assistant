@@ -23,8 +23,9 @@ const generatedDay = {
   proteinRotationSources: ["鸡蛋", "牛肉"],
   foodReference: {
     proteinOptions: ["约 15 个鸡蛋", "约 650 克牛肉", "约 550 克鸡胸肉"],
-    fiberOptions: ["燕麦", "蔬菜"],
-    carbOptions: ["米饭", "土豆"]
+    fiberOptions: ["约 1000 克白菜"],
+    carbOptions: ["约 5 碗熟米饭"],
+    fatOptions: ["约 4 汤匙食用油"]
   },
   fruitOptions: ["1 个苹果", "200 克草莓"]
 };
@@ -56,7 +57,7 @@ describe("health reference contracts", () => {
     expect(generatedHealthPlanContentSchema.safeParse(generated).success).toBe(true);
   });
 
-  it("requires fruit portions and everyday protein and water conversions for generated plans", () => {
+  it("requires fruit portions and concrete food and water conversions for generated plans", () => {
     const content = { overview: "新生成参考", supplements: ["自然食物优先，必要时再查看补充剂标签。"], days: Array.from({ length: 7 }, () => generatedDay) };
     expect(generatedHealthPlanContentSchema.safeParse({
       ...content,
@@ -69,6 +70,10 @@ describe("health reference contracts", () => {
     expect(generatedHealthPlanContentSchema.safeParse({
       ...content,
       days: content.days.map((item) => ({ ...item, foodReference: { ...item.foodReference, proteinOptions: ["鸡蛋", "牛肉"] } }))
+    }).success).toBe(false);
+    expect(generatedHealthPlanContentSchema.safeParse({
+      ...content,
+      days: content.days.map((item) => ({ ...item, foodReference: { ...item.foodReference, carbOptions: ["米饭"] } }))
     }).success).toBe(false);
   });
 

@@ -130,8 +130,8 @@ export function UserProfileSettings({ open, onClose }: { open: boolean; onClose:
       {loading ? <div className="user-profile-loading"><LoaderCircle className="spin" />正在读取你的设置</div> : <form onSubmit={save}>
         {error && <p className="user-profile-error" role="alert"><CircleAlert />{error}</p>}
         <p className="user-profile-note"><ShieldCheck />只保存你主动填写的内容；不会根据任务、对话或使用行为更新这份画像。</p>
-        <label><span>个人背景</span><textarea aria-label="个人背景" rows={10} maxLength={20_000} value={draft.personalContext} onChange={(event) => setDraft((current) => ({ ...current, personalContext: event.target.value }))} placeholder="例如：当前目标、学习背景、在意的边界或希望 AI 了解的长期情况。" /></label>
-        <label><span>AI 协作指引</span><textarea aria-label="AI 协作指引" rows={5} maxLength={4_000} value={draft.aiGuidance} onChange={(event) => setDraft((current) => ({ ...current, aiGuidance: event.target.value }))} placeholder="例如：希望先给框架，避免替我做决定；必要时指出风险。" /></label>
+        <label><span>个人背景</span><textarea aria-label="个人背景" rows={10} maxLength={20_000} value={draft.personalContext} onChange={(event) => setDraft((current) => ({ ...current, personalContext: event.target.value }))} placeholder="填写希望长期保留的背景信息（可留空）。" /></label>
+        <label><span>AI 协作指引</span><textarea aria-label="AI 协作指引" rows={5} maxLength={4_000} value={draft.aiGuidance} onChange={(event) => setDraft((current) => ({ ...current, aiGuidance: event.target.value }))} placeholder="例如：先给框架，再给可选方案；必要时指出风险。" /></label>
         <div className="user-profile-preferences">
           <label className="profile-checkbox"><input aria-label="允许个人背景发送给 AI" type="checkbox" checked={draft.shareWithAi} onChange={(event) => setDraft((current) => ({ ...current, shareWithAi: event.target.checked }))} /><span><strong>在调用 AI 时使用以上背景</strong><small>关闭后，背景仍保存在本地，但不会发送给模型。</small></span></label>
           <label><span>回复详略</span><select aria-label="回复详略" value={draft.responseStyle} onChange={(event) => setDraft((current) => ({ ...current, responseStyle: event.target.value as ResponseStyle }))}><option value="concise">简洁</option><option value="balanced">平衡</option><option value="detailed">详细</option></select></label>

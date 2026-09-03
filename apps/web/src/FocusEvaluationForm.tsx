@@ -20,6 +20,7 @@ type FocusEvaluationFormProps = FocusEvaluationValue & {
   onSatisfactionChange: (value: FocusSatisfaction) => void;
   onNoteChange: (value: string) => void;
   onSubmit: () => void;
+  showNote?: boolean;
 };
 
 const outcomes: Array<{ value: FocusOutcome; label: string; icon: typeof CheckCircle2 }> = [
@@ -61,6 +62,7 @@ export function FocusEvaluationForm({
   onSatisfactionChange,
   onNoteChange,
   onSubmit,
+  showNote = true,
 }: FocusEvaluationFormProps) {
   return (
     <section className="focus-evaluation-sheet" aria-labelledby={headingId}>
@@ -120,7 +122,7 @@ export function FocusEvaluationForm({
         </div>
       </fieldset>
 
-      <label className="focus-evaluation-note">
+      {showNote ? <label className="focus-evaluation-note">
         <span><b>03</b>过程与原因 <em>选填</em></span>
         <textarea
           aria-label="专注过程与原因"
@@ -130,7 +132,7 @@ export function FocusEvaluationForm({
           rows={4}
           maxLength={4000}
         />
-      </label>
+      </label> : null}
 
       <footer className="focus-evaluation-footer">
         <p role={error ? "alert" : undefined}>{error ?? "完成情况和主观感受会分别保存。"}</p>

@@ -266,7 +266,7 @@ export function FocusStructureEditor({ task, active, candidate, busy, onSave, on
             aria-label="AI 专注结构临时要求"
             rows={2}
             maxLength={1000}
-            placeholder="例如：拆成 3 段，前短后长，休息都用 5 分钟"
+            placeholder="例如：分成 3 段，段间休息 5 分钟"
             disabled={busy}
             value={aiInstructions}
             onChange={(event) => setAiInstructions(event.target.value)}

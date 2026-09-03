@@ -24,7 +24,10 @@ const FOCUS_EVALUATION_WINDOW_LABEL_PREFIX: &str = "focus-evaluation";
 const FOCUS_PREPARATION_WINDOW_LABEL_PREFIX: &str = "focus-preparation";
 const SETTINGS_FILE: &str = "focus-mini.conf";
 const FOCUS_MINI_WIDTH: f64 = 360.0;
-const FOCUS_MINI_HEIGHT: f64 = 236.0;
+// The companion and preparation surfaces include the timer, progress, hint,
+// and up to three actions. Keep enough vertical room for all of them without
+// relying on the host window to scroll or clip the lower controls.
+const FOCUS_MINI_HEIGHT: f64 = 360.0;
 const FOCUS_EVALUATION_WIDTH: f64 = 540.0;
 const FOCUS_EVALUATION_HEIGHT: f64 = 620.0;
 const WINDOWS_MINIMIZED_POSITION_LIMIT: i32 = -10_000;
@@ -93,6 +96,7 @@ pub struct FocusCompanionState {
     window_label: Mutex<Option<String>>,
     evaluation_window_label: Mutex<Option<String>>,
     preparation_window_label: Mutex<Option<String>>,
+    mini_topmost_applied: Mutex<Option<bool>>,
     window_generation: AtomicU64,
     initialized: AtomicBool,
     evaluation_initialized: AtomicBool,
@@ -523,6 +527,12 @@ fn apply_snapshot(app: &AppHandle, snapshot: Option<FocusSnapshot>) {
         let entered_evaluation = current_surface_enabled
             && current.session.state == "ended"
             && previous.as_ref().map(|old| old.session.state.as_str()) != Some("ended");
+        let entered_late_start = current_surface_enabled
+            && current.session.state == "awaiting_late_start"
+            && previous
+                .as_ref()
+                .map(|old| old.session.state.as_str())
+                != Some("awaiting_late_start");
         let entered_final_break = current_surface_enabled
             && is_final_break(current)
             && previous
@@ -543,7 +553,7 @@ fn apply_snapshot(app: &AppHandle, snapshot: Option<FocusSnapshot>) {
         } else if current_surface_enabled && changed_surface {
             resize_companion_window(app, current.session.state == "ended");
         }
-        if entered_evaluation || entered_final_break {
+        if entered_evaluation || entered_final_break || entered_late_start {
             show_mini_window(app);
         } else if !start_confirmation_finished
             && should_auto_show(previous.as_ref(), current, &profile)
@@ -577,18 +587,35 @@ fn apply_evaluation_snapshot(app: &AppHandle, snapshot: Option<FocusSnapshot>) {
         .expect("focus companion profile lock poisoned")
         .clone();
     let previous = {
-        let mut guard = state
+        let guard = state
             .evaluation_snapshot
             .lock()
             .expect("focus evaluation snapshot lock poisoned");
         let previous = guard.clone();
-        *guard = snapshot.clone();
         previous
     };
+    // The API cutoff controls whether an evaluation is newly surfaced. Once
+    // the native window is already visible, let the webview own its inactivity
+    // timer so active feedback entry is not interrupted by a polling refresh.
+    let effective_snapshot = match snapshot {
+        Some(current) => Some(current),
+        None if previous.is_some()
+            && current_evaluation_window(app)
+                .and_then(|window| window.is_visible().ok())
+                .unwrap_or(false) => previous.clone(),
+        None => None,
+    };
+    {
+        let mut guard = state
+            .evaluation_snapshot
+            .lock()
+            .expect("focus evaluation snapshot lock poisoned");
+        *guard = effective_snapshot.clone();
+    }
     let first_update = !state.evaluation_initialized.swap(true, Ordering::SeqCst);
     let enabled = profile.desktop_focus_enabled && profile.focus_evaluation_enabled;
 
-    if !enabled || snapshot.is_none() {
+    if !enabled || effective_snapshot.is_none() {
         if let Some(window) = current_evaluation_window(app) {
             let _ = window.hide();
         }
@@ -604,7 +631,7 @@ fn apply_evaluation_snapshot(app: &AppHandle, snapshot: Option<FocusSnapshot>) {
         return;
     }
 
-    let current = snapshot.as_ref().expect("checked evaluation snapshot");
+    let current = effective_snapshot.as_ref().expect("checked evaluation snapshot");
     let changed =
         previous.as_ref().map(|old| old.session.id.as_str()) != Some(current.session.id.as_str());
     if ensure_evaluation_window(app).is_ok() {
@@ -678,7 +705,6 @@ fn apply_preparation_snapshot(app: &AppHandle, snapshot: Option<FocusSnapshot>) 
                 position_preparation_window(app, &window);
                 let _ = window.unminimize();
                 let _ = window.show();
-                let _ = window.set_focus();
             }
         }
     }
@@ -686,6 +712,7 @@ fn apply_preparation_snapshot(app: &AppHandle, snapshot: Option<FocusSnapshot>) 
 }
 
 fn sync_companion_topmost_state(app: &AppHandle) {
+    let state = app.state::<FocusCompanionState>();
     let evaluation_visible = current_evaluation_window(app)
         .and_then(|window| window.is_visible().ok())
         .unwrap_or(false);
@@ -699,8 +726,17 @@ fn sync_companion_topmost_state(app: &AppHandle) {
             .lock()
             .expect("focus companion settings lock poisoned")
             .clone();
-        let _ = window
-            .set_always_on_top(evaluation_visible || preparation_visible || settings.always_on_top);
+        // Keep the newly shown preparation/evaluation surface above the
+        // companion without making both windows compete for the same z-order.
+        let desired = !evaluation_visible && !preparation_visible && settings.always_on_top;
+        let mut applied = state
+            .mini_topmost_applied
+            .lock()
+            .expect("focus companion topmost state lock poisoned");
+        if *applied != Some(desired) {
+            let _ = window.set_always_on_top(desired);
+            *applied = Some(desired);
+        }
     }
 }
 
@@ -810,7 +846,7 @@ fn should_hide_after_start_confirmation(
                 )
                 && matches!(
                     current.session.state.as_str(),
-                    "armed" | "running" | "awaiting_late_start"
+                    "armed" | "running"
                 )
         })
         .unwrap_or(false)
@@ -971,6 +1007,11 @@ mod tests {
             Some(&preparing),
             &running
         ));
+        let awaiting = snapshot("focus-1", "awaiting_late_start");
+        assert!(!should_hide_after_start_confirmation(
+            Some(&preparing),
+            &awaiting
+        ));
     }
 
     #[test]
@@ -985,10 +1026,18 @@ mod tests {
             &snapshot("focus-1", "running"),
             &preferences
         ));
+        assert!(window_enabled_for_snapshot(
+            &snapshot("focus-1", "awaiting_late_start"),
+            &preferences
+        ));
 
         preferences.focus_timer_window_enabled = false;
         assert!(!window_enabled_for_snapshot(
             &snapshot("focus-1", "running"),
+            &preferences
+        ));
+        assert!(!window_enabled_for_snapshot(
+            &snapshot("focus-1", "awaiting_late_start"),
             &preferences
         ));
         assert!(window_enabled_for_snapshot(
@@ -1112,7 +1161,7 @@ fn should_auto_show(
     }
     let executing = matches!(
         current.session.state.as_str(),
-        "preparing" | "armed" | "awaiting_late_start" | "running"
+        "preparing" | "awaiting_late_start" | "running"
     );
     if !executing {
         return false;
@@ -1122,7 +1171,7 @@ fn should_auto_show(
             old.session.id != current.session.id
                 || !matches!(
                     old.session.state.as_str(),
-                    "preparing" | "armed" | "awaiting_late_start" | "running"
+                    "preparing" | "awaiting_late_start" | "running"
                 )
         })
         .unwrap_or(true)
@@ -1133,8 +1182,8 @@ fn window_enabled_for_snapshot(snapshot: &FocusSnapshot, profile: &FocusWindowPr
         return false;
     }
     match snapshot.session.state.as_str() {
-        "preparing" | "armed" | "awaiting_late_start" => profile.focus_preparation_window_enabled,
-        "running" => profile.focus_timer_window_enabled,
+        "preparing" => profile.focus_preparation_window_enabled,
+        "awaiting_late_start" | "running" => profile.focus_timer_window_enabled,
         "ended" => profile.focus_evaluation_enabled,
         _ => false,
     }
@@ -1305,7 +1354,7 @@ fn restore_window_position(
     }
     let window_size = window
         .outer_size()
-        .unwrap_or_else(|_| tauri::PhysicalSize::new(360, 236));
+        .unwrap_or_else(|_| tauri::PhysicalSize::new(360, 360));
     let selected = saved
         .and_then(|(saved_x, saved_y)| {
             monitors.iter().find(|monitor| {
@@ -1424,6 +1473,11 @@ pub fn focus_mini_hide(app: AppHandle) {
 }
 
 #[tauri::command]
+pub fn focus_mini_show(app: AppHandle) {
+    show_mini_window(&app);
+}
+
+#[tauri::command]
 pub fn focus_mini_minimize(app: AppHandle) {
     if let Some(window) = current_mini_window(&app) {
         let _ = window.minimize();
@@ -1456,6 +1510,36 @@ pub fn focus_evaluation_start_drag(app: AppHandle) -> Result<(), String> {
 pub fn focus_preparation_hide(app: AppHandle) {
     if let Some(window) = current_preparation_window(&app) {
         let _ = window.hide();
+    }
+    sync_companion_topmost_state(&app);
+}
+
+#[tauri::command]
+pub fn focus_preparation_show(app: AppHandle) {
+    let state = app.state::<FocusCompanionState>();
+    let profile = state
+        .profile
+        .lock()
+        .expect("focus companion profile lock poisoned")
+        .clone();
+    let snapshot = state
+        .preparation_snapshot
+        .lock()
+        .expect("focus preparation snapshot lock poisoned")
+        .clone();
+    if !profile.desktop_focus_enabled
+        || !profile.focus_preparation_window_enabled
+        || snapshot.is_none()
+    {
+        return;
+    }
+    if ensure_preparation_window(&app).is_ok() {
+        if let Some(window) = current_preparation_window(&app) {
+            position_preparation_window(&app, &window);
+            let _ = window.unminimize();
+            let _ = window.show();
+            let _ = window.set_focus();
+        }
     }
     sync_companion_topmost_state(&app);
 }

@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import type { AppDatabase } from "@personal-ai/db/client";
-import { recordFocusNoResponseOutcome } from "@personal-ai/db/focus-no-response";
+import { recordArmedFocusAwaitingOutcome, recordFocusNoResponseOutcome } from "@personal-ai/db/focus-no-response";
 
 export type ReminderJob = { id: string; taskId: string | null; channel: string; kind: string; attempts: number; scheduleRevision: number; scheduledAt: Date; payload: unknown };
 export type ReminderDeliveryContext = { now: Date; timing: "upcoming" | "in_progress"; remoteMessageId?: string };
@@ -251,7 +251,8 @@ export class ReminderWorker {
         FROM focus_structure_segments WHERE focus_structure_id = ${structure.id} ORDER BY position
       `);
       // The preparation job may be delivered late; it must still create a
-      // startable session so the focus worker can auto-start it immediately.
+      // durable session so the user can explicitly start it from late-start
+      // waiting without losing the fixed end boundary.
       const state = "preparing";
       const createdSession = await db.execute(sql`
         INSERT INTO focus_sessions (
@@ -318,7 +319,9 @@ export class ReminderWorker {
       if (session) {
         const stopped = await db.execute(sql`
           UPDATE focus_sessions
-          SET state = 'stopped_no_response', ended_at = ${now}, stopped_reason = '固定结束时间已过，未进入专注',
+          SET state = 'ended', ended_at = ${now}, active_since_at = NULL,
+            raw_active_seconds = 0, effective_focus_seconds = 0,
+            stopped_reason = '固定结束时间已过，未进入专注',
             version = version + 1, updated_at = ${now}
           WHERE id = ${session.id} AND version = ${session.version}
             AND state IN ('scheduled', 'reminded', 'preparing', 'armed', 'awaiting_late_start', 'awaiting_start')
@@ -331,19 +334,21 @@ export class ReminderWorker {
             id, task_id, state, planned_start_at, planned_end_at, ended_at,
             stopped_reason, raw_active_seconds, effective_focus_seconds, version, created_at, updated_at
           ) VALUES (
-            gen_random_uuid(), ${task.id}, 'stopped_no_response', ${task.startAt}, ${task.endAt}, ${now},
+            gen_random_uuid(), ${task.id}, 'ended', ${task.startAt}, ${task.endAt}, ${now},
             '固定结束时间已过，未进入专注', 0, 0, 1, ${now}, ${now}
           ) RETURNING id
         `);
         sessionId = (created.rows[0] as { id?: string } | undefined)?.id;
       }
       if (!sessionId) return;
-      await recordFocusNoResponseOutcome(db, {
+      const input = {
         taskId: task.id,
         focusSessionId: sessionId,
         now,
         reason: "固定结束时间已过，未进入专注"
-      });
+      };
+      if (session?.state === "armed") await recordArmedFocusAwaitingOutcome(db, input);
+      else await recordFocusNoResponseOutcome(db, input);
     });
   }
 }

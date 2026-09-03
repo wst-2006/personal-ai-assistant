@@ -90,6 +90,8 @@ export interface TaskStoreTransaction {
   insertOutcome(record: TaskOutcomeRecord): Promise<StoredTaskOutcome>;
   getOutcome(id: string, taskId: string): Promise<StoredTaskOutcome | null>;
   insertFeedback(record: TaskFeedbackRecord): Promise<StoredTaskFeedback>;
+  getFeedbackByFocusSession(taskId: string, focusSessionId: string | null): Promise<StoredTaskFeedback | null>;
+  updateFeedback(id: string, taskId: string, changes: Pick<TaskFeedbackRecord, "satisfaction" | "note"> & { createdAt?: Date }): Promise<StoredTaskFeedback | null>;
   invalidateFocusStructures(taskId: string, currentScheduleRevision: number, reason: string): Promise<void>;
   syncReminderForTask(task: StoredTask): Promise<void>;
   purgeDeletedTasks(): Promise<number>;
@@ -218,6 +220,22 @@ class PostgresTaskTransaction implements TaskStoreTransaction {
     const [created] = await this.db.insert(taskFeedback).values(record).returning();
     if (!created) throw new Error("PostgreSQL did not return the created task feedback.");
     return created;
+  }
+
+  async getFeedbackByFocusSession(taskId: string, focusSessionId: string | null): Promise<StoredTaskFeedback | null> {
+    const sessionCondition = focusSessionId === null
+      ? isNull(taskFeedback.focusSessionId)
+      : eq(taskFeedback.focusSessionId, focusSessionId);
+    const [feedback] = await this.db.select().from(taskFeedback)
+      .where(and(eq(taskFeedback.taskId, taskId), sessionCondition))
+      .orderBy(desc(taskFeedback.createdAt)).limit(1);
+    return feedback ?? null;
+  }
+
+  async updateFeedback(id: string, taskId: string, changes: Pick<TaskFeedbackRecord, "satisfaction" | "note"> & { createdAt?: Date }): Promise<StoredTaskFeedback | null> {
+    const [updated] = await this.db.update(taskFeedback).set(changes)
+      .where(and(eq(taskFeedback.id, id), eq(taskFeedback.taskId, taskId))).returning();
+    return updated ?? null;
   }
 
   async invalidateFocusStructures(taskId: string, currentScheduleRevision: number, reason: string): Promise<void> {

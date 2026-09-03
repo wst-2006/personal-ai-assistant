@@ -419,7 +419,7 @@ export function LongRangePlansWorkspace() {
           {["基本信息", "原始想法", "里程碑", "AI 候选"].map((label, index) => { const step = (index + 1) as PlanEditorStep; return <button key={label} type="button" className={editorStep === step ? "active" : ""} aria-current={editorStep === step ? "step" : undefined} onClick={() => setEditorStep(step)}><span>0{step}</span>{label}</button>; })}
         </nav>
         {editorStep === 1 && <div className="long-range-fields">
-          <label className="wide"><span>规划标题</span><input aria-label="规划标题" required maxLength={200} disabled={saving || selectedPlan?.status === "archived"} value={draft.title} onChange={(event) => updateDraft({ title: event.target.value })} placeholder="例如：完成秋季研究准备" /></label>
+          <label className="wide"><span>规划标题</span><input aria-label="规划标题" required maxLength={200} disabled={saving || selectedPlan?.status === "archived"} value={draft.title} onChange={(event) => updateDraft({ title: event.target.value })} placeholder="例如：完成一个阶段性目标" /></label>
           <label><span>规划范围</span><select aria-label="规划范围" disabled={saving || selectedPlan?.status === "archived"} value={draft.scope} onChange={(event) => {
             const nextScope = event.target.value as PlanScope;
             updateDraft({ scope: nextScope, ...defaultPeriod(nextScope) });

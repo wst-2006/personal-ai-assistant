@@ -66,7 +66,7 @@ async function routeProfile(page: Page, focusTheme: "ink" | "flip" | "nixie" | "
 
 test.describe("独立专注窗口", () => {
   test("置顶与锁定固定在标题栏，底部只保留明确的计时动作", async ({ page }) => {
-    await page.setViewportSize({ width: 360, height: 236 });
+    await page.setViewportSize({ width: 360, height: 360 });
     await routeProfile(page);
     await page.route(`${apiBase}/api/v1/focus-sessions/current-execution`, (route) => route.fulfill({
       status: 200,
@@ -89,7 +89,7 @@ test.describe("独立专注窗口", () => {
   });
 
   test("T-1 在桌面显示开始确认，并在任一端确认后共享已确认状态", async ({ page }) => {
-    await page.setViewportSize({ width: 360, height: 236 });
+    await page.setViewportSize({ width: 360, height: 360 });
     await routeProfile(page);
     let confirmed = false;
     let confirmCount = 0;
@@ -112,17 +112,17 @@ test.describe("独立专注窗口", () => {
     });
 
     await page.goto("/?focus-mini=1&focus-preparation=1");
-    await expect(page.getByRole("button", { name: "开始任务" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "我会准时开始" })).toBeVisible();
     await expect(page.getByRole("button", { name: "另有安排" })).toBeVisible();
     await expect(page.getByRole("button", { name: "取消任务" })).toBeVisible();
     await expect(page.locator(".focus-mini-quote")).toHaveCount(0);
-    await page.getByRole("button", { name: "开始任务" }).click();
+    await page.getByRole("button", { name: "我会准时开始" }).click();
     await expect(page.getByText("已确认", { exact: true })).toBeVisible();
-    await expect(page.getByRole("button", { name: "开始任务" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "我会准时开始" })).toHaveCount(0);
     expect(confirmCount).toBe(1);
   });
 
-  test("评价框 90 秒无操作后自动隐藏并保留待评价状态", async ({ page }) => {
+  test("评价框无互动 60 秒后自动隐藏，并在互动后重新计时", async ({ page }) => {
     const fixedNow = new Date("2026-08-19T10:00:00.000Z");
     await page.clock.install();
     await page.clock.setFixedTime(fixedNow);
@@ -138,8 +138,12 @@ test.describe("独立专注窗口", () => {
     });
 
     await page.goto("/?focus-mini=1&focus-evaluation=1");
-    await expect(page.getByText("尚未操作，90 秒后自动关闭并保留为待评价")).toBeVisible();
-    await page.clock.fastForward(90_000);
+    await expect(page.getByText(/无操作，60 秒后自动关闭并保留为待评价/)).toBeVisible();
+    await page.clock.fastForward(59_000);
+    await page.getByLabel("专注过程与原因").fill("补充一条过程记录");
+    await page.clock.fastForward(59_000);
+    await expect(page.getByRole("heading", { name: "为这一段留下真实记录" })).toBeVisible();
+    await page.clock.fastForward(1_000);
     await expect(page.getByRole("heading", { name: "为这一段留下真实记录" })).toHaveCount(0);
     expect(await page.evaluate(() => localStorage.getItem("personal-ai.focus-evaluation-dismissed.00000000-0000-4000-8000-000000000101"))).toBe("1");
   });
@@ -195,7 +199,7 @@ test.describe("独立专注窗口", () => {
   });
 
   test("液晶七段数字完整统一，多个时间组合都保留双点冒号", async ({ page }) => {
-    await page.setViewportSize({ width: 360, height: 236 });
+    await page.setViewportSize({ width: 360, height: 360 });
     const fixedNow = new Date("2026-08-17T12:00:00.000Z");
     await page.clock.install();
     await page.clock.setFixedTime(fixedNow);

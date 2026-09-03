@@ -610,7 +610,7 @@ test.describe("真实今日时间轴",()=>{
       const task=(await (await created).json()).task as {id:string};ids.push(task.id);
       const loose=page.locator(".task-summary-list article").filter({hasText:title});
       await loose.getByLabel(`打开 ${title} 的任务操作`).click();
-      await page.getByRole("button",{name:"开始专注"}).click();
+      await page.getByRole("button",{name:"我会准时开始"}).click();
       const focusSlip=page.getByRole("button",{name:new RegExp(`待开始 ${title}`)});
       await expect(focusSlip).toBeVisible();
       if(!await page.getByRole("heading",{name:title}).count())await focusSlip.click();
@@ -699,10 +699,10 @@ test.describe("真实今日时间轴",()=>{
       await expect(unscheduledGroup.getByRole("button",{name:new RegExp(`未排期 ${unscheduledTitle}`)})).toBeVisible();
       const scheduledRow=scheduledGroup.locator("article").filter({hasText:scheduledTitle});
       await scheduledRow.getByRole("button",{name:`打开 ${scheduledTitle} 的任务操作`}).click();
-      await expect(scheduledRow.getByRole("button",{name:"开始专注",exact:true})).toBeVisible();
+      await expect(scheduledRow.getByRole("button",{name:"我会准时开始",exact:true})).toBeVisible();
       const unscheduledRow=unscheduledGroup.locator("article").filter({hasText:unscheduledTitle});
       await unscheduledRow.getByRole("button",{name:`打开 ${unscheduledTitle} 的任务操作`}).click();
-      await expect(unscheduledRow.getByRole("button",{name:"开始专注",exact:true})).toHaveCount(0);
+      await expect(unscheduledRow.getByRole("button",{name:"我会准时开始",exact:true})).toHaveCount(0);
     }finally{await cleanup(request,ids);}
   });
 

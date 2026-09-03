@@ -39,6 +39,13 @@ const taskTimeFormatter = new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Sha
 const outcomeText: Record<string, string> = { complete: "完成", partial: "部分完成", not_completed: "未完成", open: "待处理", awaiting_outcome: "待记录结果", closed: "已结束", cancelled: "已取消" };
 const satisfactionText: Record<string, string> = { satisfied: "满意", neutral: "一般", dissatisfied: "不满意" };
 
+function focusTone(minutes: number): "none" | "short" | "medium" | "long" {
+  if (minutes <= 0) return "none";
+  if (minutes < 60) return "short";
+  if (minutes < 150) return "medium";
+  return "long";
+}
+
 function taskTimeRange(task: DayTask) {
   if (!task.startAt || !task.endAt) return null;
   return `${taskTimeFormatter.format(new Date(task.startAt))}–${taskTimeFormatter.format(new Date(task.endAt))}`;
@@ -163,7 +170,7 @@ export function DiaryWorkspace({ onOpenReview }: { onOpenReview: () => void }) {
     {monthData && <section className="diary-month" aria-label={`${monthData.month} 日记月视图`}>
       <header><CalendarDays /><strong>{monthData.month.replace("-"," / ")}</strong><span>有记录的日子会留下颜色</span></header>
       <div className="diary-weekdays">{["一","二","三","四","五","六","日"].map(day=><span key={day}>{day}</span>)}</div>
-      <div className="diary-month-grid">{Array.from({length:monthOffset},(_,index)=><span className="diary-day-empty" key={`empty-${index}`} />)}{monthData.days.map(day=><button className={`diary-day ${day.tone} ${day.hasDiary?"has-diary":""} ${day.localDate===selectedDate?"selected":""}`} type="button" aria-label={`查看 ${day.localDate} 日记`} aria-pressed={day.localDate===selectedDate} onClick={()=>setSelectedDate(day.localDate)} key={day.localDate}><strong>{Number(day.localDate.slice(8))}</strong><small>{day.focusMinutes?`${day.focusMinutes}m`:day.hasReview?"复盘":""}</small><i /></button>)}</div>
+      <div className="diary-month-grid">{Array.from({length:monthOffset},(_,index)=><span className="diary-day-empty" key={`empty-${index}`} />)}{monthData.days.map(day=><button className={`diary-day focus-${focusTone(day.focusMinutes)} ${day.hasDiary?"has-diary":""} ${day.localDate===selectedDate?"selected":""}`} type="button" aria-label={`查看 ${day.localDate} 日记`} aria-pressed={day.localDate===selectedDate} onClick={()=>setSelectedDate(day.localDate)} key={day.localDate}><strong>{Number(day.localDate.slice(8))}</strong><small>{day.focusMinutes?`${day.focusMinutes}m`:""}</small><i /></button>)}</div>
     </section>}
     {!data ? <div className="diary-lock"><NotebookPen /><h2>正在读取今天</h2></div> : !ready || !data.dayData ? <div className="diary-lock"><NotebookPen /><h2>{!data.hasReviewMessage ? "先留下一条复盘" : "先确认每日简报"}</h2><p>{!data.hasReviewMessage ? "赛博日记从今天真实写下的一句话开始。" : "确认后的简报会成为这页日记可靠的素材。"}</p><button className="primary-button" type="button" onClick={onOpenReview}>去复盘 <ArrowRight /></button></div> : <div className="diary-content">
       <section className={`diary-data-strip ${data.dayData.stateTone}`} aria-label="今日真实数据">
